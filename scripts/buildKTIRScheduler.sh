@@ -20,7 +20,7 @@ KTIR_SCHEDULER_PATH=~/workspaces/KTIR-Scheduler/
 LLVM_PROJ_SRC=~/workspaces/llvm-project
 LLVM_PROJ_BUILD=~/workspaces/llvm-project/build/
 KTIR_PROJ_SRC=~/workspaces/ktir-mlir-frontend/
-KTIR_PROJ_BUILD=$KTIR_PATH/build/
+KTIR_PROJ_BUILD=$KTIR_PROJ_SRC/build/
 
 cd $KTIR_SCHEDULER_PATH/build
 
