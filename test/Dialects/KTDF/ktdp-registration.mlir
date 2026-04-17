@@ -1,34 +1,34 @@
-// RUN: scheduler %s | scheduler | FileCheck --check-prefix=CHECK-IR %s
+// RUN: scheduler %s | scheduler | FileCheck %s
 // Round-tripping test to ensure ktdp is registered properly
 
-// CHECK-IR: #[[$ATTR_0:.+]] = affine_map<(d0, d1) -> (d0, d1)>
-// CHECK-IR: #[[$ATTR_1:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>
-// CHECK-IR: #[[$ATTR_2:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 2 >= 0, d1 >= 0, -d1 + 63 >= 0)>
-// CHECK-IR: #[[$ATTR_3:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 1 >= 0, d1 >= 0, -d1 + 63 >= 0)>
+// CHECK: #[[$ATTR_0:.+]] = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK: #[[$ATTR_1:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>
+// CHECK: #[[$ATTR_2:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 2 >= 0, d1 >= 0, -d1 + 63 >= 0)>
+// CHECK: #[[$ATTR_3:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 1 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 
 
-// CHECK-IR-LABEL:   func.func @add() {
-// CHECK-IR-NEXT:     %[[VAL_0:.*]] = arith.constant 0 : index
-// CHECK-IR-NEXT:     %[[VAL_1:.*]] = arith.constant 3 : index
-// CHECK-IR-NEXT:     %[[VAL_2:.*]] = arith.constant 1024 : index
-// CHECK-IR-NEXT:     %[[VAL_3:.*]] = arith.constant 12288 : index
-// CHECK-IR-NEXT:     %[[VAL_4:.*]] = arith.constant 18432 : index
-// CHECK-IR-NEXT:     %[[VAL_5:.*]] = ktdp.get_compute_tile_id : index
-// CHECK-IR-NEXT:     %[[VAL_6:.*]] = arith.muli %[[VAL_5]], %[[VAL_1]] : index
-// CHECK-IR-NEXT:     %[[VAL_7:.*]] = ktdp.construct_memory_view %[[VAL_2]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-IR-NEXT:     %[[VAL_8:.*]] = ktdp.construct_access_tile %[[VAL_7]]{{\[}}%[[VAL_6]], %[[VAL_0]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
-// CHECK-IR-NEXT:     %[[VAL_9:.*]] = ktdp.construct_memory_view %[[VAL_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-IR-NEXT:     %[[VAL_10:.*]] = ktdp.construct_access_tile %[[VAL_9]]{{\[}}%[[VAL_6]], %[[VAL_0]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
-// CHECK-IR-NEXT:     %[[VAL_11:.*]] = ktdp.load %[[VAL_8]] : <3x64xindex> -> tensor<3x64xf16>
-// CHECK-IR-NEXT:     %[[VAL_12:.*]] = ktdp.load %[[VAL_10]] : <3x64xindex> -> tensor<3x64xf16>
-// CHECK-IR-NEXT:     %[[VAL_13:.*]] = tensor.empty() : tensor<3x64xf16>
-// CHECK-IR-NEXT:     %[[VAL_14:.*]] = linalg.add ins(%[[VAL_11]], %[[VAL_12]] : tensor<3x64xf16>, tensor<3x64xf16>) outs(%[[VAL_13]] : tensor<3x64xf16>) -> tensor<3x64xf16>
-// CHECK-IR-NEXT:     %[[VAL_15:.*]] = tensor.extract_slice %[[VAL_13]][0, 0] [1, 64] [1, 1] : tensor<3x64xf16> to tensor<1x64xf16>
-// CHECK-IR-NEXT:     %[[VAL_16:.*]] = ktdp.construct_memory_view %[[VAL_4]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-IR-NEXT:     %[[VAL_17:.*]] = ktdp.construct_access_tile %[[VAL_16]]{{\[}}%[[VAL_6]], %[[VAL_0]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_3]]} : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
-// CHECK-IR-NEXT:     ktdp.store %[[VAL_15]], %[[VAL_17]] : tensor<1x64xf16>, <1x64xindex>
-// CHECK-IR-NEXT:     return
-// CHECK-IR-NEXT:   }
+// CHECK-LABEL:   func.func @add() {
+// CHECK-NEXT:     %[[VAL_0:.*]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[VAL_1:.*]] = arith.constant 3 : index
+// CHECK-NEXT:     %[[VAL_2:.*]] = arith.constant 1024 : index
+// CHECK-NEXT:     %[[VAL_3:.*]] = arith.constant 12288 : index
+// CHECK-NEXT:     %[[VAL_4:.*]] = arith.constant 18432 : index
+// CHECK-NEXT:     %[[VAL_5:.*]] = ktdp.get_compute_tile_id : index
+// CHECK-NEXT:     %[[VAL_6:.*]] = arith.muli %[[VAL_5]], %[[VAL_1]] : index
+// CHECK-NEXT:     %[[VAL_7:.*]] = ktdp.construct_memory_view %[[VAL_2]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK-NEXT:     %[[VAL_8:.*]] = ktdp.construct_access_tile %[[VAL_7]]{{\[}}%[[VAL_6]], %[[VAL_0]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
+// CHECK-NEXT:     %[[VAL_9:.*]] = ktdp.construct_memory_view %[[VAL_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK-NEXT:     %[[VAL_10:.*]] = ktdp.construct_access_tile %[[VAL_9]]{{\[}}%[[VAL_6]], %[[VAL_0]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
+// CHECK-NEXT:     %[[VAL_11:.*]] = ktdp.load %[[VAL_8]] : <3x64xindex> -> tensor<3x64xf16>
+// CHECK-NEXT:     %[[VAL_12:.*]] = ktdp.load %[[VAL_10]] : <3x64xindex> -> tensor<3x64xf16>
+// CHECK-NEXT:     %[[VAL_13:.*]] = tensor.empty() : tensor<3x64xf16>
+// CHECK-NEXT:     %[[VAL_14:.*]] = linalg.add ins(%[[VAL_11]], %[[VAL_12]] : tensor<3x64xf16>, tensor<3x64xf16>) outs(%[[VAL_13]] : tensor<3x64xf16>) -> tensor<3x64xf16>
+// CHECK-NEXT:     %[[VAL_15:.*]] = tensor.extract_slice %[[VAL_13]][0, 0] [1, 64] [1, 1] : tensor<3x64xf16> to tensor<1x64xf16>
+// CHECK-NEXT:     %[[VAL_16:.*]] = ktdp.construct_memory_view %[[VAL_4]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK-NEXT:     %[[VAL_17:.*]] = ktdp.construct_access_tile %[[VAL_16]]{{\[}}%[[VAL_6]], %[[VAL_0]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_3]]} : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
+// CHECK-NEXT:     ktdp.store %[[VAL_15]], %[[VAL_17]] : tensor<1x64xf16>, <1x64xindex>
+// CHECK-NEXT:     return
+// CHECK-NEXT:   }
 
 
 // An example to demonstrate the usage of tensor-extract operation.

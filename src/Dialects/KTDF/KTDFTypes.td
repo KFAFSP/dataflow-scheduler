@@ -35,13 +35,38 @@ class KTDF_Type<string name, string typeMnemonic, list<Trait> traits = []>
   let mnemonic = typeMnemonic;
 }
 
-// Placeholder for future KTDF types
-// Example:
-// def KTDF_DataFlowType : KTDF_Type<"DataFlow", "dataflow"> {
-//   let summary = "KTDF data flow type";
-//   let description = [{
-//     Represents a data flow in the KTDF dialect.
-//   }];
-// }
+//===----------------------------------------------------------------------===//
+// TokenType
+//===----------------------------------------------------------------------===//
+
+def KTDF_TokenType : KTDF_Type<"Token", "token"> {
+  let summary = "KTDF token type for dataflow synchronization";
+  let description = [{
+    Syntax:
+
+    ```
+    token-type ::= `token`
+    ```
+
+    The token type represents a synchronization token in the KTDF dialect.
+    It is used to model dataflow dependencies and control flow in dataflow
+    graphs. Tokens have no runtime representation and are used purely for
+    scheduling and dependency tracking.
+
+    Example:
+
+    ```mlir
+    // A token value
+    %token = ktdf.create_token : !ktdf.token
+    ...
+    // Token used for synchronization
+    ktdf.stage depend_in(%token) ...
+    ```
+  }];
+
+  let parameters = (ins);
+
+  let assemblyFormat = "";
+}
 
 #endif // KTDF_SRC_DIALECTS_KTDF_TYPES_TD
