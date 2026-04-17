@@ -16,7 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file defines the KTDF (KTIR Data Flow) dialect.
+// This file defines the KTDF (Kernel Tiled Data Flow) dialect.
 //
 //===----------------------------------------------------------------------===//
 
