@@ -5,6 +5,5 @@ add_library(SchedulerDriverLib
 target_link_libraries(SchedulerDriverLib
     PUBLIC
     SchedulerInitAllDialects
-    MLIR
-    LLVM
+    MLIRMlirOptMain
 )

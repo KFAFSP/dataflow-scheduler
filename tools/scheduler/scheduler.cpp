@@ -51,7 +51,6 @@ void registerAllTargets() {
 
 
 int main(int argc, char** argv) {
-  scheduler::registerAllTargets();
   scheduler::registerPassPipelinesForScheduler();
   mlir::DialectRegistry registry;
   scheduler::registerAllDialects(registry);
