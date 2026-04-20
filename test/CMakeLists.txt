@@ -10,3 +10,9 @@ add_lit_testsuite(check-scheduler
   ${CMAKE_CURRENT_BINARY_DIR})
 
 add_dependencies(check-scheduler scheduler)
+
+# Add check-all target that runs all tests
+add_custom_target(check-all
+  COMMENT "Running all tests")
+
+add_dependencies(check-all check-scheduler)
