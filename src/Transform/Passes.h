@@ -21,4 +21,4 @@ void buildKTDPToDFIRPipeline(mlir::OpPassManager &pm);
 #define GEN_PASS_REGISTRATION
 #include "src/Transform/Passes.h.inc"
 
-#endif // SCHEDULER_TRANSFORM_PASSES_H
+#endif  // SCHEDULER_TRANSFORM_PASSES_H

@@ -1,8 +1,7 @@
 #include "Transform/Passes.h"
-#include "tools/scheduler-driver-lib/scheduler-main.h"
-
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
+#include "tools/scheduler-driver-lib/scheduler-main.h"
 
 namespace scheduler {
 

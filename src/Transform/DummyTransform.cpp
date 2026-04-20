@@ -1,9 +1,8 @@
-#include "src/Transform/Passes.h"
-
 #include <memory>
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "src/Transform/Passes.h"
 
 namespace ktdf {
 namespace {
@@ -23,4 +22,3 @@ std::unique_ptr<mlir::Pass> createDummyTransformPass() {
 }
 
 }  // namespace ktdf
-

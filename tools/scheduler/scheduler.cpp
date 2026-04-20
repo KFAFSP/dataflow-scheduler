@@ -49,7 +49,6 @@ void registerAllTargets() {
 }
 }  // namespace scheduler
 
-
 int main(int argc, char** argv) {
   scheduler::registerPassesForScheduler();
   scheduler::registerPassPipelinesForScheduler();
