@@ -1,15 +1,10 @@
 add_executable(scheduler
     scheduler.cpp
     scheduler-pipeline.cpp
+    ../../src/Transform/DummyTransform.cpp
 )
 
-set(LIBS
-    SchedulerDriverLib
-    SchedulerInitAllDialects
-    SchedulerTransforms
-)
-
-target_link_libraries(scheduler PRIVATE ${LIBS} MLIR LLVM)
+target_link_libraries(scheduler PRIVATE SchedulerDriverLib MLIR LLVM)
 
 set_target_properties(scheduler
     PROPERTIES

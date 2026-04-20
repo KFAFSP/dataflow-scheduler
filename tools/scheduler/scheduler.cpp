@@ -38,8 +38,6 @@
 #include <tools/scheduler-driver-lib/scheduler-main.h>
 
 #include "Dialects/Includes/init-all-dialects.h"
-#include "Transform/Passes.h"
-
 namespace scheduler {
 void registerAllTargets() {
   llvm::InitializeNativeTarget();
@@ -51,15 +49,10 @@ void registerAllTargets() {
 }
 }  // namespace scheduler
 
-void registerPassPipelinesForScheduler() {
-  mlir::PassPipelineRegistration<>(
-      "kEmitDFIR", "Emit DataflowIR",
-      [](mlir::OpPassManager &pm) { ::ktdf::buildKTDPToDFIRPipeline(pm); });
-}
 
 int main(int argc, char** argv) {
-  registerPassPipelinesForScheduler();
   scheduler::registerAllTargets();
+  scheduler::registerPassPipelinesForScheduler();
   mlir::DialectRegistry registry;
   scheduler::registerAllDialects(registry);
   return failed(scheduler::SchedulerOptMain(
