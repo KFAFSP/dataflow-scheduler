@@ -40,7 +40,7 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "src/Dialects/KTDF/KTDFOpsDialect.hpp.inc"
-#include "src/Dialects/KTDF/KTDFOpsEnums.hpp.inc"
+#include "src/Dialects/KTDF/KTDFEnums.hpp.inc"
 #define GET_ATTRDEF_CLASSES
 #include "src/Dialects/KTDF/KTDFOpsAttributes.hpp.inc"
 

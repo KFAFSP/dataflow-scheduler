@@ -39,6 +39,51 @@ using namespace mlir::ktdf;
 #include "src/Dialects/KTDF/KTDFTypes.cpp.inc"
 
 //===----------------------------------------------------------------------===//
+// FifoSlotType
+//===----------------------------------------------------------------------===//
+
+void FifoSlotType::print(AsmPrinter &printer) const {
+  printer << "<" << getFifoType() << ", ";
+  if (mlir::ShapedType::isDynamic(getSize())) {
+    printer << "?";
+  } else {
+    printer << getSize();
+  }
+  printer << ">";
+}
+
+Type FifoSlotType::parse(AsmParser &parser) {
+  if (parser.parseLess()) return Type();
+
+  // Parse the FifoType enum as a string keyword
+  std::string fifoTypeStr;
+  if (parser.parseKeywordOrString(&fifoTypeStr)) return Type();
+
+  // Convert string to FifoType enum
+  auto fifoType = symbolizeFifoType(fifoTypeStr);
+  if (!fifoType) {
+    parser.emitError(parser.getCurrentLocation(), "invalid FIFO type: ")
+        << fifoTypeStr;
+    return Type();
+  }
+
+  if (parser.parseComma()) return Type();
+
+  int64_t size;
+  if (succeeded(parser.parseOptionalQuestion())) {
+    size = mlir::ShapedType::kDynamic;
+  } else if (parser.parseInteger(size)) {
+    return Type();
+  }
+
+  if (parser.parseGreater()) return Type();
+
+  return FifoSlotType::getChecked(
+      [&] { return parser.emitError(parser.getCurrentLocation()); },
+      parser.getContext(), *fifoType, size);
+}
+
+//===----------------------------------------------------------------------===//
 // KTDFDialect Type Registration
 //===----------------------------------------------------------------------===//
 

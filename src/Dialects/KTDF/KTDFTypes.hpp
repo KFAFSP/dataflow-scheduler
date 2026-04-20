@@ -23,12 +23,16 @@
 #ifndef KTDF_SRC_DIALECTS_KTDF_TYPES_HPP_
 #define KTDF_SRC_DIALECTS_KTDF_TYPES_HPP_
 
+#include <cstdint>
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 
 namespace mlir {
 namespace ktdf {
+
+// Forward declare the FifoType enum from KTDFOps
+enum class FifoType : uint32_t;
 
 // Placeholder for future KTDF type declarations
 

@@ -28,8 +28,8 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/PatternMatch.h"
+#include "src/Dialects/KTDF/KTDFEnums.cpp.inc"
 #include "src/Dialects/KTDF/KTDFOpsDialect.cpp.inc"
-#include "src/Dialects/KTDF/KTDFOpsEnums.cpp.inc"
 
 using namespace mlir;
 using namespace mlir::ktdf;
@@ -61,3 +61,32 @@ void KTDFDialect::initialize() {
 
 #define GET_ATTRDEF_CLASSES
 #include "src/Dialects/KTDF/KTDFOpsAttributes.cpp.inc"
+
+//===----------------------------------------------------------------------===//
+// FifoAllocateOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult FifoAllocateOp::verify() {
+  auto dynamicSizes = getDynamicSizes();
+  auto slots = getSlots();
+
+  // Count the number of dynamic sizes in the result types
+  unsigned numDynamicSizes = 0;
+  for (auto slot : slots) {
+    auto slotType = mlir::cast<FifoSlotType>(slot.getType());
+    if (slotType.isDynamicSize()) {
+      numDynamicSizes++;
+    }
+  }
+
+  // Verify that the number of dynamic size operands matches the number of
+  // dynamic sizes in the result types
+  if (dynamicSizes.size() != numDynamicSizes) {
+    return emitOpError("number of dynamic size operands (")
+           << dynamicSizes.size()
+           << ") must match number of dynamic sizes in result types ("
+           << numDynamicSizes << ")";
+  }
+
+  return success();
+}

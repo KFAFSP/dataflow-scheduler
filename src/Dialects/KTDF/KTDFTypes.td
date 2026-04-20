@@ -26,8 +26,10 @@
 #ifndef OP_BASE
 include "mlir/IR/OpBase.td"
 #endif // OP_BASE
+include "mlir/IR/EnumAttr.td"
 
 include "KTDFDialect.td"
+include "KTDFEnums.td"
 
 // Base class for KTDF dialect types
 class KTDF_Type<string name, string typeMnemonic, list<Trait> traits = []>
@@ -67,6 +69,61 @@ def KTDF_TokenType : KTDF_Type<"Token", "token"> {
   let parameters = (ins);
 
   let assemblyFormat = "";
+}
+
+//===----------------------------------------------------------------------===//
+// FifoSlotType
+//===----------------------------------------------------------------------===//
+
+def KTDF_FifoSlotType : KTDF_Type<"FifoSlot", "fifo.slot"> {
+  let summary = "KTDF FIFO slot type for dataflow buffering";
+  let description = [{
+    Syntax:
+
+    ```
+    fifo.slot-type ::= `fifo.slot` `<` fifo-type-string `,` size `>`
+    fifo-type-string ::= `"sfp-to-lxsu"` | `"lxlu-to-sfp"`
+    size ::= `?` | decimal-literal
+    ```
+
+    The fifo.slot type represents a slot in a FIFO buffer used for dataflow
+    communication between stages. Each slot has a specific type that indicates
+    the source and destination of the dataflow (e.g., "sfp-to-lxsu" means data
+    flows from SFP to LXSU), and a size (capacity) that can be static or dynamic.
+
+    The size can be:
+    - A static positive integer (e.g., 4, 8, 16)
+    - Dynamic, indicated by `?` (similar to memref dimensions)
+
+    Example:
+
+    ```mlir
+    // A FIFO slot from LXLU to SFP with static size 4
+    %slot0 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 4>
+    
+    // A FIFO slot from SFP to LXSU with dynamic size
+    %size = arith.constant 8 : index
+    %slot1 = ktdf.fifo.allocate(%size) -> !ktdf.fifo.slot<"sfp-to-lxsu", ?>
+    ```
+  }];
+
+  let parameters = (ins
+    "FifoType":$fifoType,
+    "int64_t":$size
+  );
+
+  let genStorageClass = 1;
+  let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    /// Returns true if the size is dynamic
+    bool isDynamicSize() const {
+      return mlir::ShapedType::isDynamic(getSize());
+    }
+    
+    /// Returns the static size, or kDynamic if dynamic
+    int64_t getStaticSize() const { return getSize(); }
+  }];
 }
 
 #endif // KTDF_SRC_DIALECTS_KTDF_TYPES_TD

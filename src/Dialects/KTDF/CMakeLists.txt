@@ -1,10 +1,13 @@
+set(LLVM_TARGET_DEFINITIONS KTDFEnums.td)
+scheduler_tablegen(KTDFEnums.hpp.inc -gen-enum-decls)
+scheduler_tablegen(KTDFEnums.cpp.inc -gen-enum-defs)
+add_public_tablegen_target(KTDFEnumsIncGen)
+
 set(LLVM_TARGET_DEFINITIONS KTDFOps.td)
 scheduler_tablegen(KTDFOpsDialect.hpp.inc -gen-dialect-decls -dialect=ktdf)
 scheduler_tablegen(KTDFOpsDialect.cpp.inc -gen-dialect-defs -dialect=ktdf)
 scheduler_tablegen(KTDFOps.hpp.inc -gen-op-decls)
 scheduler_tablegen(KTDFOps.cpp.inc -gen-op-defs)
-scheduler_tablegen(KTDFOpsEnums.hpp.inc -gen-enum-decls)
-scheduler_tablegen(KTDFOpsEnums.cpp.inc -gen-enum-defs)
 scheduler_tablegen(KTDFOpsAttributes.hpp.inc -gen-attrdef-decls -attrdefs-dialect=ktdf)
 scheduler_tablegen(KTDFOpsAttributes.cpp.inc -gen-attrdef-defs -attrdefs-dialect=ktdf)
 scheduler_tablegen(KTDFOps.md -gen-dialect-doc -dialect=ktdf)
@@ -27,4 +30,4 @@ target_include_directories(KTDFOps
         ${PROJECT_BINARY_DIR}
 )
 
-add_dependencies(KTDFOps KTDFOpsIncGen KTDFTypesIncGen)
+add_dependencies(KTDFOps KTDFEnumsIncGen KTDFOpsIncGen KTDFTypesIncGen)
