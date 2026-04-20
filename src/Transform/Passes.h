@@ -3,6 +3,8 @@
 
 #include <memory>
 
+#include "mlir/Pass/PassRegistry.h"
+
 namespace mlir {
 class Pass;
 class OpPassManager;
@@ -16,6 +18,7 @@ void buildKTDPToDFIRPipeline(mlir::OpPassManager &pm);
 }  // namespace ktdf
 
 #define GEN_PASS_DECL
+#define GEN_PASS_REGISTRATION
 #include "src/Transform/Passes.h.inc"
 
 #endif // SCHEDULER_TRANSFORM_PASSES_H

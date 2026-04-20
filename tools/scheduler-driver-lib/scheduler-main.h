@@ -164,6 +164,7 @@ LogicalResult SchedulerOptMain(llvm::raw_ostream &outputStream,
 LogicalResult SchedulerOptMain(int argc, char **argv, llvm::StringRef toolName,
                                DialectRegistry &registry);
 
+void registerPassesForScheduler();
 void registerPassPipelinesForScheduler();
 
 }  // end namespace scheduler
