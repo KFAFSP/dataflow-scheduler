@@ -60,28 +60,63 @@ def KTDF_FifoAllocateOp : KTDF_Op<"fifo.allocate", [Pure]> {
     dataflow communication between stages. Each slot has a specific FIFO type
     (e.g., "lxlu-to-sfp") and size (capacity).
 
+    ## FIFO Slot Semantics
+
+    From the IR's perspective, FIFOs are modeled as having infinite depth (i.e.,
+    an unbounded number of slots) from which slots are allocated and accessed in
+    a rolling fashion. This means:
+
+    1. **Ordered Access**: The order in which slots are allocated must match the
+       order in which they are used in data transfers.
+
+    2. **Capacity & Frequency Enforcement**: The total amount of data transferred through a
+       given slot must exactly match the slot's size before the next slot can be
+       used in a subsequent transfer.
+
+    3. **Rolling Behavior**: After all allocated slots have been used, the FIFO
+       rolls back to the first slot, allowing it to be reused for the next round
+       of transfers.
+
+    For example:
+    ```mlir
+    %slot1, %slot2 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 2>,
+                                              !ktdf.fifo.slot<"lxlu-to-sfp", 4>
+    ```
+
+    This allocation means:
+    - Exactly 2 elements of data from lxlu must be transferred to sfp via %slot1
+      before any data can be transferred via %slot2
+    - Exactly 4 elements of data from lxlu must be transferred via %slot2 before
+      the FIFO rolls back, allowing data to be transferred via %slot1 again
+
+    **Loop Semantics**: Allocation of FIFO slots within a loop does not affect
+    the lifetime of slots allocated in previous iterations. Each iteration's
+    allocations are independent, enabling pipelined execution across loop iterations.
+
+    ## Size Specification
+
     Sizes can be specified either as:
-    1. Static values in the result type (e.g., `!ktdf.fifo_slot<"lxlu-to-sfp", 4>`)
+    1. Static values in the result type (e.g., `!ktdf.fifo.slot<"lxlu-to-sfp", 4>`)
     2. Dynamic values using SSA operands, with `?` in the result type
 
     When using dynamic sizes, provide one index operand per dynamic slot.
     The sizes are matched to the result types in order.
 
-    FIFO slots are allocated and accessed in a rolling fashion.
-
-    Example:
+    ## Examples
 
     ```mlir
     // Allocate two FIFO slots with static sizes
-    %slot0, %slot1 = ktdf.fifo.allocate() -> !ktdf.fifo_slot<"lxlu-to-sfp", 1>, !ktdf.fifo_slot<"lxlu-to-sfp", 4>
+    %slot0, %slot1 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 1>,
+                                              !ktdf.fifo.slot<"lxlu-to-sfp", 4>
     
     // Allocate a single FIFO slot with dynamic size
     %size = arith.constant 8 : index
-    %slot = ktdf.fifo.allocate(%size) -> !ktdf.fifo_slot<"sfp-to-lxsu", ?>
+    %slot = ktdf.fifo.allocate(%size) -> !ktdf.fifo.slot<"sfp-to-lxsu", ?>
     
     // Mix static and dynamic sizes
     %dyn_size = arith.constant 16 : index
-    %s0, %s1 = ktdf.fifo.allocate(%dyn_size) -> !ktdf.fifo_slot<"sfp-to-sfp", ?>, !ktdf.fifo_slot<"sfp-to-sfp", 4>
+    %s0, %s1 = ktdf.fifo.allocate(%dyn_size) -> !ktdf.fifo.slot<"lxlu-to-sfp", ?>,
+                                                 !ktdf.fifo.slot<"lxlu-to-sfp", 4>
     ```
   }];
 
