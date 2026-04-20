@@ -1,8 +1,12 @@
-add_executable(scheduler scheduler.cpp)
+add_executable(scheduler
+    scheduler.cpp
+    scheduler-pipeline.cpp
+)
 
 set(LIBS
     SchedulerDriverLib
     SchedulerInitAllDialects
+    SchedulerTransforms
 )
 
 target_link_libraries(scheduler PRIVATE ${LIBS} MLIR LLVM)
