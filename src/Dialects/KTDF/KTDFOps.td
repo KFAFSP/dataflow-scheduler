@@ -140,4 +140,89 @@ def KTDF_FifoAllocateOp : KTDF_Op<"fifo.allocate", [Pure]> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// Pipeline and Stage Operations
+//===----------------------------------------------------------------------===//
+
+def KTDF_PipelineOp : KTDF_Op<"pipeline", [
+    NoTerminator,
+    SingleBlock
+  ]> {
+  let summary = "Defines a pipeline containing stages";
+  let description = [{
+    The `ktdf.pipeline` operation represents a structured directed acyclic graph
+    (DAG) of execution steps that process data in stages. Instead of executing one
+    step completely before starting the next, pipelines allow different stages to
+    operate concurrently on different iterations of work, thereby overlapping
+    computation and data movement. In dataflow architectures, pipelines reflect
+    how hardware engines operate: one unit may be loading data, another computing,
+    and another storing results simultaneously.
+
+    The immediate children of a pipeline must be `ktdf.stage` operations.
+
+    Example:
+    ```mlir
+    ktdf.pipeline {
+      ktdf.stage {
+        // Stage 1 operations
+      }
+      ktdf.stage {
+        // Stage 2 operations
+      }
+    }
+    ```
+  }];
+
+  let regions = (region SizedRegion<1>:$body);
+
+  let assemblyFormat = "$body attr-dict";
+
+  let extraClassDeclaration = [{
+    /// Get the block containing the stages.
+    Block* getBodyBlock() { return &getBody().front(); }
+
+    /// Get all stage operations within this pipeline.
+    auto getStages() {
+      return getBodyBlock()->getOps<StageOp>();
+    }
+
+    /// Get the number of stages in this pipeline.
+    unsigned getNumStages() {
+      return std::distance(getStages().begin(), getStages().end());
+    }
+  }];
+}
+
+def KTDF_StageOp : KTDF_Op<"stage", [
+    NoTerminator,
+    SingleBlock,
+    HasParent<"PipelineOp">
+  ]> {
+  let summary = "Defines a stage within a pipeline";
+  let description = [{
+    The  operation defines a single stage within a pipeline.
+    A `ktdf.stage` represents a logical step within a pipeline where a specific
+    type of work is performed. Each stage "eventually" correspond to a
+    particular hardware capability such as memory transfer or computation.
+    Stages form the building blocks of the pipeline and define how work flows
+    through the system.
+
+    The immediate parent of a stage is always a `ktdf.pipeline`, and the immediate
+    siblings of a stage are other stages.
+
+    Example:
+    ```mlir
+    ktdf.pipeline {
+      ktdf.stage {
+        // Stage operations
+      }
+    }
+    ```
+  }];
+
+  let regions = (region SizedRegion<1>:$body);
+
+  let assemblyFormat = "$body attr-dict";
+}
+
 #endif // KTDF_SRC_DIALECTS_KTDF_OPS_TD
