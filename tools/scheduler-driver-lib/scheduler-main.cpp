@@ -36,8 +36,8 @@ namespace scheduler {
 
 // For now, we delegate to the standard MlirOptMain
 // This can be customized later for scheduler-specific functionality
-LogicalResult SchedulerOptMain(int argc, char **argv, StringRef toolName,
-                               DialectRegistry &registry) {
+LogicalResult SchedulerOptMain(int argc, char** argv, StringRef toolName,
+                               DialectRegistry& registry) {
   return mlir::MlirOptMain(argc, argv, toolName, registry);
 }
 

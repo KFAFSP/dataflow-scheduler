@@ -22,7 +22,7 @@
 
 namespace scheduler {
 
-void registerMLIRDialects(mlir::DialectRegistry &registry);
+void registerMLIRDialects(mlir::DialectRegistry& registry);
 void registerAllMLIRPasses();
 
 }  // namespace scheduler

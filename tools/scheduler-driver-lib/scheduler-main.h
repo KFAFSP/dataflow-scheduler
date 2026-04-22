@@ -55,17 +55,17 @@ namespace scheduler {
 class SchedulerOptMainConfig {
  public:
   /// Register the options as global LLVM command line options.
-  static void registerCLOptions(DialectRegistry &dialectRegistry);
+  static void registerCLOptions(DialectRegistry& dialectRegistry);
 
   /// Create a new config with the default set from the CL options.
-  static SchedulerOptMainConfig &createFromCLOptions();
+  static SchedulerOptMainConfig& createFromCLOptions();
 
   ///
   /// Options.
   ///
 
   /// Allow operation with no registered dialects.
-  SchedulerOptMainConfig &allowUnregisteredDialects(bool allow) {
+  SchedulerOptMainConfig& allowUnregisteredDialects(bool allow) {
     allowUnregisteredDialectsFlag = allow;
     return *this;
   }
@@ -74,53 +74,53 @@ class SchedulerOptMainConfig {
   }
 
   /// Set the debug configuration to use.
-  SchedulerOptMainConfig &setDebugConfig(tracing::DebugConfig config) {
+  SchedulerOptMainConfig& setDebugConfig(tracing::DebugConfig config) {
     debugConfig = std::move(config);
     return *this;
   }
-  tracing::DebugConfig &getDebugConfig() { return debugConfig; }
-  const tracing::DebugConfig &getDebugConfig() const { return debugConfig; }
+  tracing::DebugConfig& getDebugConfig() { return debugConfig; }
+  const tracing::DebugConfig& getDebugConfig() const { return debugConfig; }
 
   /// Print the pass-pipeline as text before executing.
-  SchedulerOptMainConfig &dumpPassPipeline(bool dump) {
+  SchedulerOptMainConfig& dumpPassPipeline(bool dump) {
     dumpPassPipelineFlag = dump;
     return *this;
   }
   bool shouldDumpPassPipeline() const { return dumpPassPipelineFlag; }
 
   /// Set the output format to bytecode instead of textual IR.
-  SchedulerOptMainConfig &emitBytecode(bool emit) {
+  SchedulerOptMainConfig& emitBytecode(bool emit) {
     emitBytecodeFlag = emit;
     return *this;
   }
   bool shouldEmitBytecode() const { return emitBytecodeFlag; }
 
   /// Set the callback to populate the pass manager.
-  SchedulerOptMainConfig &setPassPipelineSetupFn(
-      std::function<LogicalResult(PassManager &)> callback) {
+  SchedulerOptMainConfig& setPassPipelineSetupFn(
+      std::function<LogicalResult(PassManager&)> callback) {
     passPipelineCallback = std::move(callback);
     return *this;
   }
 
   /// Set the parser to use to populate the pass manager.
-  SchedulerOptMainConfig &setPassPipelineParser(
-      const PassPipelineCLParser &parser);
+  SchedulerOptMainConfig& setPassPipelineParser(
+      const PassPipelineCLParser& parser);
 
   /// Populate the passmanager, if any callback was set.
-  LogicalResult setupPassPipeline(PassManager &pm) const {
+  LogicalResult setupPassPipeline(PassManager& pm) const {
     if (passPipelineCallback) return passPipelineCallback(pm);
     return success();
   }
 
   /// Show the registered dialects before trying to load the input file.
-  SchedulerOptMainConfig &showDialects(bool show) {
+  SchedulerOptMainConfig& showDialects(bool show) {
     showDialectsFlag = show;
     return *this;
   }
   bool shouldShowDialects() const { return showDialectsFlag; }
 
   /// Set whether to run the verifier after each transformation pass.
-  SchedulerOptMainConfig &verifyPasses(bool verify) {
+  SchedulerOptMainConfig& verifyPasses(bool verify) {
     verifyPassesFlag = verify;
     return *this;
   }
@@ -142,7 +142,7 @@ class SchedulerOptMainConfig {
   bool emitBytecodeFlag = false;
 
   /// The callback to populate the pass manager.
-  std::function<LogicalResult(PassManager &)> passPipelineCallback;
+  std::function<LogicalResult(PassManager&)> passPipelineCallback;
 
   /// Show the registered dialects before trying to load the input file.
   bool showDialectsFlag = false;
@@ -155,14 +155,14 @@ class SchedulerOptMainConfig {
 };
 
 /// Perform the core processing behind `scheduler`.
-LogicalResult SchedulerOptMain(llvm::raw_ostream &outputStream,
+LogicalResult SchedulerOptMain(llvm::raw_ostream& outputStream,
                                std::unique_ptr<llvm::MemoryBuffer> buffer,
-                               mlir::DialectRegistry &registry,
-                               const SchedulerOptMainConfig &config);
+                               mlir::DialectRegistry& registry,
+                               const SchedulerOptMainConfig& config);
 
 /// Implementation for tools like `scheduler`.
-LogicalResult SchedulerOptMain(int argc, char **argv, llvm::StringRef toolName,
-                               DialectRegistry &registry);
+LogicalResult SchedulerOptMain(int argc, char** argv, llvm::StringRef toolName,
+                               DialectRegistry& registry);
 
 void registerPassesForScheduler();
 void registerPassPipelinesForScheduler();

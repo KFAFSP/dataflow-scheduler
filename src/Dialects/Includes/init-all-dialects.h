@@ -24,6 +24,6 @@
 
 namespace scheduler {
 void registerAllPasses();
-void registerAllDialects(mlir::DialectRegistry &registry);
+void registerAllDialects(mlir::DialectRegistry& registry);
 }  // namespace scheduler
 #endif

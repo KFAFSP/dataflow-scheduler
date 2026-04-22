@@ -22,7 +22,7 @@
 
 namespace scheduler {
 
-void registerSchedulerDialects(mlir::DialectRegistry &registry) {
+void registerSchedulerDialects(mlir::DialectRegistry& registry) {
   // clang-format off
   registry.insert<mlir::ktdf::KTDFDialect>();
   // Future scheduler dialects can be added here

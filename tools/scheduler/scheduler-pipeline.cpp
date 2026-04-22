@@ -10,14 +10,14 @@ void registerPassesForScheduler() { registerSchedulerTransformsPasses(); }
 void registerPassPipelinesForScheduler() {
   mlir::PassPipelineRegistration<>(
       "kEmitDFIR", "Emit DataflowIR",
-      [](mlir::OpPassManager &pm) { ::ktdf::buildKTDPToDFIRPipeline(pm); });
+      [](mlir::OpPassManager& pm) { ::ktdf::buildKTDPToDFIRPipeline(pm); });
 }
 
 }  // namespace scheduler
 
 namespace ktdf {
 
-void buildKTDPToDFIRPipeline(mlir::OpPassManager &pm) {
+void buildKTDPToDFIRPipeline(mlir::OpPassManager& pm) {
   pm.addPass(createDummyTransformPass());
 }
 

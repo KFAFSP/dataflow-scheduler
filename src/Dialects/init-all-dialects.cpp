@@ -27,7 +27,7 @@ void registerAllPasses() {
   //  scheduler::registerAllSchedulerPasses();
 }
 
-void registerAllDialects(mlir::DialectRegistry &registry) {
+void registerAllDialects(mlir::DialectRegistry& registry) {
   scheduler::registerMLIRDialects(registry);
   scheduler::registerKTIRDialects(registry);
   scheduler::registerSchedulerDialects(registry);

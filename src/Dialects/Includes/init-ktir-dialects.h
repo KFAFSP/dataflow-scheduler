@@ -24,7 +24,7 @@
 
 namespace scheduler {
 
-void registerKTIRDialects(mlir::DialectRegistry &registry);
+void registerKTIRDialects(mlir::DialectRegistry& registry);
 void registerAllKTIRPasses();
 }  // namespace scheduler
 

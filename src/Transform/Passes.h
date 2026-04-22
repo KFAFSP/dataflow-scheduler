@@ -13,7 +13,7 @@ class OpPassManager;
 namespace ktdf {
 
 std::unique_ptr<mlir::Pass> createDummyTransformPass();
-void buildKTDPToDFIRPipeline(mlir::OpPassManager &pm);
+void buildKTDPToDFIRPipeline(mlir::OpPassManager& pm);
 
 }  // namespace ktdf
 
