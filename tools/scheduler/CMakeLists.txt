@@ -8,6 +8,12 @@ set(SCHEDULER_MLIR_LIBS
     MLIRRegisterAllPasses
 )
 
+set(SCHEDULER_LIBS
+    SchedulerInitAllDialects
+    SchedulerDriverLib
+    SchedulerTransforms
+) 
+
 add_executable(scheduler
     scheduler.cpp
     scheduler-pipeline.cpp
@@ -19,9 +25,7 @@ if("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
         -Wl,--whole-archive
         ${SCHEDULER_MLIR_LIBS}
         -Wl,--no-whole-archive
-        SchedulerInitAllDialects
-        SchedulerDriverLib
-        SchedulerTransforms
+        ${SCHEDULER_LIBS}
     )
 elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "Darwin")
     foreach(mlir_lib IN LISTS SCHEDULER_MLIR_LIBS)
@@ -29,18 +33,14 @@ elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "Darwin")
     endforeach()
     target_link_libraries(scheduler
         PRIVATE
-        SchedulerInitAllDialects
-        SchedulerDriverLib
-        SchedulerTransforms
+        ${SCHEDULER_LIBS}
     )
 else()
     message(WARNING "Untested system '${CMAKE_SYSTEM_NAME}': linking scheduler without whole-archive/all_load for MLIR libs")
     target_link_libraries(scheduler
         PRIVATE
-        SchedulerInitAllDialects
-        SchedulerDriverLib
-        SchedulerTransforms
         ${SCHEDULER_MLIR_LIBS}
+        ${SCHEDULER_LIBS}
     )
 endif()
 
