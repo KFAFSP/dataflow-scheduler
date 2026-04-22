@@ -162,6 +162,12 @@ def KTDF_CreateTokenOp : KTDF_Op<"create_token", [Pure]> {
   );
 
   let assemblyFormat = "attr-dict `:` type($result)";
+
+  let builders = [
+    OpBuilder<(ins), [{
+      build($_builder, $_state, TokenType::get($_builder.getContext()));
+    }]>
+  ];
 }
 
 //===----------------------------------------------------------------------===//
@@ -201,6 +207,15 @@ def KTDF_PipelineOp : KTDF_Op<"pipeline", [
 
   let assemblyFormat = "$body attr-dict";
 
+  let hasVerifier = 1;
+
+  let builders = [
+    OpBuilder<(ins), [{
+      Region* bodyRegion = $_state.addRegion();
+      bodyRegion->emplaceBlock();
+    }]>
+  ];
+
   let extraClassDeclaration = [{
     using StageRange = llvm::iterator_range<Block::op_iterator<StageOp>>;
 
@@ -215,33 +230,68 @@ def KTDF_PipelineOp : KTDF_Op<"pipeline", [
 def KTDF_StageOp : KTDF_Op<"stage", [
     NoTerminator,
     SingleBlock,
-    HasParent<"PipelineOp">
+    HasParent<"PipelineOp">,
+    AttrSizedOperandSegments
   ]> {
   let summary = "Defines a stage within a pipeline";
   let description = [{
-    The  operation defines a single stage within a pipeline.
-    A `ktdf.stage` represents a logical step within a pipeline where a specific
-    type of work is performed. Each stage "eventually" correspond to a
+    The `ktdf.stage` operation defines a single stage within a pipeline.
+    A stage represents a logical step within a pipeline where a specific
+    type of work is performed. Each stage "eventually" corresponds to a
     particular hardware capability such as memory transfer or computation.
     Stages form the building blocks of the pipeline and define how work flows
     through the system.
+
+    Stages can specify dataflow dependencies using tokens:
+    - `depends_in`: Stages which must be performed before this stage
+    - `depends_out`: Stages which must be performed upon completion of current stage
 
     The immediate parent of a stage is always a `ktdf.pipeline`, and the immediate
     siblings of a stage are other stages.
 
     Example:
     ```mlir
+    %token_a = ktdf.create_token : !ktdf.token
+    %token_b = ktdf.create_token : !ktdf.token
+    
     ktdf.pipeline {
-      ktdf.stage {
+      ktdf.stage depends_in(%token_a, %token_b) depends_out(none) {
+        // Stage operations
+      }
+      ktdf.stage depends_in(none) depends_out(%token_a) {
+        // Stage operations
+      }
+      ktdf.stage depends_in(none) depends_out(%token_b) {
         // Stage operations
       }
     }
     ```
   }];
 
+  let arguments = (ins
+    Variadic<KTDF_TokenType>:$depends_in,
+    Variadic<KTDF_TokenType>:$depends_out
+  );
+
   let regions = (region SizedRegion<1>:$body);
 
-  let assemblyFormat = "$body attr-dict";
+  let hasCustomAssemblyFormat = 1;
+  
+  let skipDefaultBuilders = 1;
+
+  let builders = [
+    OpBuilder<(ins "ValueRange":$depends_in, "ValueRange":$depends_out), [{
+      $_state.addOperands(depends_in);
+      $_state.addOperands(depends_out);
+      $_state.addAttribute("operandSegmentSizes",
+                          $_builder.getDenseI32ArrayAttr({
+                            static_cast<int32_t>(depends_in.size()),
+                            static_cast<int32_t>(depends_out.size())
+                          }));
+      Region* bodyRegion = $_state.addRegion();
+      bodyRegion->emplaceBlock();
+    }]>
+  ];
 }
 
 //===----------------------------------------------------------------------===//

@@ -188,3 +188,127 @@ LogicalResult DataTransferOp::verify() {
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// PipelineOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult PipelineOp::verify() {
+  // Verify that all immediate children are StageOp
+  Block* body = getBodyBlock();
+  for (Operation& op : body->getOperations()) {
+    if (!isa<StageOp>(op)) {
+      return emitOpError("immediate children of pipeline must be ktdf.stage operations, found '")
+             << op.getName() << "'";
+    }
+  }
+  
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// StageOp
+//===----------------------------------------------------------------------===//
+
+ParseResult StageOp::parse(OpAsmParser &parser, OperationState &result) {
+  SmallVector<OpAsmParser::UnresolvedOperand> dependsIn;
+  SmallVector<Type> dependsInTypes;
+  SmallVector<OpAsmParser::UnresolvedOperand> dependsOut;
+  SmallVector<Type> dependsOutTypes;
+  
+  // Parse depends_in
+  if (succeeded(parser.parseOptionalKeyword("depends_in"))) {
+    if (parser.parseLParen())
+      return failure();
+    
+    if (failed(parser.parseOptionalKeyword("none"))) {
+      // Parse token operands
+      if (parser.parseOperandList(dependsIn) ||
+          parser.parseColon() ||
+          parser.parseTypeList(dependsInTypes))
+        return failure();
+    }
+    
+    if (parser.parseRParen())
+      return failure();
+  }
+  
+  // Parse depends_out
+  if (succeeded(parser.parseOptionalKeyword("depends_out"))) {
+    if (parser.parseLParen())
+      return failure();
+    
+    if (failed(parser.parseOptionalKeyword("none"))) {
+      // Parse token operands
+      if (parser.parseOperandList(dependsOut) ||
+          parser.parseColon() ||
+          parser.parseTypeList(dependsOutTypes))
+        return failure();
+    }
+    
+    if (parser.parseRParen())
+      return failure();
+  }
+  
+  // Resolve operands
+  if (parser.resolveOperands(dependsIn, dependsInTypes,
+                             parser.getCurrentLocation(), result.operands))
+    return failure();
+  if (parser.resolveOperands(dependsOut, dependsOutTypes,
+                             parser.getCurrentLocation(), result.operands))
+    return failure();
+
+  // Parse the body region
+  Region *body = result.addRegion();
+  if (parser.parseRegion(*body))
+    return failure();
+  
+  // Parse optional attributes
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  if (!result.attributes.get("operandSegmentSizes")) {
+    result.addAttribute("operandSegmentSizes",
+                        parser.getBuilder().getDenseI32ArrayAttr(
+                            {static_cast<int32_t>(dependsIn.size()),
+                             static_cast<int32_t>(dependsOut.size())}));
+  }
+
+  return success();
+}
+
+void StageOp::print(OpAsmPrinter &p) {
+  // Print depends_in
+  p << " depends_in(";
+  if (getDependsIn().empty()) {
+    p << "none";
+  } else {
+    p.printOperands(getDependsIn());
+    p << " : ";
+    llvm::interleaveComma(getDependsIn(), p, [&](Value operand) {
+      p << operand.getType();
+    });
+  }
+  p << ")";
+  
+  // Print depends_out
+  p << " depends_out(";
+  if (getDependsOut().empty()) {
+    p << "none";
+  } else {
+    p.printOperands(getDependsOut());
+    p << " : ";
+    llvm::interleaveComma(getDependsOut(), p, [&](Value operand) {
+      p << operand.getType();
+    });
+  }
+  p << ")";
+  
+  // Print the body region
+  p << " ";
+  p.printRegion(getBody(), /*printEntryBlockArgs=*/false, /*printBlockTerminators=*/false);
+  
+  // Print attributes.
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+}
