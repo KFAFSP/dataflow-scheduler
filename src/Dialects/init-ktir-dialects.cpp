@@ -24,14 +24,7 @@ namespace scheduler {
 
 void registerKTIRDialects(mlir::DialectRegistry &registry) {
   // clang-format off
-  registry.insert<mlir::affine::AffineDialect,
-                  mlir::arith::ArithDialect,
-                  mlir::func::FuncDialect,
-                  mlir::linalg::LinalgDialect,
-                  mlir::math::MathDialect,
-                  mlir::memref::MemRefDialect,
-                  mlir::scf::SCFDialect,
-                  mlir::ktdp::KtdpDialect>();
+  registry.insert<mlir::ktdp::KtdpDialect>();
 
   // clang-format on
 }

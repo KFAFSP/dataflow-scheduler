@@ -38,16 +38,6 @@
 #include <tools/scheduler-driver-lib/scheduler-main.h>
 
 #include "Dialects/Includes/init-all-dialects.h"
-namespace scheduler {
-void registerAllTargets() {
-  llvm::InitializeNativeTarget();
-  llvm::InitializeAllTargetInfos();
-  llvm::InitializeAllTargets();
-  llvm::InitializeAllTargetMCs();
-  llvm::InitializeAllAsmParsers();
-  llvm::InitializeAllAsmPrinters();
-}
-}  // namespace scheduler
 
 int main(int argc, char** argv) {
   scheduler::registerPassesForScheduler();

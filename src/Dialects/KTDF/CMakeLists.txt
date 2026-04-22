@@ -30,9 +30,4 @@ target_include_directories(KTDFOps
         ${PROJECT_BINARY_DIR}
 )
 
-target_link_libraries(KTDFOps
-        PUBLIC
-        MLIRIR
-)
-
 add_dependencies(KTDFOps KTDFEnumsIncGen KTDFOpsIncGen KTDFTypesIncGen)
