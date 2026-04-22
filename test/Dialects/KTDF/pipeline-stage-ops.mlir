@@ -33,8 +33,8 @@
 // CHECK-LABEL:   func.func @nested_pipeline_operations() {
 // CHECK-NEXT:     ktdf.pipeline {
 // CHECK-NEXT:       ktdf.stage {
-// CHECK-NEXT:         %[[VAL_0:.*]]:2 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 1>, !ktdf.fifo.slot<"lxlu-to-sfp", 4>
-// CHECK-NEXT:         "test.op"(%[[VAL_0]]#0) : (!ktdf.fifo.slot<"lxlu-to-sfp", 1>) -> ()
+// CHECK-NEXT:         %[[VAL_0:.*]]:2 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 1xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 4xf16>
+// CHECK-NEXT:         "test.op"(%[[VAL_0]]#0) : (!ktdf.fifo.slot<"lxlu-to-sfp", 1xf16>) -> ()
 // CHECK-NEXT:         ktdf.pipeline {
 // CHECK-NEXT:           ktdf.stage {
 // CHECK-NEXT:             %[[VAL_1:.*]] = "test.op"() : () -> !ktdf.token
@@ -84,8 +84,8 @@ module {
   func.func @nested_pipeline_operations() {
     ktdf.pipeline {
       ktdf.stage {
-        %slot0, %slot1 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 1>, !ktdf.fifo.slot<"lxlu-to-sfp", 4>
-        "test.op"(%slot0) : (!ktdf.fifo.slot<"lxlu-to-sfp", 1>) -> ()
+        %slot0, %slot1 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 1xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 4xf16>
+        "test.op"(%slot0) : (!ktdf.fifo.slot<"lxlu-to-sfp", 1xf16>) -> ()
         ktdf.pipeline {
             ktdf.stage {
                 %token = "test.op"() : () -> !ktdf.token

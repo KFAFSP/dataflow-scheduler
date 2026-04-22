@@ -81,48 +81,53 @@ def KTDF_FifoSlotType : KTDF_Type<"FifoSlot", "fifo.slot"> {
     Syntax:
 
     ```
-    fifo.slot-type ::= `fifo.slot` `<` fifo-type-string `,` size `>`
+    fifo.slot-type ::= `fifo.slot` `<` fifo-type-string `,` shaped-element-type `>`
     fifo-type-string ::= `"sfp-to-lxsu"` | `"lxlu-to-sfp"`
-    size ::= `?` | decimal-literal
+    shaped-element-type ::= (num-elements `x`)? element-type
+    num-elements ::= `?` | decimal-literal
+    element-type ::= type
     ```
 
     The fifo.slot type represents a slot in a FIFO buffer used for dataflow
-    communication between stages. Each slot has a specific type that indicates
-    the source and destination of the dataflow (e.g., "sfp-to-lxsu" means data
-    flows from SFP to LXSU), and a size (capacity) that can be static or dynamic.
+    communication between stages. Each slot has:
+    - A specific type that indicates the source and destination of the dataflow
+      (e.g., "sfp-to-lxsu" means data flows from SFP to LXSU)
+    - A fifo slot capacity in terms of number of elements that can be static or dynamic
+    - An element type that specifies the type of data being transferred
 
-    The size can be:
-    - A static positive integer (e.g., 4, 8, 16)
+    The number of elements can be:
+    - A static positive integer (e.g., 4, 8, 16, 64)
     - Dynamic, indicated by `?` (similar to memref dimensions)
 
     Example:
 
     ```mlir
-    // A FIFO slot from LXLU to SFP with static size 4
-    %slot0 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 4>
+    // A FIFO slot from LXLU to SFP with 64 f16 elements
+    %slot0 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
     
-    // A FIFO slot from SFP to LXSU with dynamic size
+    // A FIFO slot from SFP to LXSU with some dynamic number of f16 elements
     %size = arith.constant 8 : index
-    %slot1 = ktdf.fifo.allocate(%size) -> !ktdf.fifo.slot<"sfp-to-lxsu", ?>
+    %slot1 = ktdf.fifo.allocate(%size) -> !ktdf.fifo.slot<"sfp-to-lxsu", ?xf16>
     ```
   }];
 
   let parameters = (ins
     "FifoType":$fifoType,
-    "int64_t":$size
+    "int64_t":$numElements,
+    "Type":$elementType
   );
 
   let genStorageClass = 1;
   let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
-    /// Returns true if the size is dynamic
-    bool isDynamicSize() const {
-      return mlir::ShapedType::isDynamic(getSize());
+    /// Returns true if the number of elements is dynamic
+    bool isDynamicNumElements() const {
+      return mlir::ShapedType::isDynamic(getNumElements());
     }
     
-    /// Returns the static size, or kDynamic if dynamic
-    int64_t getStaticSize() const { return getSize(); }
+    /// Returns the static number of elements, or kDynamic if dynamic
+    int64_t getStaticNumElements() const { return getNumElements(); }
   }];
 }
 

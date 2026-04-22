@@ -42,17 +42,19 @@ using namespace mlir::ktdf;
 // FifoSlotType
 //===----------------------------------------------------------------------===//
 
-void FifoSlotType::print(AsmPrinter &printer) const {
+void FifoSlotType::print(AsmPrinter& printer) const {
   printer << "<" << getFifoType() << ", ";
-  if (mlir::ShapedType::isDynamic(getSize())) {
+  if (mlir::ShapedType::isDynamic(getNumElements())) {
     printer << "?";
   } else {
-    printer << getSize();
+    printer << getNumElements();
   }
+  printer << "x";
+  printer.printType(getElementType());
   printer << ">";
 }
 
-Type FifoSlotType::parse(AsmParser &parser) {
+Type FifoSlotType::parse(AsmParser& parser) {
   if (parser.parseLess()) return Type();
 
   // Parse the FifoType enum as a string keyword
@@ -69,18 +71,30 @@ Type FifoSlotType::parse(AsmParser &parser) {
 
   if (parser.parseComma()) return Type();
 
-  int64_t size;
+  // Parse dimension (NxType or ?xType)
+  int64_t numElements;
+  Type elementType;
+
+  // Try to parse '?' for dynamic dimension
   if (succeeded(parser.parseOptionalQuestion())) {
-    size = mlir::ShapedType::kDynamic;
-  } else if (parser.parseInteger(size)) {
-    return Type();
+    numElements = mlir::ShapedType::kDynamic;
+  } else {
+    // Parse static dimension
+    if (parser.parseInteger(numElements)) return Type();
   }
+
+  // Parse 'x' - use parseXInDimensionList which handles 'x' in dimension
+  // context
+  if (parser.parseXInDimensionList()) return Type();
+
+  // Parse element type
+  if (parser.parseType(elementType)) return Type();
 
   if (parser.parseGreater()) return Type();
 
   return FifoSlotType::getChecked(
       [&] { return parser.emitError(parser.getCurrentLocation()); },
-      parser.getContext(), *fifoType, size);
+      parser.getContext(), *fifoType, numElements, elementType);
 }
 
 //===----------------------------------------------------------------------===//

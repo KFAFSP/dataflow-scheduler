@@ -89,7 +89,7 @@ LogicalResult FifoAllocateOp::verify() {
   unsigned numDynamicSizes = 0;
   for (auto slot : slots) {
     auto slotType = mlir::cast<FifoSlotType>(slot.getType());
-    if (slotType.isDynamicSize()) {
+    if (slotType.isDynamicNumElements()) {
       numDynamicSizes++;
     }
   }
@@ -134,6 +134,15 @@ LogicalResult DataTransferOp::verify() {
     return emitOpError("destination must be a memref or FIFO slot");
   }
 
+  // Verify that FIFO slots have no indices specified
+  if (sourceFifo && !getSourceIndices().empty()) {
+    return emitOpError("FIFO slot source cannot have indices specified");
+  }
+
+  if (destFifo && !getDestIndices().empty()) {
+    return emitOpError("FIFO slot destination cannot have indices specified");
+  }
+
   // Get element types for compatibility checking
   Type sourceElemType;
   Type destElemType;
@@ -141,24 +150,22 @@ LogicalResult DataTransferOp::verify() {
   if (sourceMemRef) {
     sourceElemType = llvm::cast<MemRefType>(sourceType).getElementType();
   } else if (sourceFifo) {
-    // For FIFO slots, we don't have element type info in the current type definition
-    // This could be extended in the future if needed
-    sourceElemType = nullptr;
+    sourceElemType = llvm::cast<FifoSlotType>(sourceType).getElementType();
   }
 
   if (destMemRef) {
     destElemType = llvm::cast<MemRefType>(destType).getElementType();
   } else if (destFifo) {
-    destElemType = nullptr;
+    destElemType = llvm::cast<FifoSlotType>(destType).getElementType();
   }
 
-  // Verify element type compatibility when both are memrefs
+  // Verify element type compatibility
   if (sourceElemType && destElemType && sourceElemType != destElemType) {
     return emitOpError("source and destination element types must match, got ")
            << sourceElemType << " and " << destElemType;
   }
 
-  // Verify indices and sizes are consistent
+  // Verify indices and sizes are consistent for memrefs
   auto sourceMemRefType = llvm::dyn_cast<MemRefType>(sourceType);
   if (sourceMemRefType) {
     unsigned rank = sourceMemRefType.getRank();
