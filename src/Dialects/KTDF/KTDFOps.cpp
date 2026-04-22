@@ -22,9 +22,11 @@
 #include "KTDFOps.hpp"
 
 #include <iostream>
+#include <iterator>
 #include <regex>
 
 #include "KTDFTypes.hpp"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/PatternMatch.h"
@@ -61,6 +63,19 @@ void KTDFDialect::initialize() {
 
 #define GET_ATTRDEF_CLASSES
 #include "src/Dialects/KTDF/KTDFOpsAttributes.cpp.inc"
+
+//===----------------------------------------------------------------------===//
+// PipelineOp
+//===----------------------------------------------------------------------===//
+
+PipelineOp::StageRange PipelineOp::getStages() {
+  return getBodyBlock()->getOps<StageOp>();
+}
+
+unsigned PipelineOp::getNumStages() {
+  auto stages = getStages();
+  return std::distance(stages.begin(), stages.end());
+}
 
 //===----------------------------------------------------------------------===//
 // FifoAllocateOp

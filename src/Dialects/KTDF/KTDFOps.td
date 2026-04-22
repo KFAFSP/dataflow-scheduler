@@ -178,18 +178,13 @@ def KTDF_PipelineOp : KTDF_Op<"pipeline", [
   let assemblyFormat = "$body attr-dict";
 
   let extraClassDeclaration = [{
+    using StageRange = llvm::iterator_range<Block::op_iterator<StageOp>>;
+
     /// Get the block containing the stages.
-    Block* getBodyBlock() { return &getBody().front(); }
+    Block *getBodyBlock() { return &getBody().front(); }
 
-    /// Get all stage operations within this pipeline.
-    auto getStages() {
-      return getBodyBlock()->getOps<StageOp>();
-    }
-
-    /// Get the number of stages in this pipeline.
-    unsigned getNumStages() {
-      return std::distance(getStages().begin(), getStages().end());
-    }
+    StageRange getStages();
+    unsigned getNumStages();
   }];
 }
 
