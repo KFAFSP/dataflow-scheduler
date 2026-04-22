@@ -141,6 +141,30 @@ def KTDF_FifoAllocateOp : KTDF_Op<"fifo.allocate", [Pure]> {
 }
 
 //===----------------------------------------------------------------------===//
+// Token Operations
+//===----------------------------------------------------------------------===//
+
+def KTDF_CreateTokenOp : KTDF_Op<"create_token", [Pure]> {
+  let summary = "Create a new token for dataflow synchronization";
+  let description = [{
+    The `ktdf.create_token` operation creates a new token value that can be used
+    for dataflow synchronization and dependency tracking. Tokens represent
+    abstract synchronization points in the dataflow graph and do not carry data.
+
+    Example:
+    ```mlir
+    %token = ktdf.create_token : !ktdf.token
+    ```
+  }];
+
+  let results = (outs
+    KTDF_TokenType:$result
+  );
+
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
+//===----------------------------------------------------------------------===//
 // Pipeline and Stage Operations
 //===----------------------------------------------------------------------===//
 
