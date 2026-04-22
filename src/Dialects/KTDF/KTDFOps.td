@@ -220,4 +220,121 @@ def KTDF_StageOp : KTDF_Op<"stage", [
   let assemblyFormat = "$body attr-dict";
 }
 
+//===----------------------------------------------------------------------===//
+// Data Transfer Operation
+//===----------------------------------------------------------------------===//
+
+def KTDF_DataTransferOp : KTDF_Op<"data_transfer", [
+    AttrSizedOperandSegments
+  ]> {
+  let summary = "Transfer data between memory locations and FIFO slots";
+  let description = [{
+    The `ktdf.data_transfer` operation represents explicit data movement in the
+    dataflow pipeline. It supports three types of transfers:
+    
+    1. **memref to memref**: Transfer data between different memory spaces
+       (e.g., DRAM to LX, LX to DRAM)
+    2. **memref to fifo**: Transfer data from memory to a FIFO slot
+       (e.g., LX to FIFO for streaming to compute units)
+    3. **fifo to memref**: Transfer data from a FIFO slot to memory
+       (e.g., FIFO from compute units to SFP registers or LX)
+
+    The operation explicitly specifies the source and destination, along with
+    the size of data being transferred. This makes data movement visible in the
+    IR and enables analysis of memory traffic patterns and pipeline behavior.
+
+    ## Syntax
+
+    ```
+    data-transfer-op ::= `ktdf.data_transfer`
+                         `from` ssa-value (`[` ssa-use-list `]`)?
+                         (`size` `[` ssa-use-list `]`)?
+                         `to` ssa-value (`[` ssa-use-list `]`)?
+                         (`size` `[` ssa-use-list `]`)?
+                         `:` type(source) `,` type(destination)
+    ```
+
+    ## Examples
+
+    ```mlir
+    // memref to memref: DRAM to LX
+    ktdf.data_transfer from %A[%m, %n] size [1, 64] to %lx_A[%c0] size [64]
+      : memref<1x64xf16, "DRAM">, memref<64xf16, "LX">
+
+    // memref to fifo: LX to FIFO slot
+    ktdf.data_transfer from %lx_A[%c0] size [64] to %fifo_slot_a size [64]
+      : memref<64xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64>
+
+    // fifo to memref: FIFO slot to SFP register
+    ktdf.data_transfer from %fifo_slot_a to %sfp_A[%c0] size [64]
+      : !ktdf.fifo.slot<"lxlu-to-sfp", 64>, memref<64xf16, "SFP_REG">
+
+    // memref to memref: LX to DRAM
+    ktdf.data_transfer from %lx_C[%m1, %n1] size [1, 64] to %C[%m0 + %m1, %n0 + %n1] size [1, 64]
+      : memref<?x?xf16, "LX">, memref<?x?xf16, "DRAM">
+    ```
+
+    ## Semantics
+
+    - The transfer is atomic from the perspective of the stage containing it
+    - Source and destination types must be compatible (same element type)
+    - For FIFO transfers, the size must not exceed the FIFO slot capacity constraints
+    - Indices and sizes are used to specify the exact region being transferred
+  }];
+
+  let arguments = (ins
+    AnyTypeOf<[AnyMemRef, KTDF_FifoSlotType]>:$source,
+    Variadic<Index>:$source_indices,
+    Variadic<Index>:$source_sizes,
+    AnyTypeOf<[AnyMemRef, KTDF_FifoSlotType]>:$destination,
+    Variadic<Index>:$dest_indices,
+    Variadic<Index>:$dest_sizes
+  );
+
+  let assemblyFormat = [{
+    `from` $source
+    (`[` $source_indices^ `]`)?
+    (`size` `[` $source_sizes^ `]`)?
+    `to` $destination
+    (`[` $dest_indices^ `]`)?
+    (`size` `[` $dest_sizes^ `]`)?
+    attr-dict `:` type($source) `,` type($destination)
+  }];
+
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    /// Returns true if the source is a memref
+    bool isSourceMemRef() {
+      return llvm::isa<mlir::MemRefType>(getSource().getType());
+    }
+
+    /// Returns true if the source is a FIFO slot
+    bool isSourceFifo() {
+      return llvm::isa<FifoSlotType>(getSource().getType());
+    }
+
+    /// Returns true if the destination is a memref
+    bool isDestMemRef() {
+      return llvm::isa<mlir::MemRefType>(getDestination().getType());
+    }
+
+    /// Returns true if the destination is a FIFO slot
+    bool isDestFifo() {
+      return llvm::isa<FifoSlotType>(getDestination().getType());
+    }
+
+    /// Returns the transfer type (memref-to-memref, memref-to-fifo, fifo-to-memref)
+    enum class TransferType { MemRefToMemRef, MemRefToFifo, FifoToMemRef };
+    
+    TransferType getTransferType() {
+      if (isSourceMemRef() && isDestMemRef())
+        return TransferType::MemRefToMemRef;
+      if (isSourceMemRef() && isDestFifo())
+        return TransferType::MemRefToFifo;
+      return TransferType::FifoToMemRef;
+    }
+  }];
+}
+
 #endif // KTDF_SRC_DIALECTS_KTDF_OPS_TD

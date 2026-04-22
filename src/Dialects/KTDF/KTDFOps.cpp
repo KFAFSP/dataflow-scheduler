@@ -105,3 +105,79 @@ LogicalResult FifoAllocateOp::verify() {
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// DataTransferOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult DataTransferOp::verify() {
+  auto sourceType = getSource().getType();
+  auto destType = getDestination().getType();
+
+  // Verify that source and destination are not both FIFOs
+  bool sourceFifo = llvm::isa<FifoSlotType>(sourceType);
+  bool destFifo = llvm::isa<FifoSlotType>(destType);
+
+  if (sourceFifo && destFifo) {
+    return emitOpError("cannot transfer directly from FIFO to FIFO");
+  }
+
+  // Verify that at least one is a memref or FIFO
+  bool sourceMemRef = llvm::isa<MemRefType>(sourceType);
+  bool destMemRef = llvm::isa<MemRefType>(destType);
+
+  if (!sourceMemRef && !sourceFifo) {
+    return emitOpError("source must be a memref or FIFO slot");
+  }
+
+  if (!destMemRef && !destFifo) {
+    return emitOpError("destination must be a memref or FIFO slot");
+  }
+
+  // Get element types for compatibility checking
+  Type sourceElemType;
+  Type destElemType;
+
+  if (sourceMemRef) {
+    sourceElemType = llvm::cast<MemRefType>(sourceType).getElementType();
+  } else if (sourceFifo) {
+    // For FIFO slots, we don't have element type info in the current type definition
+    // This could be extended in the future if needed
+    sourceElemType = nullptr;
+  }
+
+  if (destMemRef) {
+    destElemType = llvm::cast<MemRefType>(destType).getElementType();
+  } else if (destFifo) {
+    destElemType = nullptr;
+  }
+
+  // Verify element type compatibility when both are memrefs
+  if (sourceElemType && destElemType && sourceElemType != destElemType) {
+    return emitOpError("source and destination element types must match, got ")
+           << sourceElemType << " and " << destElemType;
+  }
+
+  // Verify indices and sizes are consistent
+  auto sourceMemRefType = llvm::dyn_cast<MemRefType>(sourceType);
+  if (sourceMemRefType) {
+    unsigned rank = sourceMemRefType.getRank();
+    if (!getSourceIndices().empty() && getSourceIndices().size() != rank) {
+      return emitOpError("source indices count (")
+             << getSourceIndices().size() << ") must match source memref rank ("
+             << rank << ")";
+    }
+  }
+
+  auto destMemRefType = llvm::dyn_cast<MemRefType>(destType);
+  if (destMemRefType) {
+    unsigned rank = destMemRefType.getRank();
+    if (!getDestIndices().empty() && getDestIndices().size() != rank) {
+      return emitOpError("destination indices count (")
+             << getDestIndices().size()
+             << ") must match destination memref rank (" << rank << ")";
+    }
+  }
+
+  return success();
+}
