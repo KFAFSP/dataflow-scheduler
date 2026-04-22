@@ -257,7 +257,6 @@ ParseResult StageOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parser.resolveOperands(dependsOut, dependsOutTypes,
                              parser.getCurrentLocation(), result.operands))
     return failure();
-
   // Parse the body region
   Region *body = result.addRegion();
   if (parser.parseRegion(*body))
@@ -266,14 +265,18 @@ ParseResult StageOp::parse(OpAsmParser &parser, OperationState &result) {
   // Parse optional attributes
   if (parser.parseOptionalAttrDict(result.attributes))
     return failure();
-
+  
+  // Add operand segment sizes attribute if not already present.
+  // The attribute is required since op has multiple optional/variadic
+  // operands.
   if (!result.attributes.get("operandSegmentSizes")) {
     result.addAttribute("operandSegmentSizes",
-                        parser.getBuilder().getDenseI32ArrayAttr(
-                            {static_cast<int32_t>(dependsIn.size()),
-                             static_cast<int32_t>(dependsOut.size())}));
+                        parser.getBuilder().getDenseI32ArrayAttr({
+                          static_cast<int32_t>(dependsIn.size()),
+                          static_cast<int32_t>(dependsOut.size())
+                        }));
   }
-
+  
   return success();
 }
 

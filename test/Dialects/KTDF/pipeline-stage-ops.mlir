@@ -1,5 +1,4 @@
-// RUN: scheduler -allow-unregistered-dialect    -allow-unregistered-dialect %s | FileCheck --check-prefix=CHECK-IR %s
-
+// RUN: scheduler -allow-unregistered-dialect %s | scheduler -allow-unregistered-dialect | FileCheck --check-prefix=CHECK-IR %s
 // Round-tripping test to ensure pipeline and stage operations are registered properly
 
 // CHECK-IR-LABEL:   func.func @pipeline_with_no_dependencies() {
