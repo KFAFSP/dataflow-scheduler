@@ -314,9 +314,9 @@ module {
                 %sfp_A   = memref.alloc() : memref<64xf16, "SFP_REG">
                 %sfp_B   = memref.alloc() : memref<64xf16, "SFP_REG">
                 %sfp_out = memref.alloc() : memref<64xf16, "SFP_REG">
-                %fifo_slot_a, %fifo_slot_b = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64>,
-                                                                    !ktdf.fifo.slot<"lxlu-to-sfp", 64>
-                %fifo_slot_c = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-lxsu", 64>
+                %fifo_slot_a, %fifo_slot_b = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>,
+                                                                    !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+                %fifo_slot_c = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
                 %t1 = ktdf.create_token : !ktdf.token
                 %t2 = ktdf.create_token : !ktdf.token
                 %t3 = ktdf.create_token : !ktdf.token
@@ -327,8 +327,8 @@ module {
                                    %t1, %t2, %t3, %t4, %t5
                     : memref<64xf16, "LX">, memref<64xf16, "LX">, memref<64xf16, "LX">,
                       memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">,
-                      !ktdf.fifo.slot<"lxlu-to-sfp", 64>, !ktdf.fifo.slot<"lxlu-to-sfp", 64>,
-                      !ktdf.fifo.slot<"sfp-to-lxsu", 64>,
+                      !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>,
+                      !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>,
                       !ktdf.token, !ktdf.token, !ktdf.token, !ktdf.token, !ktdf.token
               }
     
@@ -339,21 +339,21 @@ module {
               }
     
               ktdf.stage depend_in(%res_t1) depend_out(%res_t2) {
-                ktdf.data_transfer from %res_lx_A[%c0] size [64] to %res_fifo_slot_a size [64] : memref<64xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64>
-                ktdf.data_transfer from %res_lx_B[%c0] size [64] to %res_fifo_slot_b size [64] : memref<64xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64>
+                ktdf.data_transfer from %res_lx_A[%c0] size [64] to %res_fifo_slot_a size [64] : memref<64xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+                ktdf.data_transfer from %res_lx_B[%c0] size [64] to %res_fifo_slot_b size [64] : memref<64xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
                 ktdf.stage_yield
               }
     
               ktdf.stage depend_in(%res_t2) depend_out(%res_t3) {
-                ktdf.data_transfer from %res_fifo_slot_a to %res_sfp_A[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64>, memref<64xf16, "SFP_REG">
-                ktdf.data_transfer from %res_fifo_slot_b to %res_sfp_B[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64>, memref<64xf16, "SFP_REG">
+                ktdf.data_transfer from %res_fifo_slot_a to %res_sfp_A[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
+                ktdf.data_transfer from %res_fifo_slot_b to %res_sfp_B[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
                 linalg.add ins(%res_sfp_A, %res_sfp_B : memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">) outs(%res_sfp_out : memref<64xf16, "SFP_REG">)
-                ktdf.data_transfer from %res_sfp_out[%c0] to %res_fifo_slot_c size [64] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64>
+                ktdf.data_transfer from %res_sfp_out[%c0] to %res_fifo_slot_c size [64] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
                 ktdf.stage_yield
               }
     
               ktdf.stage depend_in(%res_t3) depend_out(%res_t4) {
-                ktdf.data_transfer from %res_fifo_slot_c size [64] to %res_lx_C[%c0] size [64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64>, memref<64xf16, "LX">
+                ktdf.data_transfer from %res_fifo_slot_c size [64] to %res_lx_C[%c0] size [64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<64xf16, "LX">
                 ktdf.stage_yield
               }
     
@@ -446,31 +446,31 @@ module {
                         %sfp_A   = memref.alloc() : memref<64xf16, "SFP_REG">
                         %sfp_B   = memref.alloc() : memref<64xf16, "SFP_REG">
                         %sfp_out = memref.alloc() : memref<64xf16, "SFP_REG">
-                        %fifo_slot_a, %fifo_slot_b = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64>,
-                                                                            !ktdf.fifo.slot<"lxlu-to-sfp", 64>
-                        %fifo_slot_c = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-lxsu", 64>
+                        %fifo_slot_a, %fifo_slot_b = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>,
+                                                                            !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+                        %fifo_slot_c = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
                         %t11 = ktdf.create_token : !ktdf.token
                         %t12 = ktdf.create_token : !ktdf.token
                         %t13 = ktdf.create_token : !ktdf.token
                         ktdf.private_yield %sfp_A, %sfp_B, %sfp_out, %fifo_slot_a, %fifo_slot_b, %fifo_slot_c, %t11, %t12, %t13
                             : memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">,
-                              !ktdf.fifo.slot<"lxlu-to-sfp", 64>, !ktdf.fifo.slot<"lxlu-to-sfp", 64>, !ktdf.fifo.slot<"sfp-to-lxsu", 64>,
+                              !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>,
                               !ktdf.token, !ktdf.token, !ktdf.token
                       }
                       ktdf.stage depend_in() depend_out(%res_t11) {
-                        ktdf.data_transfer from %res_lx_A[%m1, %n1] size [1, 64] to %res_fifo_slot_a size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64>
-                        ktdf.data_transfer from %res_lx_B[%m1, %n1] size [1, 64] to %res_fifo_slot_b size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64>
+                        ktdf.data_transfer from %res_lx_A[%m1, %n1] size [1, 64] to %res_fifo_slot_a size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+                        ktdf.data_transfer from %res_lx_B[%m1, %n1] size [1, 64] to %res_fifo_slot_b size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
                         ktdf.stage_yield
                       }
                       ktdf.stage depend_in(%res_t11) depend_out(%res_t12) {
-                        ktdf.data_transfer from %res_fifo_slot_a to %res_sfp_A[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64>, memref<64xf16, "SFP_REG">
-                        ktdf.data_transfer from %res_fifo_slot_b to %res_sfp_B[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64>, memref<64xf16, "SFP_REG">
+                        ktdf.data_transfer from %res_fifo_slot_a to %res_sfp_A[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
+                        ktdf.data_transfer from %res_fifo_slot_b to %res_sfp_B[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
                         linalg.add ins(%res_sfp_A, %res_sfp_B : memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">) outs(%res_sfp_out : memref<64xf16, "SFP_REG">)
-                        ktdf.data_transfer from %res_sfp_out[%c0] to %res_fifo_slot_c size [64] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64>
+                        ktdf.data_transfer from %res_sfp_out[%c0] to %res_fifo_slot_c size [64] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
                         ktdf.stage_yield
                       }
                       ktdf.stage depend_in(%res_t12) depend_out(%res_t13) {
-                        ktdf.data_transfer from %res_fifo_slot_c size [64] to %res_lx_C[%m1, %n1] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64>, memref<?x?xf16, "LX">
+                        ktdf.data_transfer from %res_fifo_slot_c size [64] to %res_lx_C[%m1, %n1] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<?x?xf16, "LX">
                         ktdf.stage_yield
                       }
                     } // ktdf.pipeline depth(1)
@@ -575,9 +575,9 @@ module {
                     %sfp_A = memref.alloc() : memref<64xf16, "SFP_REG">
                     %sfp_B = memref.alloc() : memref<64xf16, "SFP_REG">
                     %sfp_out = memref.alloc() : memref<64xf16, "SFP_REG">
-                    %fifo_slot_a, %fifo_slot_b = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64>,
-                                                                        !ktdf.fifo.slot<"lxlu-to-sfp", 64>
-                    %fifo_slot_c = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-lxsu", 64>
+                    %fifo_slot_a, %fifo_slot_b = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>,
+                                                                        !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+                    %fifo_slot_c = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
                     %tok11 = ktdf.create_token : !ktdf.token
                     %tok12 = ktdf.create_token : !ktdf.token
                     %tok13 = ktdf.create_token : !ktdf.token
@@ -585,26 +585,26 @@ module {
                                        %fifo_slot_a, %fifo_slot_b, %fifo_slot_c,
                                        %tok11, %tok12, %tok13
                       : memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">,
-                        !ktdf.fifo.slot<"lxlu-to-sfp", 64>, !ktdf.fifo.slot<"lxlu-to-sfp", 64>, !ktdf.fifo.slot<"sfp-to-lxsu", 64>,
+                        !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>,
                         !ktdf.token, !ktdf.token, !ktdf.token
                   }
 
                   ktdf.stage depend_in() depend_out(%t11) {
-                    ktdf.data_transfer from %res_lx_A[%m1, %n1] size [1, 64] to %res_fifo_slot_a size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64>
-                    ktdf.data_transfer from %res_lx_B[%m1, %n1] size [1, 64] to %res_fifo_slot_b size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64>
+                    ktdf.data_transfer from %res_lx_A[%m1, %n1] size [1, 64] to %res_fifo_slot_a size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+                    ktdf.data_transfer from %res_lx_B[%m1, %n1] size [1, 64] to %res_fifo_slot_b size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
                     ktdf.stage_yield
                   }
 
                   ktdf.stage depend_in(%t11) depend_out(%t12) {
-                    ktdf.data_transfer from %res_fifo_slot_a to %res_sfp_A[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64>, memref<64xf16, "SFP_REG">
-                    ktdf.data_transfer from %res_fifo_slot_b to %res_sfp_B[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64>, memref<64xf16, "SFP_REG">
+                    ktdf.data_transfer from %res_fifo_slot_a to %res_sfp_A[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
+                    ktdf.data_transfer from %res_fifo_slot_b to %res_sfp_B[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
                     linalg.add ins(%res_sfp_A, %res_sfp_B : memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">) outs(%res_sfp_out : memref<64xf16, "SFP_REG">)
-                    ktdf.data_transfer from %res_sfp_out[%c0] to %res_fifo_slot_c size [64] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64>
+                    ktdf.data_transfer from %res_sfp_out[%c0] to %res_fifo_slot_c size [64] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
                     ktdf.stage_yield
                   }
 
                   ktdf.stage depend_in(%t12) depend_out(%t13) {
-                    ktdf.data_transfer from %res_fifo_slot_c size [64] to %res_lx_C[%m1, %n1] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64>, memref<?x?xf16, "LX">
+                    ktdf.data_transfer from %res_fifo_slot_c size [64] to %res_lx_C[%m1, %n1] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<?x?xf16, "LX">
                     ktdf.stage_yield
                   }
                 }
@@ -724,21 +724,21 @@ module {
                   }
 
                   ktdf.stage depend_in() depend_out(%t11) {
-                    ktdf.data_transfer from %res_lx_A[%m1, %n1] size [1, 64] to %fifo_slot_a size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64>
-                    ktdf.data_transfer from %res_lx_B[%m1, %n1] size [1, 64] to %fifo_slot_b size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64>
+                    ktdf.data_transfer from %res_lx_A[%m1, %n1] size [1, 64] to %fifo_slot_a size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+                    ktdf.data_transfer from %res_lx_B[%m1, %n1] size [1, 64] to %fifo_slot_b size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
                     ktdf.stage_yield
                   }
 
                   ktdf.stage depend_in(%t11) depend_out(%t12) {
-                    ktdf.data_transfer from %fifo_slot_a to %res_sfp_A[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64>, memref<64xf16, "SFP_REG">
-                    ktdf.data_transfer from %fifo_slot_b to %res_sfp_B[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64>, memref<64xf16, "SFP_REG">
+                    ktdf.data_transfer from %fifo_slot_a to %res_sfp_A[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
+                    ktdf.data_transfer from %fifo_slot_b to %res_sfp_B[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
                     linalg.add ins(%res_sfp_A, %res_sfp_B : memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">) outs(%res_sfp_out : memref<64xf16, "SFP_REG">)
-                    ktdf.data_transfer from %res_sfp_out[%c0] to %fifo_slot_c size [64] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64>
+                    ktdf.data_transfer from %res_sfp_out[%c0] to %fifo_slot_c size [64] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
                     ktdf.stage_yield
                   }
 
                   ktdf.stage depend_in(%t12) depend_out(%t13) {
-                    ktdf.data_transfer from %fifo_slot_c size [64] to %res_lx_C[%m1, %n1] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64>, memref<?x?xf16, "LX">
+                    ktdf.data_transfer from %fifo_slot_c size [64] to %res_lx_C[%m1, %n1] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<?x?xf16, "LX">
                     ktdf.stage_yield
                   }
                 }
@@ -841,20 +841,20 @@ module {
         %res_sfp_out = memref.alloc() {Addr = v2} : memref<64xf16, "SFP_REG">              
         scf.for %m1 = %c0 to %Cm step %c1 { ktdf.loop parallel } {
           scf.for %n1 = %c0 to %Cn step %c64 { ktdf.loop parallel } {
-            %fifo_slot_a, %fifo_slot_b = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64>,
-                                                                !ktdf.fifo.slot<"lxlu-to-sfp", 64>
-            %fifo_slot_c = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-lxsu", 64>
+            %fifo_slot_a, %fifo_slot_b = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>,
+                                                                !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+            %fifo_slot_c = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
 
-            ktdf.data_transfer from %res_lx_A[%m1, %n1] size [1, 64] to %fifo_slot_a size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64>
-            ktdf.data_transfer from %res_lx_B[%m1, %n1] size [1, 64] to %fifo_slot_b size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64>
+            ktdf.data_transfer from %res_lx_A[%m1, %n1] size [1, 64] to %fifo_slot_a size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+            ktdf.data_transfer from %res_lx_B[%m1, %n1] size [1, 64] to %fifo_slot_b size [64] : memref<?x?xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
 
-            ktdf.data_transfer from %fifo_slot_a to %res_sfp_A[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64>, memref<64xf16, "SFP_REG">
-            ktdf.data_transfer from %fifo_slot_b to %res_sfp_B[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64>, memref<64xf16, "SFP_REG">
+            ktdf.data_transfer from %fifo_slot_a to %res_sfp_A[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
+            ktdf.data_transfer from %fifo_slot_b to %res_sfp_B[%c0] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
 
             linalg.add ins(%res_sfp_A, %res_sfp_B : memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">) outs(%res_sfp_out : memref<64xf16, "SFP_REG">)
 
-            ktdf.data_transfer from %res_sfp_out[%c0] to %fifo_slot_c size [64] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64>
-            ktdf.data_transfer from %fifo_slot_c size [64] to %res_lx_C[%m1, %n1] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64>, memref<?x?xf16, "LX">
+            ktdf.data_transfer from %res_sfp_out[%c0] to %fifo_slot_c size [64] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
+            ktdf.data_transfer from %fifo_slot_c size [64] to %res_lx_C[%m1, %n1] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<?x?xf16, "LX">
             }
           }
         }
