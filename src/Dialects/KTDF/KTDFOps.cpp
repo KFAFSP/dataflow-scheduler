@@ -82,25 +82,25 @@ unsigned PipelineOp::getNumStages() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult FifoAllocateOp::verify() {
-  auto dynamicSizes = getDynamicSizes();
+  auto dynamic_sizes = getDynamicSizes();
   auto slots = getSlots();
 
   // Count the number of dynamic sizes in the result types
-  unsigned numDynamicSizes = 0;
+  unsigned num_dynamic_sizes = 0;
   for (auto slot : slots) {
-    auto slotType = mlir::cast<FifoSlotType>(slot.getType());
-    if (slotType.isDynamicNumElements()) {
-      numDynamicSizes++;
+    auto slot_type = mlir::cast<FifoSlotType>(slot.getType());
+    if (slot_type.isDynamicNumElements()) {
+      num_dynamic_sizes++;
     }
   }
 
   // Verify that the number of dynamic size operands matches the number of
   // dynamic sizes in the result types
-  if (dynamicSizes.size() != numDynamicSizes) {
+  if (dynamic_sizes.size() != num_dynamic_sizes) {
     return emitOpError("number of dynamic size operands (")
-           << dynamicSizes.size()
+           << dynamic_sizes.size()
            << ") must match number of dynamic sizes in result types ("
-           << numDynamicSizes << ")";
+           << num_dynamic_sizes << ")";
   }
 
   return success();
@@ -111,64 +111,65 @@ LogicalResult FifoAllocateOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult DataTransferOp::verify() {
-  auto sourceType = getSource().getType();
-  auto destType = getDestination().getType();
+  auto source_type = getSource().getType();
+  auto dest_type = getDestination().getType();
 
   // Verify that source and destination are not both FIFOs
-  bool sourceFifo = llvm::isa<FifoSlotType>(sourceType);
-  bool destFifo = llvm::isa<FifoSlotType>(destType);
+  bool source_fifo = llvm::isa<FifoSlotType>(source_type);
+  bool dest_fifo = llvm::isa<FifoSlotType>(dest_type);
 
-  if (sourceFifo && destFifo) {
+  if (source_fifo && dest_fifo) {
     return emitOpError("cannot transfer directly from FIFO to FIFO");
   }
 
   // Verify that at least one is a memref or FIFO
-  bool sourceMemRef = llvm::isa<MemRefType>(sourceType);
-  bool destMemRef = llvm::isa<MemRefType>(destType);
+  bool source_memref = llvm::isa<MemRefType>(source_type);
+  bool dest_memref = llvm::isa<MemRefType>(dest_type);
 
-  if (!sourceMemRef && !sourceFifo) {
+  if (!source_memref && !source_fifo) {
     return emitOpError("source must be a memref or FIFO slot");
   }
 
-  if (!destMemRef && !destFifo) {
+  if (!dest_memref && !dest_fifo) {
     return emitOpError("destination must be a memref or FIFO slot");
   }
 
   // Verify that FIFO slots have no indices specified
-  if (sourceFifo && !getSourceIndices().empty()) {
+  if (source_fifo && !getSourceIndices().empty()) {
     return emitOpError("FIFO slot source cannot have indices specified");
   }
 
-  if (destFifo && !getDestIndices().empty()) {
+  if (dest_fifo && !getDestIndices().empty()) {
     return emitOpError("FIFO slot destination cannot have indices specified");
   }
 
   // Get element types for compatibility checking
-  Type sourceElemType;
-  Type destElemType;
+  Type source_elem_type;
+  Type dest_elem_type;
 
-  if (sourceMemRef) {
-    sourceElemType = llvm::cast<MemRefType>(sourceType).getElementType();
-  } else if (sourceFifo) {
-    sourceElemType = llvm::cast<FifoSlotType>(sourceType).getElementType();
+  if (source_memref) {
+    source_elem_type = llvm::cast<MemRefType>(source_type).getElementType();
+  } else if (source_fifo) {
+    source_elem_type = llvm::cast<FifoSlotType>(source_type).getElementType();
   }
 
-  if (destMemRef) {
-    destElemType = llvm::cast<MemRefType>(destType).getElementType();
-  } else if (destFifo) {
-    destElemType = llvm::cast<FifoSlotType>(destType).getElementType();
+  if (dest_memref) {
+    dest_elem_type = llvm::cast<MemRefType>(dest_type).getElementType();
+  } else if (dest_fifo) {
+    dest_elem_type = llvm::cast<FifoSlotType>(dest_type).getElementType();
   }
 
   // Verify element type compatibility
-  if (sourceElemType && destElemType && sourceElemType != destElemType) {
+  if (source_elem_type && dest_elem_type &&
+      source_elem_type != dest_elem_type) {
     return emitOpError("source and destination element types must match, got ")
-           << sourceElemType << " and " << destElemType;
+           << source_elem_type << " and " << dest_elem_type;
   }
 
   // Verify indices and sizes are consistent for memrefs
-  auto sourceMemRefType = llvm::dyn_cast<MemRefType>(sourceType);
-  if (sourceMemRefType) {
-    unsigned rank = sourceMemRefType.getRank();
+  auto source_memref_type = llvm::dyn_cast<MemRefType>(source_type);
+  if (source_memref_type) {
+    unsigned rank = source_memref_type.getRank();
     if (!getSourceIndices().empty() && getSourceIndices().size() != rank) {
       return emitOpError("source indices count (")
              << getSourceIndices().size() << ") must match source memref rank ("
@@ -176,9 +177,9 @@ LogicalResult DataTransferOp::verify() {
     }
   }
 
-  auto destMemRefType = llvm::dyn_cast<MemRefType>(destType);
-  if (destMemRefType) {
-    unsigned rank = destMemRefType.getRank();
+  auto dest_memref_type = llvm::dyn_cast<MemRefType>(dest_type);
+  if (dest_memref_type) {
+    unsigned rank = dest_memref_type.getRank();
     if (!getDestIndices().empty() && getDestIndices().size() != rank) {
       return emitOpError("destination indices count (")
              << getDestIndices().size()
@@ -194,13 +195,13 @@ LogicalResult DataTransferOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult PipelineOp::verify() {
-  // Verify that all immediate children are StageOp
+  // Verify that all immediate children are StageOp or PrivateOp
   Block* body = getBodyBlock();
   for (Operation& op : body->getOperations()) {
-    if (!isa<StageOp>(op)) {
+    if (!isa<StageOp, PrivateOp>(op)) {
       return emitOpError(
-                 "immediate children of pipeline must be ktdf.stage "
-                 "operations, found '")
+                 "immediate children of pipeline must be ktdf.stage or "
+                 "ktdf.private operations, found '")
              << op.getName() << "'";
     }
   }
@@ -213,10 +214,10 @@ LogicalResult PipelineOp::verify() {
 //===----------------------------------------------------------------------===//
 
 ParseResult StageOp::parse(OpAsmParser& parser, OperationState& result) {
-  SmallVector<OpAsmParser::UnresolvedOperand> dependsIn;
-  SmallVector<Type> dependsInTypes;
-  SmallVector<OpAsmParser::UnresolvedOperand> dependsOut;
-  SmallVector<Type> dependsOutTypes;
+  SmallVector<OpAsmParser::UnresolvedOperand> depends_in;
+  SmallVector<Type> depends_in_types;
+  SmallVector<OpAsmParser::UnresolvedOperand> depends_out;
+  SmallVector<Type> depends_out_types;
 
   // Parse depends_in
   if (succeeded(parser.parseOptionalKeyword("depends_in"))) {
@@ -224,8 +225,8 @@ ParseResult StageOp::parse(OpAsmParser& parser, OperationState& result) {
 
     if (failed(parser.parseOptionalKeyword("none"))) {
       // Parse token operands
-      if (parser.parseOperandList(dependsIn) || parser.parseColon() ||
-          parser.parseTypeList(dependsInTypes))
+      if (parser.parseOperandList(depends_in) || parser.parseColon() ||
+          parser.parseTypeList(depends_in_types))
         return failure();
     }
 
@@ -238,8 +239,8 @@ ParseResult StageOp::parse(OpAsmParser& parser, OperationState& result) {
 
     if (failed(parser.parseOptionalKeyword("none"))) {
       // Parse token operands
-      if (parser.parseOperandList(dependsOut) || parser.parseColon() ||
-          parser.parseTypeList(dependsOutTypes))
+      if (parser.parseOperandList(depends_out) || parser.parseColon() ||
+          parser.parseTypeList(depends_out_types))
         return failure();
     }
 
@@ -247,10 +248,10 @@ ParseResult StageOp::parse(OpAsmParser& parser, OperationState& result) {
   }
 
   // Resolve operands
-  if (parser.resolveOperands(dependsIn, dependsInTypes,
+  if (parser.resolveOperands(depends_in, depends_in_types,
                              parser.getCurrentLocation(), result.operands))
     return failure();
-  if (parser.resolveOperands(dependsOut, dependsOutTypes,
+  if (parser.resolveOperands(depends_out, depends_out_types,
                              parser.getCurrentLocation(), result.operands))
     return failure();
   // Parse the body region
@@ -266,8 +267,8 @@ ParseResult StageOp::parse(OpAsmParser& parser, OperationState& result) {
   if (!result.attributes.get("operandSegmentSizes")) {
     result.addAttribute("operandSegmentSizes",
                         parser.getBuilder().getDenseI32ArrayAttr(
-                            {static_cast<int32_t>(dependsIn.size()),
-                             static_cast<int32_t>(dependsOut.size())}));
+                            {static_cast<int32_t>(depends_in.size()),
+                             static_cast<int32_t>(depends_out.size())}));
   }
 
   return success();
@@ -306,4 +307,113 @@ void StageOp::print(OpAsmPrinter& p) {
   // Print attributes.
   p.printOptionalAttrDict((*this)->getAttrs(),
                           /*elidedAttrs=*/{"operandSegmentSizes"});
+}
+
+//===----------------------------------------------------------------------===//
+// PrivateOp
+//===----------------------------------------------------------------------===//
+
+PrivateYieldOp PrivateOp::getYieldOp() {
+  return cast<PrivateYieldOp>(getBodyBlock()->getTerminator());
+}
+
+LogicalResult PrivateOp::verify() {
+  // Verify that the region has a terminator
+  Block* body = getBodyBlock();
+  if (body->empty() || !body->back().hasTrait<OpTrait::IsTerminator>()) {
+    return emitOpError("region must be terminated with ktdf.private_yield");
+  }
+
+  // Verify that the terminator is a PrivateYieldOp
+  auto yield_op = dyn_cast<PrivateYieldOp>(body->getTerminator());
+  if (!yield_op) {
+    return emitOpError("region must be terminated with ktdf.private_yield");
+  }
+
+  // Verify that the number and types of yield operands match the results
+  auto yield_operands = yield_op.getOperands();
+  auto results = getResults();
+
+  if (yield_operands.size() != results.size()) {
+    return emitOpError("yield operands count (")
+           << yield_operands.size() << ") must match results count ("
+           << results.size() << ")";
+  }
+
+  for (auto [yield_operand, result] : llvm::zip(yield_operands, results)) {
+    if (yield_operand.getType() != result.getType()) {
+      return emitOpError("yield operand type ")
+             << yield_operand.getType() << " must match result type "
+             << result.getType();
+    }
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// StageOp Verification Helper
+//===----------------------------------------------------------------------===//
+
+// Helper function to check if a value originates from create_token or private
+// operation yielding a token
+static bool isValidTokenSource(Value token_value) {
+  Operation* defining_op = token_value.getDefiningOp();
+  if (!defining_op) {
+    return false;
+  }
+
+  // Check if it's directly from create_token
+  if (isa<CreateTokenOp>(defining_op)) {
+    return true;
+  }
+
+  // Check if it's from a private operation
+  if (auto private_op = dyn_cast<PrivateOp>(defining_op)) {
+    // Get the result index
+    auto result_index = llvm::cast<OpResult>(token_value).getResultNumber();
+
+    // Get the corresponding yield operand
+    auto yield_op = private_op.getYieldOp();
+    if (result_index >= yield_op.getOperands().size()) {
+      return false;
+    }
+
+    Value yield_operand = yield_op.getOperands()[result_index];
+
+    // Walk up the chain to find the ultimate source
+    // The yielded value must trace back to a create_token
+    Operation* yield_source = yield_operand.getDefiningOp();
+    if (!yield_source) {
+      return false;
+    }
+
+    return isa<CreateTokenOp>(yield_source);
+  }
+
+  return false;
+}
+
+LogicalResult StageOp::verify() {
+  // Verify that all depends_in tokens come from valid sources
+  for (Value token : getDependsIn()) {
+    if (!isValidTokenSource(token)) {
+      return emitOpError(
+          "depends_in operand must originate from ktdf.create_token or "
+          "ktdf.private operation yielding a token created by "
+          "ktdf.create_token");
+    }
+  }
+
+  // Verify that all depends_out tokens come from valid sources
+  for (Value token : getDependsOut()) {
+    if (!isValidTokenSource(token)) {
+      return emitOpError(
+          "depends_out operand must originate from ktdf.create_token or "
+          "ktdf.private operation yielding a token created by "
+          "ktdf.create_token");
+    }
+  }
+
+  return success();
 }

@@ -233,6 +233,7 @@ def KTDF_StageOp : KTDF_Op<"stage", [
     HasParent<"PipelineOp">,
     AttrSizedOperandSegments
   ]> {
+  let hasVerifier = 1;
   let summary = "Defines a stage within a pipeline";
   let description = [{
     The `ktdf.stage` operation defines a single stage within a pipeline.
@@ -408,6 +409,90 @@ def KTDF_DataTransferOp : KTDF_Op<"data_transfer", [
         return TransferType::MemRefToFifo;
       return TransferType::FifoToMemRef;
     }
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Private Region Operations
+//===----------------------------------------------------------------------===//
+
+def KTDF_PrivateYieldOp : KTDF_Op<"private_yield", [
+    Pure,
+    ReturnLike,
+    Terminator,
+    HasParent<"PrivateOp">
+  ]> {
+  let summary = "Yield operation for private regions";
+  let description = [{
+    The `ktdf.private_yield` operation is a terminator for `ktdf.private`
+    regions. It yields zero or more values from the private region back to
+    the parent operation.
+  }];
+
+  let arguments = (ins
+    Variadic<AnyType>:$operands
+  );
+
+  let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
+
+  let builders = [
+    OpBuilder<(ins), [{
+      build($_builder, $_state, ValueRange{});
+    }]>
+  ];
+}
+
+def KTDF_PrivateOp : KTDF_Op<"private", [
+    SingleBlock,
+    HasParent<"PipelineOp">
+  ]> {
+  let summary = "Define a private region with yielded results";
+  let description = [{
+    The `ktdf.private` operation defines a region yielding resources
+    (tokens, memref allocations) private to its parent pipeline operation.
+    
+    Example:
+    ```mlir
+    ktdf.pipeline {
+      %1:2 = ktdf.private -> (memref<64xf16, "SFP_REG">, !ktdf.token) {
+        %sfp_A = memref.alloc() : memref<64xf16, "SFP_REG">           
+        %t = ktdf.create_token : !ktdf.token
+        ktdf.private_yield %sfp_A, %t : memref<64xf16, "SFP_REG">, !ktdf.token
+      }
+
+      // Use the token in a stage
+      ktdf.stage depends_in(%1#1) depends_out(none) {
+        // Stage operations
+      }
+    }
+    ```
+  }];
+
+  let results = (outs
+    Variadic<AnyType>:$results
+  );
+
+  let regions = (region SizedRegion<1>:$body);
+
+  let assemblyFormat = [{
+    (`->` `(` type($results)^ `)`)?  $body attr-dict-with-keyword
+  }];
+
+  let hasVerifier = 1;
+
+  let builders = [
+    OpBuilder<(ins), [{
+      Region* bodyRegion = $_state.addRegion();
+      bodyRegion->emplaceBlock();
+    }]>
+  ];
+
+  let extraClassDeclaration = [{
+    /// Get the block containing the private region body.
+    Block *getBodyBlock() { return &getBody().front(); }
+
+    /// Get the yield operation terminating this private region.
+    PrivateYieldOp getYieldOp();
   }];
 }
 
