@@ -6,4 +6,9 @@ add_library(SchedulerTransforms
     DummyTransform.cpp
 )
 
+target_link_libraries(SchedulerTransforms
+    PUBLIC
+    KTDFOps
+)
+
 add_dependencies(SchedulerTransforms SchedulerTransformsPassIncGen)

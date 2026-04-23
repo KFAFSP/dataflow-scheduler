@@ -1,5 +1,5 @@
 
-// RUN: scheduler --kEmitDFIR %s --mlir-timing 2>/tmp/stderr.$$
+// RUN: scheduler --kEmitDFIR --print-ir-after-all=false %s --mlir-timing 2>/tmp/stderr.$$
 // RUN: cat /tmp/stderr.$$ | tail -n +7  | awk '{print $4 " " $5}' | FileCheck --check-prefix=CHECK-IR-PASS %s
 
 // CHECK-IR-PASS-LABEL:     DummyTransformPass

@@ -45,27 +45,19 @@ namespace mlir {
 class DialectRegistry;
 class PassPipelineCLParser;
 class PassManager;
+class MLIRContext;
 }  // end namespace mlir
 
 using namespace mlir;
 namespace scheduler {
 
 /// Configuration options for the scheduler tool.
-/// This is based on KtirOptMainConfig from KTIR.
 class SchedulerOptMainConfig {
  public:
-  /// Register the options as global LLVM command line options.
-  static void registerCLOptions(DialectRegistry& dialectRegistry);
+  static void registerCLOptions(DialectRegistry &dialectRegistry);
+  static SchedulerOptMainConfig createFromCLOptions();
 
-  /// Create a new config with the default set from the CL options.
-  static SchedulerOptMainConfig& createFromCLOptions();
-
-  ///
-  /// Options.
-  ///
-
-  /// Allow operation with no registered dialects.
-  SchedulerOptMainConfig& allowUnregisteredDialects(bool allow) {
+  SchedulerOptMainConfig &allowUnregisteredDialects(bool allow) {
     allowUnregisteredDialectsFlag = allow;
     return *this;
   }
@@ -73,54 +65,61 @@ class SchedulerOptMainConfig {
     return allowUnregisteredDialectsFlag;
   }
 
-  /// Set the debug configuration to use.
-  SchedulerOptMainConfig& setDebugConfig(tracing::DebugConfig config) {
+  SchedulerOptMainConfig &setDebugConfig(tracing::DebugConfig config) {
     debugConfig = std::move(config);
     return *this;
   }
   tracing::DebugConfig& getDebugConfig() { return debugConfig; }
   const tracing::DebugConfig& getDebugConfig() const { return debugConfig; }
 
-  /// Print the pass-pipeline as text before executing.
-  SchedulerOptMainConfig& dumpPassPipeline(bool dump) {
+  SchedulerOptMainConfig &dumpPassPipeline(bool dump) {
     dumpPassPipelineFlag = dump;
     return *this;
   }
   bool shouldDumpPassPipeline() const { return dumpPassPipelineFlag; }
 
-  /// Set the output format to bytecode instead of textual IR.
-  SchedulerOptMainConfig& emitBytecode(bool emit) {
+  SchedulerOptMainConfig &emitBytecode(bool emit) {
     emitBytecodeFlag = emit;
     return *this;
   }
   bool shouldEmitBytecode() const { return emitBytecodeFlag; }
 
-  /// Set the callback to populate the pass manager.
-  SchedulerOptMainConfig& setPassPipelineSetupFn(
-      std::function<LogicalResult(PassManager&)> callback) {
+  SchedulerOptMainConfig &setPassPipelineSetupFn(
+      std::function<LogicalResult(PassManager &)> callback) {
     passPipelineCallback = std::move(callback);
     return *this;
   }
 
-  /// Set the parser to use to populate the pass manager.
-  SchedulerOptMainConfig& setPassPipelineParser(
-      const PassPipelineCLParser& parser);
+  SchedulerOptMainConfig &setPassPipelineParser(
+      const PassPipelineCLParser &parser);
 
-  /// Populate the passmanager, if any callback was set.
-  LogicalResult setupPassPipeline(PassManager& pm) const {
-    if (passPipelineCallback) return passPipelineCallback(pm);
+  LogicalResult setupPassPipeline(PassManager &pm) const {
+    if (passPipelineCallback)
+      return passPipelineCallback(pm);
     return success();
   }
 
-  /// Show the registered dialects before trying to load the input file.
-  SchedulerOptMainConfig& showDialects(bool show) {
+  SchedulerOptMainConfig &showDialects(bool show) {
     showDialectsFlag = show;
     return *this;
   }
   bool shouldShowDialects() const { return showDialectsFlag; }
 
-  /// Set whether to run the verifier after each transformation pass.
-  SchedulerOptMainConfig& verifyPasses(bool verify) {
+  SchedulerOptMainConfig &splitInputFile(
+      std::string splitMarker = kDefaultSplitMarker) {
+    splitInputFileFlag = std::move(splitMarker);
+    return *this;
+  }
+  StringRef inputSplitMarker() const { return splitInputFileFlag; }
+
+  SchedulerOptMainConfig &outputSplitMarker(
+      std::string splitMarker = kDefaultSplitMarker) {
+    outputSplitMarkerFlag = std::move(splitMarker);
+    return *this;
+  }
+  StringRef getOutputSplitMarkerFlag() const { return outputSplitMarkerFlag; }
+
+  SchedulerOptMainConfig &verifyPasses(bool verify) {
     verifyPassesFlag = verify;
     return *this;
   }
@@ -128,29 +127,21 @@ class SchedulerOptMainConfig {
 
   bool shouldPrintFinalIr() const { return printFinalIRFlag; }
 
+  std::string getInputFileName() const { return inputFileName; }
+  std::string getOutputFileName() const { return outputFileName; }
+
  protected:
-  /// Allow operation with no registered dialects.
+  std::string inputFileName = "-";
+  std::string outputFileName = "-";
   bool allowUnregisteredDialectsFlag = false;
-
-  /// Configuration for the debugging hooks.
   tracing::DebugConfig debugConfig;
-
-  /// Print the pipeline that will be run.
   bool dumpPassPipelineFlag = false;
-
-  /// Emit bytecode instead of textual assembly when generating output.
   bool emitBytecodeFlag = false;
-
-  /// The callback to populate the pass manager.
-  std::function<LogicalResult(PassManager&)> passPipelineCallback;
-
-  /// Show the registered dialects before trying to load the input file.
+  std::function<LogicalResult(PassManager &)> passPipelineCallback;
   bool showDialectsFlag = false;
-
-  /// Run the verifier after each transformation pass.
+  std::string splitInputFileFlag = "";
+  std::string outputSplitMarkerFlag = kDefaultSplitMarker;
   bool verifyPassesFlag = true;
-
-  /// Print final ir after all transformation passes
   bool printFinalIRFlag = true;
 };
 
@@ -166,6 +157,8 @@ LogicalResult SchedulerOptMain(int argc, char** argv, llvm::StringRef toolName,
 
 void registerPassesForScheduler();
 void registerPassPipelinesForScheduler();
+void registerAndParseCLIOptions(int argc, char **argv, llvm::StringRef toolName,
+                                DialectRegistry &registry);
 
 }  // end namespace scheduler
 
