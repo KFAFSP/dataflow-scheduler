@@ -1,6 +1,6 @@
 // RUN: scheduler %s | scheduler | FileCheck %s
 
-// Round trip test for memory space attribute
+// Round tripping test for memory space attribute
 
 // CHECK-LABEL: func.func @test_memory_space_attr
 // CHECK: memref<4096xi32, #ktdf.memory_space<"HBM">>
