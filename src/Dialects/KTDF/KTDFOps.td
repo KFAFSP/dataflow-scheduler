@@ -380,6 +380,24 @@ def KTDF_DataTransferOp : KTDF_Op<"data_transfer", [
 
   let hasVerifier = 1;
 
+  let builders = [
+    // Build with mixed static/dynamic sizes (OpFoldResult can be either Attribute or Value)
+    OpBuilder<(ins "Value":$source,
+      "ValueRange":$sourceIndices,
+      "ArrayRef<OpFoldResult>":$sourceSizes,
+      "Value":$destination,
+      "ValueRange":$destIndices,
+      "ArrayRef<OpFoldResult>":$destSizes)>,
+    
+    // Build with all static sizes
+    OpBuilder<(ins "Value":$source,
+      "ValueRange":$sourceIndices,
+      "ArrayRef<int64_t>":$sourceSizes,
+      "Value":$destination,
+      "ValueRange":$destIndices,
+      "ArrayRef<int64_t>":$destSizes)>
+  ];
+
   let extraClassDeclaration = [{
     /// Returns true if the source is a memref
     bool isSourceMemRef() {

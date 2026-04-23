@@ -176,119 +176,6 @@ LogicalResult FifoAllocateOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
-// DataTransferOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult DataTransferOp::verify() {
-  auto source_type = getSource().getType();
-  auto dest_type = getDestination().getType();
-
-  // Verify that source and destination are not both FIFOs
-  bool source_fifo = llvm::isa<FifoSlotType>(source_type);
-  bool dest_fifo = llvm::isa<FifoSlotType>(dest_type);
-
-  if (source_fifo && dest_fifo) {
-    return emitOpError("cannot transfer directly from FIFO to FIFO");
-  }
-
-  // Verify that at least one is a memref or FIFO
-  bool source_memref = llvm::isa<MemRefType>(source_type);
-  bool dest_memref = llvm::isa<MemRefType>(dest_type);
-
-  if (!source_memref && !source_fifo) {
-    return emitOpError("source must be a memref or FIFO slot");
-  }
-
-  if (!dest_memref && !dest_fifo) {
-    return emitOpError("destination must be a memref or FIFO slot");
-  }
-
-  // Verify that FIFO slots have no indices specified
-  if (source_fifo && !getSourceIndices().empty()) {
-    return emitOpError("FIFO slot source cannot have indices specified");
-  }
-
-  if (dest_fifo && !getDestIndices().empty()) {
-    return emitOpError("FIFO slot destination cannot have indices specified");
-  }
-
-  // Get element types for compatibility checking
-  Type source_elem_type;
-  Type dest_elem_type;
-
-  if (source_memref) {
-    source_elem_type = llvm::cast<MemRefType>(source_type).getElementType();
-  } else if (source_fifo) {
-    source_elem_type = llvm::cast<FifoSlotType>(source_type).getElementType();
-  }
-
-  if (dest_memref) {
-    dest_elem_type = llvm::cast<MemRefType>(dest_type).getElementType();
-  } else if (dest_fifo) {
-    dest_elem_type = llvm::cast<FifoSlotType>(dest_type).getElementType();
-  }
-
-  // Verify element type compatibility
-  if (source_elem_type && dest_elem_type &&
-      source_elem_type != dest_elem_type) {
-    return emitOpError("source and destination element types must match, got ")
-           << source_elem_type << " and " << dest_elem_type;
-  }
-
-  // Verify indices and sizes are consistent for memrefs
-  auto source_memref_type = llvm::dyn_cast<MemRefType>(source_type);
-  if (source_memref_type) {
-    unsigned rank = source_memref_type.getRank();
-    if (!getSourceIndices().empty() && getSourceIndices().size() != rank) {
-      return emitOpError("source indices count (")
-             << getSourceIndices().size() << ") must match source memref rank ("
-             << rank << ")";
-    }
-  }
-
-  auto dest_memref_type = llvm::dyn_cast<MemRefType>(dest_type);
-  if (dest_memref_type) {
-    unsigned rank = dest_memref_type.getRank();
-    if (!getDestIndices().empty() && getDestIndices().size() != rank) {
-      return emitOpError("destination indices count (")
-             << getDestIndices().size()
-             << ") must match destination memref rank (" << rank << ")";
-    }
-  }
-
-  // Verify that static and dynamic sizes are consistent
-  auto verifySize = [&](OperandRange dynamicSizes,
-                        std::optional<ArrayRef<int64_t>> staticSizes,
-                        StringRef name) -> LogicalResult {
-    if (!staticSizes) {
-      // All sizes are dynamic - no verification needed
-      return success();
-    }
-
-    ArrayRef<int64_t> staticValues = *staticSizes;
-    unsigned numDynamic = llvm::count_if(
-        staticValues, [](int64_t val) { return ShapedType::isDynamic(val); });
-
-    if (dynamicSizes.size() != numDynamic) {
-      return emitOpError("number of dynamic ")
-             << name << " sizes (" << dynamicSizes.size()
-             << ") must match number of dynamic entries in static_" << name
-             << "_sizes (" << numDynamic << ")";
-    }
-
-    return success();
-  };
-
-  if (failed(verifySize(getSourceSizes(), getStaticSourceSizes(), "source")))
-    return failure();
-
-  if (failed(verifySize(getDestSizes(), getStaticDestSizes(), "dest")))
-    return failure();
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
 // PipelineOp
 //===----------------------------------------------------------------------===//
 
@@ -407,42 +294,26 @@ void StageOp::print(OpAsmPrinter& p) {
                           /*elidedAttrs=*/{"operandSegmentSizes"});
 }
 
-//===----------------------------------------------------------------------===//
-// PrivateOp
-//===----------------------------------------------------------------------===//
+static bool isValidTokenSource(Value token_value);
 
-PrivateYieldOp PrivateOp::getYieldOp() {
-  return cast<PrivateYieldOp>(getBodyBlock()->getTerminator());
-}
-
-LogicalResult PrivateOp::verify() {
-  // Verify that the region has a terminator
-  Block* body = getBodyBlock();
-  if (body->empty() || !body->back().hasTrait<OpTrait::IsTerminator>()) {
-    return emitOpError("region must be terminated with ktdf.private_yield");
+LogicalResult StageOp::verify() {
+  // Verify that all depends_in tokens come from valid sources
+  for (Value token : getDependsIn()) {
+    if (!isValidTokenSource(token)) {
+      return emitOpError(
+          "depends_in operand must originate from ktdf.create_token or "
+          "ktdf.private operation yielding a token created by "
+          "ktdf.create_token");
+    }
   }
 
-  // Verify that the terminator is a PrivateYieldOp
-  auto yield_op = dyn_cast<PrivateYieldOp>(body->getTerminator());
-  if (!yield_op) {
-    return emitOpError("region must be terminated with ktdf.private_yield");
-  }
-
-  // Verify that the number and types of yield operands match the results
-  auto yield_operands = yield_op.getOperands();
-  auto results = getResults();
-
-  if (yield_operands.size() != results.size()) {
-    return emitOpError("yield operands count (")
-           << yield_operands.size() << ") must match results count ("
-           << results.size() << ")";
-  }
-
-  for (auto [yield_operand, result] : llvm::zip(yield_operands, results)) {
-    if (yield_operand.getType() != result.getType()) {
-      return emitOpError("yield operand type ")
-             << yield_operand.getType() << " must match result type "
-             << result.getType();
+  // Verify that all depends_out tokens come from valid sources
+  for (Value token : getDependsOut()) {
+    if (!isValidTokenSource(token)) {
+      return emitOpError(
+          "depends_out operand must originate from ktdf.create_token or "
+          "ktdf.private operation yielding a token created by "
+          "ktdf.create_token");
     }
   }
 
@@ -492,26 +363,199 @@ static bool isValidTokenSource(Value token_value) {
   return false;
 }
 
-LogicalResult StageOp::verify() {
-  // Verify that all depends_in tokens come from valid sources
-  for (Value token : getDependsIn()) {
-    if (!isValidTokenSource(token)) {
-      return emitOpError(
-          "depends_in operand must originate from ktdf.create_token or "
-          "ktdf.private operation yielding a token created by "
-          "ktdf.create_token");
-    }
+//===----------------------------------------------------------------------===//
+// PrivateOp
+//===----------------------------------------------------------------------===//
+
+PrivateYieldOp PrivateOp::getYieldOp() {
+  return cast<PrivateYieldOp>(getBodyBlock()->getTerminator());
+}
+
+LogicalResult PrivateOp::verify() {
+  // Verify that the region has a terminator
+  Block* body = getBodyBlock();
+  if (body->empty() || !body->back().hasTrait<OpTrait::IsTerminator>()) {
+    return emitOpError("region must be terminated with ktdf.private_yield");
   }
 
-  // Verify that all depends_out tokens come from valid sources
-  for (Value token : getDependsOut()) {
-    if (!isValidTokenSource(token)) {
-      return emitOpError(
-          "depends_out operand must originate from ktdf.create_token or "
-          "ktdf.private operation yielding a token created by "
-          "ktdf.create_token");
+  // Verify that the terminator is a PrivateYieldOp
+  auto yield_op = dyn_cast<PrivateYieldOp>(body->getTerminator());
+  if (!yield_op) {
+    return emitOpError("region must be terminated with ktdf.private_yield");
+  }
+
+  // Verify that the number and types of yield operands match the results
+  auto yield_operands = yield_op.getOperands();
+  auto results = getResults();
+
+  if (yield_operands.size() != results.size()) {
+    return emitOpError("yield operands count (")
+           << yield_operands.size() << ") must match results count ("
+           << results.size() << ")";
+  }
+
+  for (auto [yield_operand, result] : llvm::zip(yield_operands, results)) {
+    if (yield_operand.getType() != result.getType()) {
+      return emitOpError("yield operand type ")
+             << yield_operand.getType() << " must match result type "
+             << result.getType();
     }
   }
 
   return success();
+}
+
+
+//===----------------------------------------------------------------------===//
+// DataTransferOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult DataTransferOp::verify() {
+  auto source_type = getSource().getType();
+  auto dest_type = getDestination().getType();
+
+  // Verify that source and destination are not both FIFOs
+  bool source_fifo = llvm::isa<FifoSlotType>(source_type);
+  bool dest_fifo = llvm::isa<FifoSlotType>(dest_type);
+
+  if (source_fifo && dest_fifo) {
+    return emitOpError("cannot transfer directly from FIFO to FIFO");
+  }
+
+  // Verify that at least one is a memref or FIFO
+  bool source_memref = llvm::isa<MemRefType>(source_type);
+  bool dest_memref = llvm::isa<MemRefType>(dest_type);
+
+  if (!source_memref && !source_fifo) {
+    return emitOpError("source must be a memref or FIFO slot");
+  }
+
+  if (!dest_memref && !dest_fifo) {
+    return emitOpError("destination must be a memref or FIFO slot");
+  }
+
+  // Verify that FIFO slots have no indices specified
+  if (source_fifo && !getSourceIndices().empty()) {
+    return emitOpError("FIFO slot source cannot have indices specified");
+  }
+
+  if (dest_fifo && !getDestIndices().empty()) {
+    return emitOpError("FIFO slot destination cannot have indices specified");
+  }
+
+  // Get element types for compatibility checking
+  Type source_elem_type;
+  Type dest_elem_type;
+
+  if (source_memref) {
+    source_elem_type = llvm::cast<MemRefType>(source_type).getElementType();
+  } else if (source_fifo) {
+    source_elem_type = llvm::cast<FifoSlotType>(source_type).getElementType();
+  }
+
+  if (dest_memref) {
+    dest_elem_type = llvm::cast<MemRefType>(dest_type).getElementType();
+  } else if (dest_fifo) {
+    dest_elem_type = llvm::cast<FifoSlotType>(dest_type).getElementType();
+  }
+
+  // Verify element type compatibility
+  if (source_elem_type && dest_elem_type &&
+      source_elem_type != dest_elem_type) {
+    return emitOpError("source and destination element types must match, got ")
+           << source_elem_type << " and " << dest_elem_type;
+  }
+
+  // Verify indices and sizes are consistent for memrefs
+  auto source_memref_type = llvm::dyn_cast<MemRefType>(source_type);
+  if (source_memref_type) {
+    unsigned rank = source_memref_type.getRank();
+    if (!getSourceIndices().empty() && getSourceIndices().size() != rank) {
+      return emitOpError("source indices count (")
+             << getSourceIndices().size() << ") must match source memref rank ("
+             << rank << ")";
+    }
+  }
+
+  auto dest_memref_type = llvm::dyn_cast<MemRefType>(dest_type);
+  if (dest_memref_type) {
+    unsigned rank = dest_memref_type.getRank();
+    if (!getDestIndices().empty() && getDestIndices().size() != rank) {
+      return emitOpError("destination indices count (")
+             << getDestIndices().size()
+             << ") must match destination memref rank (" << rank << ")";
+    }
+  }
+
+  // Verify that static and dynamic sizes are consistent
+  auto verifySize = [&](OperandRange dynamicSizes,
+                        std::optional<ArrayRef<int64_t>> staticSizes,
+                        StringRef name) -> LogicalResult {
+    if (!staticSizes) {
+      // All sizes are dynamic - no verification needed
+      return success();
+    }
+
+    ArrayRef<int64_t> staticValues = *staticSizes;
+    unsigned numDynamic = llvm::count_if(
+        staticValues, [](int64_t val) { return ShapedType::isDynamic(val); });
+
+    if (dynamicSizes.size() != numDynamic) {
+      return emitOpError("number of dynamic ")
+             << name << " sizes (" << dynamicSizes.size()
+             << ") must match number of dynamic entries in static_" << name
+             << "_sizes (" << numDynamic << ")";
+    }
+
+    return success();
+  };
+
+  if (failed(verifySize(getSourceSizes(), getStaticSourceSizes(), "source")))
+    return failure();
+
+  if (failed(verifySize(getDestSizes(), getStaticDestSizes(), "dest")))
+    return failure();
+
+  return success();
+}
+
+// Build with mixed static/dynamic sizes (OpFoldResult can be either Attribute
+// or Value)
+void DataTransferOp::build(OpBuilder& builder, OperationState& result,
+                           Value source, ValueRange sourceIndices,
+                           ArrayRef<OpFoldResult> sourceSizes,
+                           Value destination, ValueRange destIndices,
+                           ArrayRef<OpFoldResult> destSizes) {
+  SmallVector<int64_t> staticSourceSizes, staticDestSizes;
+  SmallVector<Value> dynamicSourceSizes, dynamicDestSizes;
+
+  // Dispatch OpFoldResults into static attributes and dynamic values
+  dispatchIndexOpFoldResults(sourceSizes, dynamicSourceSizes,
+                             staticSourceSizes);
+  dispatchIndexOpFoldResults(destSizes, dynamicDestSizes, staticDestSizes);
+
+  // Build the operation with separated static and dynamic components
+  build(builder, result, source, sourceIndices, dynamicSourceSizes, destination,
+        destIndices, dynamicDestSizes,
+        builder.getDenseI64ArrayAttr(staticSourceSizes),
+        builder.getDenseI64ArrayAttr(staticDestSizes));
+}
+
+// Build with all static sizes
+void DataTransferOp::build(OpBuilder& builder, OperationState& result,
+                           Value source, ValueRange sourceIndices,
+                           ArrayRef<int64_t> sourceSizes, Value destination,
+                           ValueRange destIndices,
+                           ArrayRef<int64_t> destSizes) {
+  // Convert static sizes to OpFoldResult (as attributes)
+  SmallVector<OpFoldResult> sourceSizeValues = llvm::map_to_vector<4>(
+      sourceSizes,
+      [&](int64_t v) -> OpFoldResult { return builder.getI64IntegerAttr(v); });
+  SmallVector<OpFoldResult> destSizeValues = llvm::map_to_vector<4>(
+      destSizes,
+      [&](int64_t v) -> OpFoldResult { return builder.getI64IntegerAttr(v); });
+
+  // Delegate to the OpFoldResult builder
+  build(builder, result, source, sourceIndices, sourceSizeValues, destination,
+        destIndices, destSizeValues);
 }
