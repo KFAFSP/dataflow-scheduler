@@ -52,6 +52,7 @@ void KTDFDialect::initialize() {
 
       >();
   registerTypes();
+  registerAttributes();
 }
 
 //===----------------------------------------------------------------------===//

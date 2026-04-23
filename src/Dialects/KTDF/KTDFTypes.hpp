@@ -44,6 +44,11 @@ enum class FifoType : uint32_t;
 #define GET_TYPEDEF_CLASSES
 #include "src/Dialects/KTDF/KTDFTypes.hpp.inc"
 
+/// Include the auto-generated header file containing the declarations of the
+/// KTDF attributes.
+#define GET_ATTRDEF_CLASSES
+#include "src/Dialects/KTDF/KTDFTypesAttributes.hpp.inc"
+
 namespace mlir {
 namespace ktdf {
 

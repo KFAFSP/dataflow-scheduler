@@ -39,6 +39,13 @@ using namespace mlir::ktdf;
 #include "src/Dialects/KTDF/KTDFTypes.cpp.inc"
 
 //===----------------------------------------------------------------------===//
+// Tablegen Attribute Definitions
+//===----------------------------------------------------------------------===//
+
+#define GET_ATTRDEF_CLASSES
+#include "src/Dialects/KTDF/KTDFTypesAttributes.cpp.inc"
+
+//===----------------------------------------------------------------------===//
 // FifoSlotType
 //===----------------------------------------------------------------------===//
 
@@ -99,6 +106,17 @@ Type FifoSlotType::parse(AsmParser& parser) {
 
 //===----------------------------------------------------------------------===//
 // KTDFDialect Type Registration
+
+//===----------------------------------------------------------------------===//
+// KTDFDialect Attribute Registration
+//===----------------------------------------------------------------------===//
+
+void KTDFDialect::registerAttributes() {
+  addAttributes<
+#define GET_ATTRDEF_LIST
+#include "src/Dialects/KTDF/KTDFTypesAttributes.cpp.inc"
+      >();
+}
 //===----------------------------------------------------------------------===//
 
 void KTDFDialect::registerTypes() {

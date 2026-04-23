@@ -9,10 +9,9 @@ set(SCHEDULER_MLIR_LIBS
 )
 
 set(SCHEDULER_LIBS
-    SchedulerInitAllDialects
     SchedulerDriverLib
     SchedulerTransforms
-) 
+)
 
 add_executable(scheduler
     scheduler.cpp

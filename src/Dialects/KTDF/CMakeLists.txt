@@ -18,6 +18,11 @@ scheduler_tablegen(KTDFTypes.hpp.inc -gen-typedef-decls -typedefs-dialect=ktdf)
 scheduler_tablegen(KTDFTypes.cpp.inc -gen-typedef-defs -typedefs-dialect=ktdf)
 add_public_tablegen_target(KTDFTypesIncGen)
 
+set(LLVM_TARGET_DEFINITIONS KTDFAttributes.td)
+scheduler_tablegen(KTDFTypesAttributes.hpp.inc -gen-attrdef-decls -attrdefs-dialect=ktdf)
+scheduler_tablegen(KTDFTypesAttributes.cpp.inc -gen-attrdef-defs -attrdefs-dialect=ktdf)
+add_public_tablegen_target(KTDFAttributesIncGen)
+
 add_library(KTDFOps
         KTDFOps.cpp
         KTDFOps.hpp
@@ -30,4 +35,4 @@ target_include_directories(KTDFOps
         ${PROJECT_BINARY_DIR}
 )
 
-add_dependencies(KTDFOps KTDFEnumsIncGen KTDFOpsIncGen KTDFTypesIncGen)
+add_dependencies(KTDFOps KTDFEnumsIncGen KTDFOpsIncGen KTDFTypesIncGen KTDFAttributesIncGen)
