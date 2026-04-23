@@ -363,16 +363,18 @@ def KTDF_DataTransferOp : KTDF_Op<"data_transfer", [
     Variadic<Index>:$source_sizes,
     AnyTypeOf<[AnyMemRef, KTDF_FifoSlotType]>:$destination,
     Variadic<Index>:$dest_indices,
-    Variadic<Index>:$dest_sizes
+    Variadic<Index>:$dest_sizes,
+    OptionalAttr<DenseI64ArrayAttr>:$static_source_sizes,
+    OptionalAttr<DenseI64ArrayAttr>:$static_dest_sizes
   );
 
   let assemblyFormat = [{
     `from` $source
     (`[` $source_indices^ `]`)?
-    (`size` `[` $source_sizes^ `]`)?
+    (`size` custom<SizesList>($source_sizes, $static_source_sizes)^)?
     `to` $destination
     (`[` $dest_indices^ `]`)?
-    (`size` `[` $dest_sizes^ `]`)?
+    (`size` custom<SizesList>($dest_sizes, $static_dest_sizes)^)?
     attr-dict `:` type($source) `,` type($destination)
   }];
 
@@ -408,6 +410,80 @@ def KTDF_DataTransferOp : KTDF_Op<"data_transfer", [
       if (isSourceMemRef() && isDestFifo())
         return TransferType::MemRefToFifo;
       return TransferType::FifoToMemRef;
+    }
+    
+    /// Get the mixed source sizes (combining static and dynamic)
+    SmallVector<OpFoldResult> getMixedSourceSizes() {
+      SmallVector<OpFoldResult> result;
+      if (auto staticSizes = getStaticSourceSizes()) {
+        unsigned dynamicIdx = 0;
+        for (int64_t size : *staticSizes) {
+          if (ShapedType::isDynamic(size)) {
+            result.push_back(getSourceSizes()[dynamicIdx++]);
+          } else {
+            result.push_back(IntegerAttr::get(IndexType::get(getContext()), size));
+          }
+        }
+      } else {
+        // All dynamic
+        for (Value size : getSourceSizes()) {
+          result.push_back(size);
+        }
+      }
+      return result;
+    }
+    
+    /// Get the mixed destination sizes (combining static and dynamic)
+    SmallVector<OpFoldResult> getMixedDestSizes() {
+      SmallVector<OpFoldResult> result;
+      if (auto staticSizes = getStaticDestSizes()) {
+        unsigned dynamicIdx = 0;
+        for (int64_t size : *staticSizes) {
+          if (ShapedType::isDynamic(size)) {
+            result.push_back(getDestSizes()[dynamicIdx++]);
+          } else {
+            result.push_back(IntegerAttr::get(IndexType::get(getContext()), size));
+          }
+        }
+      } else {
+        // All dynamic
+        for (Value size : getDestSizes()) {
+          result.push_back(size);
+        }
+      }
+      return result;
+    }
+    
+    /// Returns true if all source sizes are static (compile-time constants)
+    bool hasAllStaticSourceSizes() {
+      if (!getStaticSourceSizes())
+        return false;
+      return llvm::none_of(*getStaticSourceSizes(),
+                          [](int64_t size) { return ShapedType::isDynamic(size); });
+    }
+    
+    /// Returns true if all destination sizes are static (compile-time constants)
+    bool hasAllStaticDestSizes() {
+      if (!getStaticDestSizes())
+        return false;
+      return llvm::none_of(*getStaticDestSizes(),
+                          [](int64_t size) { return ShapedType::isDynamic(size); });
+    }
+    
+    /// Get source sizes as static integers. Returns std::nullopt if any size is dynamic.
+    std::optional<SmallVector<int64_t>> getStaticSourceSizesArray() {
+      if (!hasAllStaticSourceSizes())
+        return std::nullopt;
+      ArrayRef<int64_t> sizes = *getStaticSourceSizes();
+      return SmallVector<int64_t>(sizes.begin(), sizes.end());
+    }
+    
+    /// Get destination sizes as static integers. Returns std::nullopt if any size is dynamic.
+    std::optional<SmallVector<int64_t>> getStaticDestSizesArray() {
+      if (!hasAllStaticDestSizes())
+        return std::nullopt;
+      ArrayRef<int64_t> sizes = *getStaticDestSizes();
+      return SmallVector<int64_t>(sizes.begin(), sizes.end());
     }
   }];
 }

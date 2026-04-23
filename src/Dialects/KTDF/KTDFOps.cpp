@@ -55,6 +55,75 @@ void KTDFDialect::initialize() {
 }
 
 //===----------------------------------------------------------------------===//
+// Custom Parsers and Printers
+//===----------------------------------------------------------------------===//
+
+// Custom parser for sizes list that supports both SSA values and constants
+static ParseResult parseSizesList(
+    OpAsmParser& parser, SmallVectorImpl<OpAsmParser::UnresolvedOperand>& sizes,
+    DenseI64ArrayAttr& staticSizes) {
+  SmallVector<int64_t> staticSizeValues;
+  SmallVector<OpAsmParser::UnresolvedOperand> dynamicSizes;
+
+  auto parseElt = [&]() -> ParseResult {
+    OpAsmParser::UnresolvedOperand operand;
+    auto res = parser.parseOptionalOperand(operand);
+    if (res.has_value() && succeeded(res.value())) {
+      // It's an SSA value
+      dynamicSizes.push_back(operand);
+      staticSizeValues.push_back(ShapedType::kDynamic);
+      return success();
+    }
+
+    // Try to parse as integer constant
+    int64_t value;
+    if (succeeded(parser.parseInteger(value))) {
+      staticSizeValues.push_back(value);
+      return success();
+    }
+
+    return failure();
+  };
+
+  if (parser.parseLSquare() || parser.parseCommaSeparatedList(parseElt) ||
+      parser.parseRSquare())
+    return failure();
+
+  // Set the results
+  sizes.append(dynamicSizes.begin(), dynamicSizes.end());
+  if (!staticSizeValues.empty()) {
+    staticSizes = parser.getBuilder().getDenseI64ArrayAttr(staticSizeValues);
+  }
+
+  return success();
+}
+
+// Custom printer for sizes list
+static void printSizesList(OpAsmPrinter& printer, Operation* op,
+                           OperandRange sizes, DenseI64ArrayAttr staticSizes) {
+  printer << "[";
+
+  if (!staticSizes) {
+    // All dynamic - print SSA values
+    llvm::interleaveComma(sizes, printer);
+  } else {
+    // Mix of static and dynamic
+    ArrayRef<int64_t> staticValues = staticSizes;
+    unsigned dynamicIdx = 0;
+
+    llvm::interleaveComma(staticValues, printer, [&](int64_t value) {
+      if (ShapedType::isDynamic(value)) {
+        printer << sizes[dynamicIdx++];
+      } else {
+        printer << value;
+      }
+    });
+  }
+
+  printer << "]";
+}
+
+//===----------------------------------------------------------------------===//
 // Tablegen Definitions
 //===----------------------------------------------------------------------===//
 
@@ -186,6 +255,35 @@ LogicalResult DataTransferOp::verify() {
              << ") must match destination memref rank (" << rank << ")";
     }
   }
+
+  // Verify that static and dynamic sizes are consistent
+  auto verifySize = [&](OperandRange dynamicSizes,
+                        std::optional<ArrayRef<int64_t>> staticSizes,
+                        StringRef name) -> LogicalResult {
+    if (!staticSizes) {
+      // All sizes are dynamic - no verification needed
+      return success();
+    }
+
+    ArrayRef<int64_t> staticValues = *staticSizes;
+    unsigned numDynamic = llvm::count_if(
+        staticValues, [](int64_t val) { return ShapedType::isDynamic(val); });
+
+    if (dynamicSizes.size() != numDynamic) {
+      return emitOpError("number of dynamic ")
+             << name << " sizes (" << dynamicSizes.size()
+             << ") must match number of dynamic entries in static_" << name
+             << "_sizes (" << numDynamic << ")";
+    }
+
+    return success();
+  };
+
+  if (failed(verifySize(getSourceSizes(), getStaticSourceSizes(), "source")))
+    return failure();
+
+  if (failed(verifySize(getDestSizes(), getStaticDestSizes(), "dest")))
+    return failure();
 
   return success();
 }
