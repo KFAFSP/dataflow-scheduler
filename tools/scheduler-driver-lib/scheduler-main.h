@@ -54,10 +54,10 @@ namespace scheduler {
 /// Configuration options for the scheduler tool.
 class SchedulerOptMainConfig {
  public:
-  static void registerCLOptions(DialectRegistry &dialectRegistry);
+  static void registerCLOptions(DialectRegistry& dialectRegistry);
   static SchedulerOptMainConfig createFromCLOptions();
 
-  SchedulerOptMainConfig &allowUnregisteredDialects(bool allow) {
+  SchedulerOptMainConfig& allowUnregisteredDialects(bool allow) {
     allowUnregisteredDialectsFlag = allow;
     return *this;
   }
@@ -65,61 +65,60 @@ class SchedulerOptMainConfig {
     return allowUnregisteredDialectsFlag;
   }
 
-  SchedulerOptMainConfig &setDebugConfig(tracing::DebugConfig config) {
+  SchedulerOptMainConfig& setDebugConfig(tracing::DebugConfig config) {
     debugConfig = std::move(config);
     return *this;
   }
   tracing::DebugConfig& getDebugConfig() { return debugConfig; }
   const tracing::DebugConfig& getDebugConfig() const { return debugConfig; }
 
-  SchedulerOptMainConfig &dumpPassPipeline(bool dump) {
+  SchedulerOptMainConfig& dumpPassPipeline(bool dump) {
     dumpPassPipelineFlag = dump;
     return *this;
   }
   bool shouldDumpPassPipeline() const { return dumpPassPipelineFlag; }
 
-  SchedulerOptMainConfig &emitBytecode(bool emit) {
+  SchedulerOptMainConfig& emitBytecode(bool emit) {
     emitBytecodeFlag = emit;
     return *this;
   }
   bool shouldEmitBytecode() const { return emitBytecodeFlag; }
 
-  SchedulerOptMainConfig &setPassPipelineSetupFn(
-      std::function<LogicalResult(PassManager &)> callback) {
+  SchedulerOptMainConfig& setPassPipelineSetupFn(
+      std::function<LogicalResult(PassManager&)> callback) {
     passPipelineCallback = std::move(callback);
     return *this;
   }
 
-  SchedulerOptMainConfig &setPassPipelineParser(
-      const PassPipelineCLParser &parser);
+  SchedulerOptMainConfig& setPassPipelineParser(
+      const PassPipelineCLParser& parser);
 
-  LogicalResult setupPassPipeline(PassManager &pm) const {
-    if (passPipelineCallback)
-      return passPipelineCallback(pm);
+  LogicalResult setupPassPipeline(PassManager& pm) const {
+    if (passPipelineCallback) return passPipelineCallback(pm);
     return success();
   }
 
-  SchedulerOptMainConfig &showDialects(bool show) {
+  SchedulerOptMainConfig& showDialects(bool show) {
     showDialectsFlag = show;
     return *this;
   }
   bool shouldShowDialects() const { return showDialectsFlag; }
 
-  SchedulerOptMainConfig &splitInputFile(
+  SchedulerOptMainConfig& splitInputFile(
       std::string splitMarker = kDefaultSplitMarker) {
     splitInputFileFlag = std::move(splitMarker);
     return *this;
   }
   StringRef inputSplitMarker() const { return splitInputFileFlag; }
 
-  SchedulerOptMainConfig &outputSplitMarker(
+  SchedulerOptMainConfig& outputSplitMarker(
       std::string splitMarker = kDefaultSplitMarker) {
     outputSplitMarkerFlag = std::move(splitMarker);
     return *this;
   }
   StringRef getOutputSplitMarkerFlag() const { return outputSplitMarkerFlag; }
 
-  SchedulerOptMainConfig &verifyPasses(bool verify) {
+  SchedulerOptMainConfig& verifyPasses(bool verify) {
     verifyPassesFlag = verify;
     return *this;
   }
@@ -137,7 +136,7 @@ class SchedulerOptMainConfig {
   tracing::DebugConfig debugConfig;
   bool dumpPassPipelineFlag = false;
   bool emitBytecodeFlag = false;
-  std::function<LogicalResult(PassManager &)> passPipelineCallback;
+  std::function<LogicalResult(PassManager&)> passPipelineCallback;
   bool showDialectsFlag = false;
   std::string splitInputFileFlag = "";
   std::string outputSplitMarkerFlag = kDefaultSplitMarker;
@@ -157,8 +156,8 @@ LogicalResult SchedulerOptMain(int argc, char** argv, llvm::StringRef toolName,
 
 void registerPassesForScheduler();
 void registerPassPipelinesForScheduler();
-void registerAndParseCLIOptions(int argc, char **argv, llvm::StringRef toolName,
-                                DialectRegistry &registry);
+void registerAndParseCLIOptions(int argc, char** argv, llvm::StringRef toolName,
+                                DialectRegistry& registry);
 
 }  // end namespace scheduler
 

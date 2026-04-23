@@ -1,7 +1,7 @@
 #include <memory>
 
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
@@ -26,10 +26,10 @@ struct DummyTransformPass
     auto pipeline = mlir::ktdf::PipelineOp::create(builder, module.getLoc());
 
     builder.setInsertionPointToStart(pipeline.getBodyBlock());
-    mlir::ktdf::StageOp::create(builder, module.getLoc(), mlir::ValueRange{token1},
-                                        mlir::ValueRange{});
+    mlir::ktdf::StageOp::create(builder, module.getLoc(),
+                                mlir::ValueRange{token1}, mlir::ValueRange{});
     mlir::ktdf::StageOp::create(builder, module.getLoc(), mlir::ValueRange{},
-                                        mlir::ValueRange{token1});
+                                mlir::ValueRange{token1});
   }
 };
 

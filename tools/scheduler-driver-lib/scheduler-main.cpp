@@ -58,7 +58,8 @@ llvm::cl::opt<bool> schedulerShowDialects(
     "show-dialects", llvm::cl::desc("Print the list of registered dialects"),
     llvm::cl::init(false));
 llvm::cl::opt<bool> schedulerVerifyPasses(
-    "verify-each", llvm::cl::desc("Run the verifier after each transformation pass"),
+    "verify-each",
+    llvm::cl::desc("Run the verifier after each transformation pass"),
     llvm::cl::init(true));
 llvm::cl::opt<bool> schedulerPrintFinalIr(
     "print-ir-after-all",
@@ -66,23 +67,25 @@ llvm::cl::opt<bool> schedulerPrintFinalIr(
     llvm::cl::init(true));
 llvm::cl::opt<std::string> schedulerSplitInputFile(
     "split-input-file",
-    llvm::cl::desc("Split the input file into pieces and process each chunk independently"),
+    llvm::cl::desc("Split the input file into pieces and process each chunk "
+                   "independently"),
     llvm::cl::init(""));
 llvm::cl::opt<std::string> schedulerOutputSplitMarker(
     "output-split-marker",
     llvm::cl::desc("Marker to use when merging split output chunks"),
     llvm::cl::init(kDefaultSplitMarker));
-llvm::cl::opt<bool> schedulerEmitDFIR(
-    "kEmitDFIR", llvm::cl::desc("Emit DataflowIR"), llvm::cl::init(false));
+llvm::cl::opt<bool> schedulerEmitDFIR("kEmitDFIR",
+                                      llvm::cl::desc("Emit DataflowIR"),
+                                      llvm::cl::init(false));
 }  // namespace
 
 namespace scheduler {
 
-static SchedulerOptMainConfig *clOptionsConfig;
+static SchedulerOptMainConfig* clOptionsConfig;
 
-void SchedulerOptMainConfig::registerCLOptions(DialectRegistry &dialectRegistry) {
-  if (clOptionsConfig)
-    return;
+void SchedulerOptMainConfig::registerCLOptions(
+    DialectRegistry& dialectRegistry) {
+  if (clOptionsConfig) return;
   clOptionsConfig = new SchedulerOptMainConfig();
 }
 
@@ -100,15 +103,14 @@ SchedulerOptMainConfig SchedulerOptMainConfig::createFromCLOptions() {
   return *clOptionsConfig;
 }
 
-SchedulerOptMainConfig &SchedulerOptMainConfig::setPassPipelineParser(
-    const PassPipelineCLParser &parser) {
-  passPipelineCallback = [&](PassManager &pm) {
-    auto errorHandler = [&](const Twine &msg) {
+SchedulerOptMainConfig& SchedulerOptMainConfig::setPassPipelineParser(
+    const PassPipelineCLParser& parser) {
+  passPipelineCallback = [&](PassManager& pm) {
+    auto errorHandler = [&](const Twine& msg) {
       emitError(UnknownLoc::get(pm.getContext())) << msg;
       return failure();
     };
-    if (failed(parser.addToPipeline(pm, errorHandler)))
-      return failure();
+    if (failed(parser.addToPipeline(pm, errorHandler))) return failure();
     if (shouldDumpPassPipeline()) {
       pm.dump();
       llvm::errs() << "\n";
@@ -118,23 +120,23 @@ SchedulerOptMainConfig &SchedulerOptMainConfig::setPassPipelineParser(
   return *this;
 }
 
-static LogicalResult printRegisteredDialects(DialectRegistry &registry) {
+static LogicalResult printRegisteredDialects(DialectRegistry& registry) {
   llvm::outs() << "Available Dialects: ";
   interleave(registry.getDialectNames(), llvm::outs(), ",");
   llvm::outs() << "\n";
   return success();
 }
 
-static LogicalResult processBuffer(
-    raw_ostream &outputStream, std::unique_ptr<MemoryBuffer> ownedBuffer,
-    SchedulerOptMainConfig &config, DialectRegistry &registry,
-    llvm::ThreadPoolInterface *threadPool) {
+static LogicalResult processBuffer(raw_ostream& outputStream,
+                                   std::unique_ptr<MemoryBuffer> ownedBuffer,
+                                   SchedulerOptMainConfig& config,
+                                   DialectRegistry& registry,
+                                   llvm::ThreadPoolInterface* threadPool) {
   auto sourceMgr = std::make_shared<SourceMgr>();
   sourceMgr->AddNewSourceBuffer(std::move(ownedBuffer), SMLoc());
 
   MLIRContext context(registry, MLIRContext::Threading::DISABLED);
-  if (threadPool)
-    context.setThreadPool(*threadPool);
+  if (threadPool) context.setThreadPool(*threadPool);
 
   context.loadAllAvailableDialects();
   context.allowUnregisteredDialects(config.shouldAllowUnregisteredDialects());
@@ -145,19 +147,16 @@ static LogicalResult processBuffer(
   applyDefaultTimingManagerCLOptions(tm);
   TimingScope timing = tm.getRootScope();
 
-  OwningOpRef<ModuleOp> module = parseSourceFile<ModuleOp>(*sourceMgr, &context);
-  if (!module)
-    return failure();
+  OwningOpRef<ModuleOp> module =
+      parseSourceFile<ModuleOp>(*sourceMgr, &context);
+  if (!module) return failure();
 
   PassManager pm(&context);
   pm.enableVerifier(config.shouldVerifyPasses());
-  if (failed(applyPassManagerCLOptions(pm)))
-    return failure();
+  if (failed(applyPassManagerCLOptions(pm))) return failure();
   pm.enableTiming(timing);
-  if (failed(config.setupPassPipeline(pm)))
-    return failure();
-  if (failed(pm.run(*module)))
-    return failure();
+  if (failed(config.setupPassPipeline(pm))) return failure();
+  if (failed(pm.run(*module))) return failure();
 
   if (config.shouldPrintFinalIr()) {
     module->print(outputStream);
@@ -167,22 +166,21 @@ static LogicalResult processBuffer(
   return success();
 }
 
-LogicalResult SchedulerOptMain(raw_ostream &outputStream,
+LogicalResult SchedulerOptMain(raw_ostream& outputStream,
                                std::unique_ptr<MemoryBuffer> buffer,
-                               DialectRegistry &registry,
-                               const SchedulerOptMainConfig &config) {
-  if (config.shouldShowDialects())
-    return printRegisteredDialects(registry);
+                               DialectRegistry& registry,
+                               const SchedulerOptMainConfig& config) {
+  if (config.shouldShowDialects()) return printRegisteredDialects(registry);
 
-  ThreadPoolInterface *threadPool = nullptr;
+  ThreadPoolInterface* threadPool = nullptr;
   MLIRContext threadPoolCtx;
   if (threadPoolCtx.isMultithreadingEnabled())
     threadPool = &threadPoolCtx.getThreadPool();
 
-  SchedulerOptMainConfig &mutableConfig =
-      const_cast<SchedulerOptMainConfig &>(config);
+  SchedulerOptMainConfig& mutableConfig =
+      const_cast<SchedulerOptMainConfig&>(config);
   auto chunkFn = [&](std::unique_ptr<MemoryBuffer> chunkBuffer,
-                     raw_ostream &os) {
+                     raw_ostream& os) {
     return processBuffer(os, std::move(chunkBuffer), mutableConfig, registry,
                          threadPool);
   };
@@ -192,8 +190,8 @@ LogicalResult SchedulerOptMain(raw_ostream &outputStream,
                                config.getOutputSplitMarkerFlag());
 }
 
-void registerAndParseCLIOptions(int argc, char **argv, llvm::StringRef toolName,
-                                DialectRegistry &registry) {
+void registerAndParseCLIOptions(int argc, char** argv, llvm::StringRef toolName,
+                                DialectRegistry& registry) {
   SchedulerOptMainConfig::registerCLOptions(registry);
   registerAsmPrinterCLOptions();
   registerMLIRContextCLOptions();
@@ -210,8 +208,8 @@ void registerAndParseCLIOptions(int argc, char **argv, llvm::StringRef toolName,
   cl::ParseCommandLineOptions(argc, argv, helpHeader);
 }
 
-LogicalResult SchedulerOptMain(int argc, char **argv, StringRef toolName,
-                               DialectRegistry &registry) {
+LogicalResult SchedulerOptMain(int argc, char** argv, StringRef toolName,
+                               DialectRegistry& registry) {
   scheduler::registerAndParseCLIOptions(argc, argv, toolName, registry);
 
   InitLLVM y(argc, argv);
@@ -219,8 +217,7 @@ LogicalResult SchedulerOptMain(int argc, char **argv, StringRef toolName,
   SchedulerOptMainConfig config = SchedulerOptMainConfig::createFromCLOptions();
   const bool hasFullPipelineOption = schedulerEmitDFIR;
 
-  if (config.shouldShowDialects())
-    return printRegisteredDialects(registry);
+  if (config.shouldShowDialects()) return printRegisteredDialects(registry);
 
   if (config.getInputFileName() == "-" &&
       sys::Process::FileDescriptorIsDisplayed(fileno(stdin)))
@@ -241,7 +238,7 @@ LogicalResult SchedulerOptMain(int argc, char **argv, StringRef toolName,
   }
 
   if (hasFullPipelineOption) {
-    config.setPassPipelineSetupFn([](PassManager &pm) {
+    config.setPassPipelineSetupFn([](PassManager& pm) {
       ::ktdf::buildKTDPToDFIRPipeline(pm);
       return success();
     });
