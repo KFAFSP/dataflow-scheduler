@@ -27,6 +27,20 @@ include "mlir/IR/EnumAttr.td"
 include "src/Dialects/KTDF/KTDFDialect.td"
 
 //===----------------------------------------------------------------------===//
+// Memory Space Enum
+//===----------------------------------------------------------------------===//
+
+def KTDF_MemorySpaceEnum : I32EnumAttr<"MemorySpace",
+    "KTDF memory space",
+    [
+      I32EnumAttrCase<"LX", 0, "LX">,
+      I32EnumAttrCase<"HBM", 1, "HBM">
+    ]> {
+  let cppNamespace = "::mlir::ktdf";
+  let genSpecializedAttr = 0;
+}
+
+//===----------------------------------------------------------------------===//
 // FIFO Type Enum
 //===----------------------------------------------------------------------===//
 

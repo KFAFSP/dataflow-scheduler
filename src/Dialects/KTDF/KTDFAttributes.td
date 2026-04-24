@@ -29,6 +29,7 @@ include "mlir/IR/OpBase.td"
 include "mlir/IR/AttrTypeBase.td"
 
 include "KTDFDialect.td"
+include "KTDFEnums.td"
 
 // Base class for KTDF dialect attributes
 class KTDF_Attr<string name, string attrMnemonic, list<Trait> traits = []>
@@ -40,42 +41,28 @@ class KTDF_Attr<string name, string attrMnemonic, list<Trait> traits = []>
 // MemorySpaceAttr
 //===----------------------------------------------------------------------===//
 
-def KTDF_MemorySpaceAttr : KTDF_Attr<"MemorySpace", "memory_space"> {
+def KTDF_MemorySpaceCustomAttr : KTDF_Attr<"MemorySpaceCustom", "memory_space"> {
   let summary = "KTDF memory space attribute for memref types";
   let description = [{
     Syntax:
 
     ```
-    memory-space-attr ::= `memory_space` `<` string-literal `>`
+    memory-space-attr ::= `memory_space` `<` memory-space-kind `>`
     ```
 
-    The memory space attribute provides a named memory space for memref types,
-    replacing the default integer-based memory space with a human-readable string.
-    This allows for more descriptive IR when working with different memory regions
-    such as "DDR", "SRAM", "HBM", "L1", "L2", etc.
+    The memory space attribute provides an enum-backed memory space for memref
+    types, using a fixed set of keywords rather than arbitrary strings.
 
     Example:
 
     ```mlir
-    // A memref in DDR memory
-    %buffer = memref.alloc() : memref<1024xf32, memory_space<"DDR">>
-    
-    // A memref in SRAM memory
-    %local = memref.alloc() : memref<64xf16, memory_space<"SRAM">>
-    
-    // A memref in HBM memory
-    %hbm_buf = memref.alloc() : memref<4096xi32, memory_space<"HBM">>
+    %hbm_buf = memref.alloc() : memref<4096xi32, #ktdf.memory_space<HBM>>
     ```
   }];
 
-  let parameters = (ins StringRefParameter<>:$name);
+  let parameters = (ins "::mlir::ktdf::MemorySpace":$value);
 
-  let assemblyFormat = "`<` $name `>`";
-
-  let extraClassDeclaration = [{
-    /// Returns the memory space name as a string
-    llvm::StringRef getMemorySpaceName() const { return getName(); }
-  }];
+  let assemblyFormat = "`<` $value `>`";
 }
 
 #endif // KTDF_SRC_DIALECTS_KTDF_ATTRIBUTES_TD

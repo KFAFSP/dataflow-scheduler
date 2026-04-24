@@ -31,8 +31,8 @@
 namespace mlir {
 namespace ktdf {
 
-// Forward declare the FifoType enum from KTDFOps
 enum class FifoType : uint32_t;
+enum class MemorySpace : uint32_t;
 
 // Placeholder for future KTDF type declarations
 
