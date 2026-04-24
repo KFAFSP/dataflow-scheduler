@@ -27,6 +27,7 @@
 include "mlir/IR/OpBase.td"
 #endif // OP_BASE
 include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/EnumAttr.td"
 
 include "KTDFDialect.td"
 include "KTDFEnums.td"
@@ -62,6 +63,27 @@ def KTDF_MemorySpaceCustomAttr : KTDF_Attr<"MemorySpaceCustom", "memory_space"> 
 
   let parameters = (ins "::mlir::ktdf::MemorySpace":$value);
 
+  let assemblyFormat = "`<` $value `>`";
+}
+
+//===----------------------------------------------------------------------===//
+// LoopTypeAttr
+//===----------------------------------------------------------------------===//
+
+def KTDF_LoopTypeAttr : EnumAttr<KTDF_Dialect, KTDF_LoopTypeEnum, "loop_type"> {
+  let summary = "KTDF loop type attribute for classifying loops";
+  let description = [{
+    The loop type attribute provides an enum-backed classification for loops,
+    distinguishing between parallel and reduction loops.
+
+    Example:
+
+    ```mlir
+    scf.for %i = %c0 to %c10 step %c1 {loop_type = #ktdf.loop_type<parallel_loop>} {
+      // parallel loop body
+    }
+    ```
+  }];
   let assemblyFormat = "`<` $value `>`";
 }
 

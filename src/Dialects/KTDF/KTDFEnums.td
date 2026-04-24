@@ -34,7 +34,8 @@ def KTDF_MemorySpaceEnum : I32EnumAttr<"MemorySpace",
     "KTDF memory space",
     [
       I32EnumAttrCase<"LX", 0, "LX">,
-      I32EnumAttrCase<"HBM", 1, "HBM">
+      I32EnumAttrCase<"HBM", 1, "HBM">,
+      I32EnumAttrCase<"SFPRegisterFile", 2, "SFP_REG">
     ]> {
   let cppNamespace = "::mlir::ktdf";
   let genSpecializedAttr = 0;

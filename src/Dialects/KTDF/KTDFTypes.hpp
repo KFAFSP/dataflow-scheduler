@@ -33,6 +33,7 @@ namespace ktdf {
 
 enum class FifoType : uint32_t;
 enum class MemorySpace : uint32_t;
+enum class LoopType : uint32_t;
 
 // Placeholder for future KTDF type declarations
 
