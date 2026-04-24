@@ -29,8 +29,6 @@
 //   }
 //===----------------------------------------------------------------------===//
 
-#include "src/Transform/Passes.h"
-
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -38,6 +36,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
+#include "src/Transform/Passes.h"
 
 namespace ktdf {
 
@@ -48,14 +47,13 @@ namespace {
 
 struct TileSCFForLoopsPass
     : public impl::TileSCFForLoopsPassBase<TileSCFForLoopsPass> {
-  
   using impl::TileSCFForLoopsPassBase<
       TileSCFForLoopsPass>::TileSCFForLoopsPassBase;
 
   void runOnOperation() override {
-    mlir::Operation *op = getOperation();
+    mlir::Operation* op = getOperation();
     mlir::OpBuilder builder(op->getContext());
-    
+
     // Collect all outermost scf.for loops (roots of perfectly nested loops)
     llvm::SmallVector<mlir::scf::ForOp> rootLoops;
     op->walk([&](mlir::scf::ForOp forOp) {
@@ -64,34 +62,33 @@ struct TileSCFForLoopsPass
         rootLoops.push_back(forOp);
       }
     });
-    
+
     // Tile each perfectly nested loop nest
     for (mlir::scf::ForOp rootLoop : rootLoops) {
       tileLoopNest(rootLoop, builder);
     }
   }
 
-private:
-  void tileLoopNest(mlir::scf::ForOp rootLoop, mlir::OpBuilder &builder) {
+ private:
+  void tileLoopNest(mlir::scf::ForOp rootLoop, mlir::OpBuilder& builder) {
     // Collect the perfectly nested loops starting from root
     llvm::SmallVector<mlir::scf::ForOp> nestedLoops;
     mlir::getPerfectlyNestedLoops(nestedLoops, rootLoop);
-    
-    if (nestedLoops.empty())
-      return;
-    
+
+    if (nestedLoops.empty()) return;
+
     // Prepare tile sizes as Values
     llvm::SmallVector<mlir::Value> tileSizeValues;
     builder.setInsertionPoint(rootLoop);
     mlir::Location loc = rootLoop.getLoc();
-    
+
     // Use configured tile sizes, or default to 32 for each loop
     for (size_t i = 0; i < nestedLoops.size(); ++i) {
       int64_t tileSize = (i < tileSizes.size()) ? tileSizes[i] : 32;
       tileSizeValues.push_back(
           mlir::arith::ConstantIndexOp::create(builder, loc, tileSize));
     }
-    
+
     // Use MLIR's tilePerfectlyNested utility to tile the loop nest
     // This will create the outer tiled loops and inner point loops
     mlir::tilePerfectlyNested(rootLoop, tileSizeValues);

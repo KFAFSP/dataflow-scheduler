@@ -11,10 +11,10 @@ def ComputeGroupExtractionPass : Pass<"compute-group-extraction", "mlir::ModuleO
   let constructor = "::ktdf::createComputeGroupExtractionPass()";
 }
 
-def TileSCFForLoopsPass : Pass<"tile-scf-for-loops", "mlir::func::FuncOp"> {
+def TileSCFForLoopsPass : Pass<"tile-scf-for-loops", "mlir::ModuleOp"> {
   let summary = "Tile perfectly nested scf.for loops";
   let description = [{
-    This pass tiles (strip-mines) perfectly nested scf.for loops.
+    This pass tiles perfectly nested scf.for loops.
     
     Example transformation:
     ```
@@ -33,10 +33,36 @@ def TileSCFForLoopsPass : Pass<"tile-scf-for-loops", "mlir::func::FuncOp"> {
     }
     ```
   }];
-  let constructor = "ktdf::createTileSCFForLoopsPass()";
+  let constructor = "::ktdf::createTileSCFForLoopsPass()";
   let options = [
     ListOption<"tileSizes", "tile-sizes", "int64_t",
                "Tile sizes for each loop dimension (default: 32 for all)">
+  ];
+}
+
+def StripMineSCFForLoopsPass : Pass<"strip-mine-scf-for-loops", "mlir::ModuleOp"> {
+  let summary = "Strip-mine scf.for loops";
+  let description = [{
+    This pass performs strip-mining on scf.for loops.
+    Strip-mining splits a loop into an outer loop and an inner loop,
+    where the outer loop iterates over blocks and the inner loop
+    iterates within each block.
+    
+    Example transformation:
+    ```
+    scf.for %i = 0 to 100 step 1 { ... }
+    ```
+    becomes:
+    ```
+    scf.for %i0 = 0 to 100 step 32 {
+      scf.for %i1 = %i0 to min(%i0+32, 100) step 1 { ... }
+    }
+    ```
+  }];
+  let constructor = "::ktdf::createStripMineSCFForLoopsPass()";
+  let options = [
+    ListOption<"stripMineSize", "strip-mine-size", "int64_t",
+               "Strip-mine factor (block size, default: 32)">
   ];
 }
 
