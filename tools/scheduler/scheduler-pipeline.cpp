@@ -18,6 +18,7 @@ void registerPassPipelinesForScheduler() {
 namespace ktdf {
 
 void buildKTDPToDFIRPipeline(mlir::OpPassManager& pm) {
+  pm.addPass(createComputeGroupExtractionPass());
   pm.addPass(createDummyTransformPass());
 }
 

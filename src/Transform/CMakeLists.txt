@@ -4,6 +4,7 @@ add_public_tablegen_target(SchedulerTransformsPassIncGen)
 
 add_library(SchedulerTransforms
     DummyTransform.cpp
+    ComputeGroupExtraction.cpp
 )
 
 target_link_libraries(SchedulerTransforms
