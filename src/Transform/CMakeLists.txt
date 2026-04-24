@@ -4,6 +4,7 @@ add_public_tablegen_target(SchedulerTransformsPassIncGen)
 
 add_library(SchedulerTransforms
     ComputeGroupExtraction.cpp
+    TileSCFForLoops.cpp
 )
 
 target_link_libraries(SchedulerTransforms

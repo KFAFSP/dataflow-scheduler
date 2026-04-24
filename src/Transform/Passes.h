@@ -13,6 +13,7 @@ class OpPassManager;
 namespace ktdf {
 
 std::unique_ptr<mlir::Pass> createComputeGroupExtractionPass();
+std::unique_ptr<mlir::Pass> createTileSCFForLoopsPass();
 void buildKTDPToDFIRPipeline(mlir::OpPassManager& pm);
 
 }  // namespace ktdf
