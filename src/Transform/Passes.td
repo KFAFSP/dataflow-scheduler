@@ -8,7 +8,8 @@ def DummyTransformPass : Pass<"scheduler-dummy-transform", "mlir::ModuleOp"> {
   let description = [{
     A no-op transform pass used to establish the scheduler transform pipeline.
   }];
-  let constructor = "ktdf::createDummyTransformPass()";
+  let constructor = "::ktdf::createDummyTransformPass()";
+  let dependentDialects = ["mlir::ktdf::KTDFDialect"];
 }
 
 #endif // SCHEDULER_TRANSFORM_PASSES

@@ -18,29 +18,17 @@
 // This is a tool for consuming KTIR mlir and generating KTDF and/or DFIR.
 //===----------------------------------------------------------------------===//
 
-#include <llvm/Support/CommandLine.h>
-#include <llvm/Support/InitLLVM.h>
-#include <llvm/Support/ManagedStatic.h>
-#include <llvm/Support/SourceMgr.h>
-#include <llvm/Support/TargetSelect.h>
-#include <llvm/Support/ToolOutputFile.h>
-#include <llvm/Target/TargetMachine.h>
-#include <llvm/Target/TargetOptions.h>
-#include <llvm/TargetParser/Host.h>
-#include <llvm/TargetParser/Triple.h>
-#include <mlir/IR/AsmState.h>
 #include <mlir/IR/Dialect.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Pass/PassManager.h>
-#include <mlir/Support/FileUtilities.h>
-#include <mlir/Tools/mlir-opt/MlirOptMain.h>
 #include <tools/scheduler-driver-lib/scheduler-main.h>
 
 #include "Dialects/Includes/init-all-dialects.h"
+#include "Transform/Passes.h"
 
 int main(int argc, char** argv) {
-  scheduler::registerPassesForScheduler();
+  registerSchedulerTransformsPasses();
   scheduler::registerPassPipelinesForScheduler();
   mlir::DialectRegistry registry;
   scheduler::registerAllDialects(registry);

@@ -55,7 +55,7 @@ namespace scheduler {
 class SchedulerOptMainConfig {
  public:
   static void registerCLOptions(DialectRegistry& dialectRegistry);
-  static SchedulerOptMainConfig createFromCLOptions();
+  static SchedulerOptMainConfig& createFromCLOptions();
 
   SchedulerOptMainConfig& allowUnregisteredDialects(bool allow) {
     allowUnregisteredDialectsFlag = allow;

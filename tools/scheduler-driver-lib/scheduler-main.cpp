@@ -74,22 +74,29 @@ llvm::cl::opt<std::string> schedulerOutputSplitMarker(
     "output-split-marker",
     llvm::cl::desc("Marker to use when merging split output chunks"),
     llvm::cl::init(kDefaultSplitMarker));
-llvm::cl::opt<bool> schedulerEmitDFIR("kEmitDFIR",
-                                      llvm::cl::desc("Emit DataflowIR"),
-                                      llvm::cl::init(false));
+
+// Config class to hold CL options including PassPipelineCLParser
+struct SchedulerOptMainConfigCLOptions
+    : public scheduler::SchedulerOptMainConfig {
+  SchedulerOptMainConfigCLOptions() {
+    static PassPipelineCLParser passPipeline("", "Compiler passes to run", "p");
+    setPassPipelineParser(passPipeline);
+  }
+};
+
 }  // namespace
 
 namespace scheduler {
 
-static SchedulerOptMainConfig* clOptionsConfig;
+ManagedStatic<SchedulerOptMainConfigCLOptions> clOptionsConfig;
 
 void SchedulerOptMainConfig::registerCLOptions(
     DialectRegistry& dialectRegistry) {
-  if (clOptionsConfig) return;
-  clOptionsConfig = new SchedulerOptMainConfig();
+  (void)*clOptionsConfig;
+  tracing::DebugConfig::registerCLOptions();
 }
 
-SchedulerOptMainConfig SchedulerOptMainConfig::createFromCLOptions() {
+SchedulerOptMainConfig& SchedulerOptMainConfig::createFromCLOptions() {
   clOptionsConfig->inputFileName = schedulerInputFilename;
   clOptionsConfig->outputFileName = schedulerOutputFilename;
   clOptionsConfig->allowUnregisteredDialectsFlag =
@@ -215,7 +222,6 @@ LogicalResult SchedulerOptMain(int argc, char** argv, StringRef toolName,
   InitLLVM y(argc, argv);
 
   SchedulerOptMainConfig config = SchedulerOptMainConfig::createFromCLOptions();
-  const bool hasFullPipelineOption = schedulerEmitDFIR;
 
   if (config.shouldShowDialects()) return printRegisteredDialects(registry);
 
@@ -235,13 +241,6 @@ LogicalResult SchedulerOptMain(int argc, char** argv, StringRef toolName,
   if (!output) {
     llvm::errs() << errorMessage << "\n";
     return failure();
-  }
-
-  if (hasFullPipelineOption) {
-    config.setPassPipelineSetupFn([](PassManager& pm) {
-      ::ktdf::buildKTDPToDFIRPipeline(pm);
-      return success();
-    });
   }
 
   if (failed(SchedulerOptMain(output->os(), std::move(file), registry, config)))
