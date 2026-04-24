@@ -55,4 +55,18 @@ def KTDF_FifoTypeEnum : I32EnumAttr<"FifoType",
   let genSpecializedAttr = 0;
 }
 
+//===----------------------------------------------------------------------===//
+// Loop Type Enum
+//===----------------------------------------------------------------------===//
+
+def KTDF_LoopTypeEnum : I32EnumAttr<"LoopType",
+    "Loop type classification",
+    [
+      I32EnumAttrCase<"ParallelLoop", 0, "parallel_loop">,
+      I32EnumAttrCase<"ReductionLoop", 1, "reduction_loop">
+    ]> {
+  let cppNamespace = "::mlir::ktdf";
+  let genSpecializedAttr = 0;
+}
+
 #endif // KTDF_ENUMS
