@@ -5,36 +5,30 @@
 
 // CHECK-LABEL:   func.func @test_data_transfer_memref_to_memref() {
 // CHECK-NEXT:     %[[CONSTANT_0:.*]] = arith.constant 0 : index
-// CHECK-NEXT:     %[[CONSTANT_1:.*]] = arith.constant 1 : index
-// CHECK-NEXT:     %[[CONSTANT_2:.*]] = arith.constant 64 : index
 // CHECK-NEXT:     %[[ALLOC_0:.*]] = memref.alloc() : memref<1x64xf16, "DRAM">
 // CHECK-NEXT:     %[[ALLOC_1:.*]] = memref.alloc() : memref<64xf16, "LX">
-// CHECK-NEXT:     ktdf.data_transfer from %[[ALLOC_0]]{{\[}}%[[CONSTANT_0]], %[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_1]], %[[CONSTANT_2]]] to %[[ALLOC_1]]{{\[}}%[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_2]]] : memref<1x64xf16, "DRAM">, memref<64xf16, "LX">
+// CHECK-NEXT:     ktdf.data_transfer from %[[ALLOC_0]]{{\[}}%[[CONSTANT_0]], %[[CONSTANT_0]]] size [1, 64] to %[[ALLOC_1]]{{\[}}%[[CONSTANT_0]]] size [64] : memref<1x64xf16, "DRAM">, memref<64xf16, "LX">
 // CHECK-NEXT:     return
 // CHECK-NEXT:   }
 
 // CHECK-LABEL:   func.func @test_data_transfer_memref_to_fifo() {
 // CHECK-NEXT:     %[[CONSTANT_0:.*]] = arith.constant 0 : index
-// CHECK-NEXT:     %[[CONSTANT_1:.*]] = arith.constant 64 : index
 // CHECK-NEXT:     %[[ALLOC_0:.*]] = memref.alloc() : memref<64xf16, "LX">
 // CHECK-NEXT:     %[[FIFO_0:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
-// CHECK-NEXT:     ktdf.data_transfer from %[[ALLOC_0]]{{\[}}%[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_1]]] to %[[FIFO_0]] size{{\[}}%[[CONSTANT_1]]] : memref<64xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+// CHECK-NEXT:     ktdf.data_transfer from %[[ALLOC_0]]{{\[}}%[[CONSTANT_0]]] size [64] to %[[FIFO_0]] size [64] : memref<64xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
 // CHECK-NEXT:     return
 // CHECK-NEXT:   }
 
 // CHECK-LABEL:   func.func @test_data_transfer_fifo_to_memref() {
 // CHECK-NEXT:     %[[CONSTANT_0:.*]] = arith.constant 0 : index
-// CHECK-NEXT:     %[[CONSTANT_1:.*]] = arith.constant 64 : index
 // CHECK-NEXT:     %[[FIFO_0:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
 // CHECK-NEXT:     %[[ALLOC_0:.*]] = memref.alloc() : memref<64xf16, "SFP_REG">
-// CHECK-NEXT:     ktdf.data_transfer from %[[FIFO_0]] to %[[ALLOC_0]]{{\[}}%[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_1]]] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
+// CHECK-NEXT:     ktdf.data_transfer from %[[FIFO_0]] to %[[ALLOC_0]]{{\[}}%[[CONSTANT_0]]] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
 // CHECK-NEXT:     return
 // CHECK-NEXT:   }
 
 // CHECK-LABEL:   func.func @test_data_transfer_in_pipeline() {
 // CHECK-NEXT:     %[[CONSTANT_0:.*]] = arith.constant 0 : index
-// CHECK-NEXT:     %[[CONSTANT_1:.*]] = arith.constant 1 : index
-// CHECK-NEXT:     %[[CONSTANT_2:.*]] = arith.constant 64 : index
 // CHECK-NEXT:     %[[ALLOC_0:.*]] = memref.alloc() : memref<1x64xf16, "DRAM">
 // CHECK-NEXT:     %[[ALLOC_1:.*]] = memref.alloc() : memref<1x64xf16, "DRAM">
 // CHECK-NEXT:     %[[ALLOC_2:.*]] = memref.alloc() : memref<1x64xf16, "DRAM">
@@ -42,8 +36,8 @@
 // CHECK-NEXT:       ktdf.stage depends_in(none) depends_out(none) {
 // CHECK-NEXT:         %[[ALLOC_3:.*]] = memref.alloc() : memref<64xf16, "LX">
 // CHECK-NEXT:         %[[ALLOC_4:.*]] = memref.alloc() : memref<64xf16, "LX">
-// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_0]]{{\[}}%[[CONSTANT_0]], %[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_1]], %[[CONSTANT_2]]] to %[[ALLOC_3]]{{\[}}%[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_2]]] : memref<1x64xf16, "DRAM">, memref<64xf16, "LX">
-// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_1]]{{\[}}%[[CONSTANT_0]], %[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_1]], %[[CONSTANT_2]]] to %[[ALLOC_4]]{{\[}}%[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_2]]] : memref<1x64xf16, "DRAM">, memref<64xf16, "LX">
+// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_0]]{{\[}}%[[CONSTANT_0]], %[[CONSTANT_0]]] size [1, 64] to %[[ALLOC_3]]{{\[}}%[[CONSTANT_0]]] size [64] : memref<1x64xf16, "DRAM">, memref<64xf16, "LX">
+// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_1]]{{\[}}%[[CONSTANT_0]], %[[CONSTANT_0]]] size [1, 64] to %[[ALLOC_4]]{{\[}}%[[CONSTANT_0]]] size [64] : memref<1x64xf16, "DRAM">, memref<64xf16, "LX">
 // CHECK-NEXT:       }
 // CHECK-NEXT:       ktdf.stage depends_in(none) depends_out(none) {
 // CHECK-NEXT:         %[[ALLOC_5:.*]] = memref.alloc() : memref<64xf16, "LX">
@@ -54,16 +48,16 @@
 // CHECK-NEXT:         %[[ALLOC_8:.*]] = memref.alloc() : memref<64xf16, "SFP_REG">
 // CHECK-NEXT:         %[[ALLOC_9:.*]] = memref.alloc() : memref<64xf16, "SFP_REG">
 // CHECK-NEXT:         %[[ALLOC_10:.*]] = memref.alloc() : memref<64xf16, "SFP_REG">
-// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_5]]{{\[}}%[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_2]]] to %[[FIFO_0]]#0 size{{\[}}%[[CONSTANT_2]]] : memref<64xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
-// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_6]]{{\[}}%[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_2]]] to %[[FIFO_0]]#1 size{{\[}}%[[CONSTANT_2]]] : memref<64xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
-// CHECK-NEXT:         ktdf.data_transfer from %[[FIFO_0]]#0 to %[[ALLOC_8]]{{\[}}%[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_2]]] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
-// CHECK-NEXT:         ktdf.data_transfer from %[[FIFO_0]]#1 to %[[ALLOC_9]]{{\[}}%[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_2]]] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
-// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_10]]{{\[}}%[[CONSTANT_0]]] to %[[FIFO_1]] size{{\[}}%[[CONSTANT_2]]] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
-// CHECK-NEXT:         ktdf.data_transfer from %[[FIFO_1]] size{{\[}}%[[CONSTANT_2]]] to %[[ALLOC_7]]{{\[}}%[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_2]]] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<64xf16, "LX">
+// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_5]]{{\[}}%[[CONSTANT_0]]] size [64] to %[[FIFO_0]]#0 size [64] : memref<64xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_6]]{{\[}}%[[CONSTANT_0]]] size [64] to %[[FIFO_0]]#1 size [64] : memref<64xf16, "LX">, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+// CHECK-NEXT:         ktdf.data_transfer from %[[FIFO_0]]#0 to %[[ALLOC_8]]{{\[}}%[[CONSTANT_0]]] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
+// CHECK-NEXT:         ktdf.data_transfer from %[[FIFO_0]]#1 to %[[ALLOC_9]]{{\[}}%[[CONSTANT_0]]] size [64] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, memref<64xf16, "SFP_REG">
+// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_10]]{{\[}}%[[CONSTANT_0]]] to %[[FIFO_1]] size [64] : memref<64xf16, "SFP_REG">, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
+// CHECK-NEXT:         ktdf.data_transfer from %[[FIFO_1]] size [64] to %[[ALLOC_7]]{{\[}}%[[CONSTANT_0]]] size [64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<64xf16, "LX">
 // CHECK-NEXT:       }
 // CHECK-NEXT:       ktdf.stage depends_in(none) depends_out(none) {
 // CHECK-NEXT:         %[[ALLOC_11:.*]] = memref.alloc() : memref<64xf16, "LX">
-// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_11]]{{\[}}%[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_2]]] to %[[ALLOC_2]]{{\[}}%[[CONSTANT_0]], %[[CONSTANT_0]]] size{{\[}}%[[CONSTANT_1]], %[[CONSTANT_2]]] : memref<64xf16, "LX">, memref<1x64xf16, "DRAM">
+// CHECK-NEXT:         ktdf.data_transfer from %[[ALLOC_11]]{{\[}}%[[CONSTANT_0]]] size [64] to %[[ALLOC_2]]{{\[}}%[[CONSTANT_0]], %[[CONSTANT_0]]] size [1, 64] : memref<64xf16, "LX">, memref<1x64xf16, "DRAM">
 // CHECK-NEXT:       }
 // CHECK-NEXT:     }
 // CHECK-NEXT:     return
