@@ -18,11 +18,11 @@
 // Pass to print the Pipeline Tree structure for debugging and visualization
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/Pass.h"
 #include "src/Transform/Passes.h"
 #include "src/Transform/PipelineTree.hpp"
-#include "llvm/Support/raw_ostream.h"
 
 namespace ktdf {
 
@@ -38,23 +38,23 @@ struct PrintPipelineTreePass
 
   void runOnOperation() override {
     auto moduleOp = getOperation();
-    
+
     // Iterate over all functions in the module
     moduleOp.walk([&](mlir::func::FuncOp funcOp) {
-      llvm::outs() << "=== Pipeline Tree for function: "
-                   << funcOp.getName() << " ===\n";
-      
+      llvm::outs() << "=== Pipeline Tree for function: " << funcOp.getName()
+                   << " ===\n";
+
       // Build the pipeline tree
       mlir::ktdf::PipelineTree tree;
       tree.compute(*funcOp.getOperation());
-      
+
       // Print the tree structure
       if (tree.empty()) {
         llvm::outs() << "(empty tree)\n";
       } else {
         tree.print(llvm::outs(), showDependencies);
       }
-      
+
       llvm::outs() << "=== End Pipeline Tree ===\n\n";
     });
   }

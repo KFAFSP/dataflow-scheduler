@@ -22,7 +22,7 @@
 // facilitates transformations like loop sinking and stage coarsening.
 //
 // The tree represents:
-// - Root nodes (function entry points)
+// - Root nodes (top level node)
 // - Loop nodes (scf.for operations)
 // - Pipeline nodes (ktdf.pipeline operations)
 // - Stage nodes (ktdf.stage operations)

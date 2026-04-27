@@ -88,25 +88,25 @@ struct StripMineSCFForLoopsPass
     // If normalization is enabled and we got an inner loop, normalize it
     if (normalizeInnerLoop && !innerLoops.empty()) {
       mlir::scf::ForOp innerLoop = innerLoops[0];
-      
+
       // Get the current bounds of the inner loop
       mlir::Value innerLb = innerLoop.getLowerBound();
       mlir::Value innerUb = innerLoop.getUpperBound();
       mlir::Value innerStep = innerLoop.getStep();
-      
+
       // Use MLIR's emitNormalizedLoopBounds to compute normalized bounds
       rewriter.setInsertionPoint(innerLoop);
       auto normalizedRange = mlir::emitNormalizedLoopBounds(
           rewriter, loc, innerLb, innerUb, innerStep);
-      
+
       // Update the inner loop to use normalized bounds (0 to size, step 1)
-      innerLoop.setLowerBound(
-          mlir::getValueOrCreateConstantIndexOp(rewriter, loc, normalizedRange.offset));
-      innerLoop.setUpperBound(
-          mlir::getValueOrCreateConstantIndexOp(rewriter, loc, normalizedRange.size));
-      innerLoop.setStep(
-          mlir::getValueOrCreateConstantIndexOp(rewriter, loc, normalizedRange.stride));
-      
+      innerLoop.setLowerBound(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalizedRange.offset));
+      innerLoop.setUpperBound(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalizedRange.size));
+      innerLoop.setStep(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalizedRange.stride));
+
       // Use MLIR's denormalizeInductionVariable to replace uses of the
       // normalized IV with: innerLb + iv * innerStep
       rewriter.setInsertionPointToStart(innerLoop.getBody());

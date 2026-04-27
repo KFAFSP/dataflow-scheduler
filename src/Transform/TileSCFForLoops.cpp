@@ -99,33 +99,32 @@ struct TileSCFForLoopsPass
     }
   }
 
-  void normalizeInnerTiledLoops(
-      llvm::ArrayRef<mlir::scf::ForOp> originalLoops,
-      llvm::ArrayRef<mlir::scf::ForOp> innerLoops,
-      mlir::IRRewriter& rewriter) {
+  void normalizeInnerTiledLoops(llvm::ArrayRef<mlir::scf::ForOp> originalLoops,
+                                llvm::ArrayRef<mlir::scf::ForOp> innerLoops,
+                                mlir::IRRewriter& rewriter) {
     // For each inner loop, normalize it to start at 0 and denormalize the IV
     for (size_t i = 0; i < innerLoops.size() && i < originalLoops.size(); ++i) {
       mlir::scf::ForOp innerLoop = innerLoops[i];
-      
+
       // Get the original lower bound and step before normalization
       mlir::Value origLb = innerLoop.getLowerBound();
       mlir::Value origStep = innerLoop.getStep();
       mlir::Location loc = innerLoop.getLoc();
-      
+
       // Use MLIR's emitNormalizedLoopBounds to compute normalized bounds
       rewriter.setInsertionPoint(innerLoop);
       mlir::Value ub = innerLoop.getUpperBound();
-      auto normalizedRange = mlir::emitNormalizedLoopBounds(
-          rewriter, loc, origLb, ub, origStep);
-      
+      auto normalizedRange =
+          mlir::emitNormalizedLoopBounds(rewriter, loc, origLb, ub, origStep);
+
       // Update the loop to use normalized bounds (0 to size, step 1)
-      innerLoop.setLowerBound(
-          mlir::getValueOrCreateConstantIndexOp(rewriter, loc, normalizedRange.offset));
-      innerLoop.setUpperBound(
-          mlir::getValueOrCreateConstantIndexOp(rewriter, loc, normalizedRange.size));
-      innerLoop.setStep(
-          mlir::getValueOrCreateConstantIndexOp(rewriter, loc, normalizedRange.stride));
-      
+      innerLoop.setLowerBound(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalizedRange.offset));
+      innerLoop.setUpperBound(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalizedRange.size));
+      innerLoop.setStep(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalizedRange.stride));
+
       // Use MLIR's denormalizeInductionVariable to replace uses of the
       // normalized IV with: origLb + iv * origStep
       rewriter.setInsertionPointToStart(innerLoop.getBody());
