@@ -49,7 +49,7 @@ struct StripMineSCFForLoopsPass
 
   void runOnOperation() override {
     mlir::Operation* op = getOperation();
-    mlir::OpBuilder builder(op->getContext());
+    mlir::IRRewriter rewriter(op->getContext());
 
     // Collect all scf.for loops
     llvm::SmallVector<mlir::scf::ForOp> allLoops;
@@ -57,20 +57,24 @@ struct StripMineSCFForLoopsPass
 
     // Strip-mine each loop individually
     for (mlir::scf::ForOp forOp : allLoops) {
-      stripMineLoop(forOp, builder);
+      stripMineLoop(forOp, rewriter);
     }
   }
 
  private:
-  void stripMineLoop(mlir::scf::ForOp forOp, mlir::OpBuilder& builder) {
+  void stripMineLoop(mlir::scf::ForOp forOp, mlir::IRRewriter& rewriter) {
     // Determine strip-mine factor (tile size)
     int64_t stripMineFactor = stripMineSize.empty() ? 32 : stripMineSize[0];
 
     // Create tile size as a Value
-    builder.setInsertionPoint(forOp);
+    rewriter.setInsertionPoint(forOp);
     mlir::Location loc = forOp.getLoc();
     mlir::Value tileSizeVal =
-        mlir::arith::ConstantIndexOp::create(builder, loc, stripMineFactor);
+        mlir::arith::ConstantIndexOp::create(rewriter, loc, stripMineFactor);
+
+    // Save original bounds and step for potential normalization
+    mlir::Value origLb = forOp.getLowerBound();
+    mlir::Value origStep = forOp.getStep();
 
     // Use MLIR's tile utility to strip-mine this single loop
     // Pass the loop as both the loop to tile and the target
@@ -79,7 +83,36 @@ struct StripMineSCFForLoopsPass
 
     // The tile function performs strip-mining by creating an outer loop
     // that iterates over blocks and an inner loop that iterates within blocks
-    mlir::tile(loopsToTile, tileSizes, forOp);
+    auto innerLoops = mlir::tile(loopsToTile, tileSizes, forOp);
+
+    // If normalization is enabled and we got an inner loop, normalize it
+    if (normalizeInnerLoop && !innerLoops.empty()) {
+      mlir::scf::ForOp innerLoop = innerLoops[0];
+      
+      // Get the current bounds of the inner loop
+      mlir::Value innerLb = innerLoop.getLowerBound();
+      mlir::Value innerUb = innerLoop.getUpperBound();
+      mlir::Value innerStep = innerLoop.getStep();
+      
+      // Use MLIR's emitNormalizedLoopBounds to compute normalized bounds
+      rewriter.setInsertionPoint(innerLoop);
+      auto normalizedRange = mlir::emitNormalizedLoopBounds(
+          rewriter, loc, innerLb, innerUb, innerStep);
+      
+      // Update the inner loop to use normalized bounds (0 to size, step 1)
+      innerLoop.setLowerBound(
+          mlir::getValueOrCreateConstantIndexOp(rewriter, loc, normalizedRange.offset));
+      innerLoop.setUpperBound(
+          mlir::getValueOrCreateConstantIndexOp(rewriter, loc, normalizedRange.size));
+      innerLoop.setStep(
+          mlir::getValueOrCreateConstantIndexOp(rewriter, loc, normalizedRange.stride));
+      
+      // Use MLIR's denormalizeInductionVariable to replace uses of the
+      // normalized IV with: innerLb + iv * innerStep
+      rewriter.setInsertionPointToStart(innerLoop.getBody());
+      mlir::denormalizeInductionVariable(
+          rewriter, loc, innerLoop.getInductionVar(), innerLb, innerStep);
+    }
   }
 };
 

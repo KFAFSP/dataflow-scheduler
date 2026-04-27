@@ -6,6 +6,7 @@
 
 // Include MLIR pass registration headers as needed
 #include "mlir/Dialect/SCF/Transforms/Passes.h"
+#include "mlir/Transforms/Passes.h"  // For SCCP, Canonicalizer, SymbolDCE, LoopInvariantCodeMotion
 // #include "mlir/InitAllPasses.h"  // Uncomment to register all MLIR passes
 
 namespace scheduler {
@@ -13,6 +14,12 @@ namespace scheduler {
 void registerPassesForScheduler() {
   // Register scheduler-specific passes
   registerSchedulerTransformsPasses();
+
+  // Register some common opt passes
+  mlir::registerSCCPPass();
+  mlir::registerSymbolDCEPass();
+  mlir::registerCanonicalizerPass();
+  mlir::registerLoopInvariantCodeMotionPass();
 
   // Register MLIR dialect passes as needed
   mlir::registerSCFPasses();  // Includes -scf-parallel-loop-tiling

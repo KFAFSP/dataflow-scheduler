@@ -36,7 +36,10 @@ def TileSCFForLoopsPass : Pass<"tile-scf-for-loops", "mlir::ModuleOp"> {
   let constructor = "::ktdf::createTileSCFForLoopsPass()";
   let options = [
     ListOption<"tileSizes", "tile-sizes", "int64_t",
-               "Tile sizes for each loop dimension (default: 32 for all)">
+               "Tile sizes for each loop dimension (default: 32 for all)">,
+    Option<"normalizeInnerLoops", "normalize-inner-loops", "bool",
+           /*default=*/"true",
+           "Normalize inner tiled loops to start at 0 and add outer IV to uses">
   ];
 }
 
@@ -62,7 +65,10 @@ def StripMineSCFForLoopsPass : Pass<"strip-mine-scf-for-loops", "mlir::ModuleOp"
   let constructor = "::ktdf::createStripMineSCFForLoopsPass()";
   let options = [
     ListOption<"stripMineSize", "strip-mine-size", "int64_t",
-               "Strip-mine factor (block size, default: 32)">
+               "Strip-mine factor (block size, default: 32)">,
+    Option<"normalizeInnerLoop", "normalize-inner-loop", "bool",
+           /*default=*/"true",
+           "Normalize inner loop to start at 0 and add outer IV to uses">
   ];
 }
 

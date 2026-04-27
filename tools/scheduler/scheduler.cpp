@@ -28,7 +28,7 @@
 #include "Transform/Passes.h"
 
 int main(int argc, char** argv) {
-  registerSchedulerTransformsPasses();
+  scheduler::registerPassesForScheduler();
   scheduler::registerPassPipelinesForScheduler();
   mlir::DialectRegistry registry;
   scheduler::registerAllDialects(registry);
