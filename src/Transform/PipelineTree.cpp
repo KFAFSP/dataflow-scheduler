@@ -29,6 +29,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
+#include "src/Utils/OperationUtils.hpp"
 
 using namespace mlir;
 using namespace mlir::ktdf;
@@ -266,10 +267,8 @@ void StageNode::print(raw_ostream& OS, bool showDependencies) const {
   OS << getNodeName();
 
   if (operation_op_) {
-    auto loc = operation_op_->getLoc();
-    if (auto fileLoc = dyn_cast<FileLineColLoc>(loc)) {
-      OS << " @" << fileLoc.getLine();
-    }
+    OS << " ";
+    ktir::utils::printLocation(OS, operation_op_);
   }
 
   if (showDependencies && !dependencies_.empty()) {
@@ -469,5 +468,3 @@ void PipelineTree::compute(Operation& unit) {
   // This would require analyzing ConsumeTokenOp and ProduceTokenOp
   // to determine which stages depend on which other stages
 }
-
-// Made with Bob

@@ -38,6 +38,7 @@
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
 #include "src/Transform/PipelineTree.hpp"
+#include "src/Transform/StageGrouping.hpp"
 
 namespace ktdf {
 
@@ -217,13 +218,38 @@ struct StageCoarseningPass
   void stage1a_DistributeAndSinkIntoPipeline(TransformCandidate& candidate) {
     llvm::outs() << "Stage 1a: Distributing loops into pipeline...\n";
 
+    // Step 1: Perform stage grouping analysis
+    llvm::outs() << "\n  Performing stage grouping analysis...\n";
+    StageGroupingAnalysis grouping(candidate.pipeline);
+
+    // Print the stage groups
+    llvm::outs() << "\n  Stage Groups:\n";
+    grouping.dump();
+    llvm::outs() << "\n";
+
+    const auto& groups = grouping.getGroups();
+    llvm::outs() << "  Found " << groups.size() << " stage group(s)\n";
+
+    // Analyze each group
+    for (size_t i = 0; i < groups.size(); ++i) {
+      const auto& group = groups[i];
+      if (group.isSingleStage()) {
+        llvm::outs() << "  Group " << i
+                     << ": Single stage (can sink further in Stage 1b)\n";
+      } else {
+        llvm::outs() << "  Group " << i
+                     << ": Multiple stages (must stay together)\n";
+      }
+    }
+
     // TODO: Implement loop distribution and sinking
     // For each loop in the nest (outermost to innermost):
-    //   1. Distribute loop body into stages
-    //   2. Sink loop into pipeline
+    //   1. Distribute loop body into stage groups (not individual stages)
+    //   2. Sink loop into pipeline, respecting stage groups
     //   3. Update buffer dimensions (LX buffers remain 1D)
 
-    llvm::outs() << "  (Implementation pending)\n";
+    llvm::outs()
+        << "\n  (Loop distribution and sinking implementation pending)\n";
   }
 
   //===--------------------------------------------------------------------===//
@@ -313,5 +339,3 @@ struct StageCoarseningPass
 std::unique_ptr<mlir::Pass> ktdf::createStageCoarseningPass() {
   return std::make_unique<ktdf::StageCoarseningPass>();
 }
-
-// Made with Bob

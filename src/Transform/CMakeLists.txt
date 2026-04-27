@@ -8,12 +8,14 @@ add_library(SchedulerTransforms
     StripMineSCFForLoops.cpp
     PipelineTree.cpp
     PrintPipelineTree.cpp
+    StageGrouping.cpp
     StageCoarsening.cpp
 )
 
 target_link_libraries(SchedulerTransforms
     PUBLIC
     KTDFOps
+    SchedulerUtils
 )
 
 add_dependencies(SchedulerTransforms SchedulerTransformsPassIncGen)
