@@ -72,4 +72,23 @@ def StripMineSCFForLoopsPass : Pass<"strip-mine-scf-for-loops", "mlir::ModuleOp"
   ];
 }
 
+def PrintPipelineTreePass : Pass<"print-pipeline-tree", "mlir::ModuleOp"> {
+  let summary = "Print the pipeline tree structure";
+  let description = [{
+    This pass builds and prints the internal pipeline tree abstraction
+    for all functions in a module. The tree represents the hierarchical
+    structure of pipelines, stages, loops, and private operations.
+    
+    This is primarily a debugging and visualization tool to understand
+    the structure before and after transformations like loop sinking
+    and stage coarsening.
+  }];
+  let constructor = "::ktdf::createPrintPipelineTreePass()";
+  let options = [
+    Option<"showDependencies", "show-dependencies", "bool",
+           /*default=*/"false",
+           "Show stage dependencies (token-based synchronization)">
+  ];
+}
+
 #endif // SCHEDULER_TRANSFORM_PASSES

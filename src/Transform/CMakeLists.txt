@@ -6,6 +6,8 @@ add_library(SchedulerTransforms
     ComputeGroupExtraction.cpp
     TileSCFForLoops.cpp
     StripMineSCFForLoops.cpp
+    PipelineTree.cpp
+    PrintPipelineTree.cpp
 )
 
 target_link_libraries(SchedulerTransforms
