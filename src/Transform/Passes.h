@@ -16,6 +16,7 @@ std::unique_ptr<mlir::Pass> createComputeGroupExtractionPass();
 std::unique_ptr<mlir::Pass> createTileSCFForLoopsPass();
 std::unique_ptr<mlir::Pass> createStripMineSCFForLoopsPass();
 std::unique_ptr<mlir::Pass> createPrintPipelineTreePass();
+std::unique_ptr<mlir::Pass> createStageCoarseningPass();
 void buildKTDPToDFIRPipeline(mlir::OpPassManager& pm);
 
 }  // namespace ktdf

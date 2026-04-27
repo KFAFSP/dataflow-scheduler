@@ -470,24 +470,4 @@ void PipelineTree::compute(Operation& unit) {
   // to determine which stages depend on which other stages
 }
 
-//===----------------------------------------------------------------------===//
-// Template Instantiations
-//===----------------------------------------------------------------------===//
-
-// Explicit template instantiations for walk methods
-template void PipelineTreeNode::walk<PipelineTreeNode::kPreOrder>(
-    PipelineTreeNode*, ActionFuncTy);
-template void PipelineTreeNode::walk<PipelineTreeNode::kPostOrder>(
-    PipelineTreeNode*, ActionFuncTy);
-template void PipelineTreeNode::walk<PipelineTreeNode::kPreOrderGuided>(
-    PipelineTreeNode*, ActionFuncTy);
-template void PipelineTreeNode::walk<PipelineTreeNode::kPostOrderGuided>(
-    PipelineTreeNode*, ActionFuncTy);
-template void PipelineTreeNode::walk<PipelineTreeNode::kBFS>(PipelineTreeNode*,
-                                                             ActionFuncTy);
-template void PipelineTreeNode::walk<PipelineTreeNode::kReverseBFS>(
-    PipelineTreeNode*, ActionFuncTy);
-template void PipelineTreeNode::walk<PipelineTreeNode::kKeepOrderRBFS>(
-    PipelineTreeNode*, ActionFuncTy);
-
 // Made with Bob

@@ -8,6 +8,7 @@ add_library(SchedulerTransforms
     StripMineSCFForLoops.cpp
     PipelineTree.cpp
     PrintPipelineTree.cpp
+    StageCoarsening.cpp
 )
 
 target_link_libraries(SchedulerTransforms

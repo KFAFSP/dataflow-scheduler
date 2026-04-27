@@ -91,4 +91,30 @@ def PrintPipelineTreePass : Pass<"print-pipeline-tree", "mlir::ModuleOp"> {
   ];
 }
 
+def StageCoarseningPass : Pass<"stage-coarsening", "mlir::ModuleOp"> {
+  let summary = "Perform stage coarsening transformation";
+  let description = [{
+    This pass implements a 4-stage stage coarsening algorithm to create
+    hierarchical pipeline structures by sinking loops into stages.
+    
+    Following identification of stage groups (using loop distribution legality rules):
+    - Stage 1a: Distribute and sink loops into pipeline
+    - Stage 1b: Further sink into stages with single parent loop (expand buffers)
+    - Stage 2: Discover and correct illegal structures iteratively
+    - Stage 3: Correct stage dependencies that cross pipeline boundaries
+    
+    The transformation creates nested pipelines where:
+    - Outer pipelines operate at tile granularity
+    - Inner pipelines operate at hardware execution granularity
+    
+    This enables better hardware mapping and reduced synchronization overhead.
+  }];
+  let constructor = "::ktdf::createStageCoarseningPass()";
+  let options = [
+    Option<"loopNestDepth", "loop-nest-depth", "unsigned",
+           /*default=*/"2",
+           "Number of perfectly nested loops to consider for sinking">
+  ];
+}
+
 #endif // SCHEDULER_TRANSFORM_PASSES
