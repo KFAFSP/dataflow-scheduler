@@ -22,8 +22,10 @@
 // - Common tree navigation (parent, children, siblings)
 // - Reusable walk algorithms (pre-order, post-order, BFS, etc.)
 // - Tree manipulation utilities (unlink, insert)
+// 
+// This tree uses a LCRS (Left-Child Right-Sibling) representation.
 //
-// This base class is designed to be extended by domain-specific tree
+// These base classes are designed to be extended by domain-specific tree
 // implementations (e.g., PipelineTree, ControlFlowTree) that add their
 // own node types and type queries.
 //===----------------------------------------------------------------------===//

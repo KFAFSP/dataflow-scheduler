@@ -16,14 +16,19 @@
 //
 //===----------------------------------------------------------------------===//
 // This pass tiles perfectly nested scf.for loops.
-// Example: scf.for %i = 0 to 100 step 1 {
-//            scf.for %j = 0 to 100 step 1 { ... }
-//          }
+// Example:
+//   scf.for %i = 0 to 100 step 1 {
+//     scf.for %j = 0 to 100 step 1 { ... }
+//       use (%i, %j)
+//   }
 // becomes:
 //   scf.for %i0 = 0 to 100 step 32 {
 //     scf.for %j0 = 0 to 100 step 32 {
-//       scf.for %i1 = %i0 to min(%i0+32, 100) step 1 {
-//         scf.for %j1 = %j0 to min(%j0+32, 100) step 1 { ... }
+//       %ub_i = min(%i0 + 32, 100) - %i0 // ~= 32 (i's tile size)
+//       scf.for %i1 = 0 to %ub_i step 1 {
+//         %ub_j = min(%j0 + 32, 200) - %j0 // ~= 32 (j's tile size)
+//         scf.for %j1 = %0 to ub_j step 1 { ... }
+//            use (%i0 + %i1, %j0 + %j1)
 //       }
 //     }
 //   }
