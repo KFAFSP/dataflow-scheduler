@@ -18,7 +18,7 @@
 // Pipeline Tree Implementation
 //===----------------------------------------------------------------------===//
 
-#include "src/Transform/PipelineTree.hpp"
+#include "PipelineTree.hpp"
 
 #include <queue>
 

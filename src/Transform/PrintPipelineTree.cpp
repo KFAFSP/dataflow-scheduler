@@ -21,8 +21,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/Pass.h"
+#include "src/Analysis/PipelineTree.hpp"
 #include "src/Transform/Passes.h"
-#include "src/Transform/PipelineTree.hpp"
 
 namespace ktdf {
 

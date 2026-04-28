@@ -16,7 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "src/Transform/StageGrouping.hpp"
+#include "StageGrouping.hpp"
 
 #include "llvm/ADT/EquivalenceClasses.h"
 #include "llvm/ADT/SmallSet.h"

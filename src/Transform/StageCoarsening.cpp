@@ -35,10 +35,10 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "src/Analysis/PipelineTree.hpp"
+#include "src/Analysis/StageGrouping.hpp"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
-#include "src/Transform/PipelineTree.hpp"
-#include "src/Transform/StageGrouping.hpp"
 
 namespace ktdf {
 
