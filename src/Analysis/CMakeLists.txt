@@ -1,4 +1,5 @@
 add_library(SchedulerAnalysis
+    OperationTree.cpp
     PipelineTree.cpp
     StageGrouping.cpp
 )

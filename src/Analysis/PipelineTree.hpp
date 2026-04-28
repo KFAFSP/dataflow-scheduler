@@ -35,6 +35,7 @@
 #ifndef KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_HPP
 #define KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_HPP
 
+#include "OperationTree.hpp"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Support/LLVM.h"
@@ -45,7 +46,6 @@
 
 using llvm::raw_ostream;
 using llvm::StringRef;
-using mlir::function_ref;
 
 namespace mlir {
 namespace ktdf {
@@ -59,118 +59,29 @@ class PipelineNode;
 class StageNode;
 class PrivateNode;
 
-/// Base class for all nodes in the pipeline tree
-/// Similar to OperationNode in dcc/src/Analysis/OperationTree.hpp
-class PipelineTreeNode {
+/// Pipeline-specific tree node base class
+/// Inherits from OperationTreeNode to reuse walk algorithms and tree structure
+class PipelineTreeNode : public OperationTreeNode {
   friend class PipelineTree;
 
  public:
-  PipelineTreeNode(Operation *op) : operation_op_(op) {}
-  PipelineTreeNode(PipelineTreeNode &) = delete;
-  PipelineTreeNode(const PipelineTreeNode &) = delete;
-  virtual ~PipelineTreeNode() {}
+  using OperationTreeNode::OperationTreeNode;
 
-  bool operator==(const PipelineTreeNode &n) const { return this == &n; }
-  bool operator!=(const PipelineTreeNode &n) const { return this != &n; }
-
-  Operation *getOperation() const { return operation_op_; }
-
-  template <class OpTy>
-  const OpTy getOpAs() const {
-    return dyn_cast<const OpTy>(getOperation());
-  }
-  template <class OpTy>
-  OpTy getOpAs() {
-    return const_cast<const PipelineTreeNode *>(this)->getOpAs<OpTy>();
-  }
-
-  PipelineTreeNode *getParentNode() const { return parent_node_; }
-  unsigned getNumberOfChildren() const;
-
-  /// Get the first/last child in syntactic order.
-  PipelineTreeNode *getFirstChild() const { return first_child_; }
-  PipelineTreeNode *getLastChild() const;
-
-  /// Get the next/previous sibling in syntactic order.
-  PipelineTreeNode *getNextSibling() const { return next_sibling_; }
-  PipelineTreeNode *getPrevSibling() const;
-
-  // The depth of an outermost node (in a rooted tree) is one.
-  unsigned getDepth() const {
-    unsigned depth = 0;
-    const PipelineTreeNode *node = this;
-    while (node && (node = node->getParentNode())) ++depth;
-    return depth;
-  }
-
-  bool isOutermost() const { return getDepth() == 1; }
-  bool isLeaf() const { return getFirstChild() == nullptr; }
-
-  /// Traversal action function type
-  using ActionFuncTy = function_ref<PipelineTreeNode *(PipelineTreeNode *n)>;
-
-  enum WalkOrder {
-    kPostOrder = 1,
-    kPreOrder,
-    kPostOrderGuided,
-    kPreOrderGuided,
-    kBFS,
-    kReverseBFS,
-    kKeepOrderRBFS,
-  };
-
-  template <WalkOrder>
-  static void walk(PipelineTreeNode *n, ActionFuncTy action);
-
-  // Print the tree structure starting from this node.
-  virtual void print(raw_ostream &OS, bool showDependencies = false) const;
-
-  // Unlinks the subtree rooted at this node, but does not free any storage.
-  void unlink() {
-    PipelineTreeNode *prev_sibling = getPrevSibling();
-    if (prev_sibling)
-      prev_sibling->setNextSibling(getNextSibling());
-    else  // this was the first child of the parent
-      getParentNode()->setFirstChild(getNextSibling());
-    setNextSibling(nullptr);
-    setParentNode(nullptr);
-  }
-
-  // Node type queries
+  // Pipeline-specific type queries
   virtual bool isRootNode() const { return false; }
   virtual bool isLoopNode() const { return false; }
   virtual bool isPipelineNode() const { return false; }
   virtual bool isStageNode() const { return false; }
   virtual bool isPrivateNode() const { return false; }
 
-  // Get a string representation of the node
-  virtual std::string getNodeName() const = 0;
-
- protected:
-  static void preOrderWalk(PipelineTreeNode *n, ActionFuncTy action);
-  static void postOrderWalk(PipelineTreeNode *n, ActionFuncTy action);
-  static PipelineTreeNode *preOrderGuidedWalk(PipelineTreeNode *n,
-                                               ActionFuncTy action);
-  static PipelineTreeNode *postOrderGuidedWalk(PipelineTreeNode *n,
-                                                ActionFuncTy action);
-  static void breadthFirstWalk(PipelineTreeNode *n, ActionFuncTy action);
-  static void reverseBreadthFirstWalk(PipelineTreeNode *n, ActionFuncTy action,
-                                      bool keep_order = false);
-
-  void setParentNode(PipelineTreeNode *p) { parent_node_ = p; }
-  void setFirstChild(PipelineTreeNode *c) { first_child_ = c; }
-  void setNextSibling(PipelineTreeNode *s) { next_sibling_ = s; }
-
-  /// Inserts a child node right after the given position \p pos. If no
-  /// position is given, then it will be added at the end (ie as the last
-  /// child).
-  void insertChildNode(PipelineTreeNode *child, PipelineTreeNode *pos = nullptr);
-
- protected:
-  Operation *operation_op_;
-  PipelineTreeNode *parent_node_ = nullptr;
-  PipelineTreeNode *first_child_ = nullptr;
-  PipelineTreeNode *next_sibling_ = nullptr;
+  // Implement base class pure virtuals
+  std::string getNodeType() const override { return "pipeline-tree"; }
+  
+  // Pipeline-specific print with showDependencies option
+  virtual void print(raw_ostream &OS, bool showDependencies) const {
+    // Default implementation delegates to base class
+    OperationTreeNode::print(OS);
+  }
 };
 
 /// Root node representing the top-level container
@@ -233,7 +144,7 @@ class StageNode : public PipelineTreeNode {
     return dependencies_;
   }
 
-  void print(raw_ostream &OS, bool showDependencies = false) const override;
+  void print(raw_ostream &OS, bool showDependencies) const override;
 
  private:
   int stage_id_;
@@ -257,34 +168,23 @@ class PrivateNode : public PipelineTreeNode {
     return expanded_buffers_;
   }
 
-  void print(raw_ostream &OS, bool showDependencies = false) const override;
+  void print(raw_ostream &OS, bool showDependencies) const override;
 
  private:
   SmallVector<Operation *> expanded_buffers_;  // memref allocation operations
 };
 
 /// Pipeline tree representing the complete hierarchical structure
-/// Similar to OperationTreeBase in dcc/src/Analysis/OperationTree.hpp
-class PipelineTree {
+/// Inherits from OperationTree to reuse tree management functionality
+class PipelineTree : public OperationTree {
  public:
   PipelineTree() {}
-  PipelineTree(PipelineTree &) = delete;
-  PipelineTree(const PipelineTree &) = delete;
-  virtual ~PipelineTree() { clear(); }
 
-  const RootNode *getRoot() const { return root_; }
-  RootNode *getRoot() { return root_; }
-
-  bool empty() const { return !root_ || !root_->getFirstChild(); }
-
-  void remove(PipelineTreeNode *start) { clear(start); }
-
-  virtual void print(raw_ostream &OS, bool showDependencies = false) const {
-    PipelineTreeNode *n = getRoot()->getFirstChild();
-    while (n) {
-      n->print(OS, showDependencies);
-      n = n->getNextSibling();
-    }
+  const RootNode *getRoot() const {
+    return static_cast<const RootNode *>(OperationTree::getRoot());
+  }
+  RootNode *getRoot() {
+    return static_cast<RootNode *>(OperationTree::getRoot());
   }
 
   /// Build the tree from an MLIR operation (typically a function)
@@ -295,17 +195,18 @@ class PipelineTree {
     compute(unit);
   }
 
+  /// Pipeline-specific print method that supports showing dependencies
+  void print(raw_ostream &OS, bool showDependencies) const {
+    OperationTreeNode *n = getRoot()->getFirstChild();
+    while (n) {
+      static_cast<PipelineTreeNode*>(n)->print(OS, showDependencies);
+      n = n->getNextSibling();
+    }
+  }
+
  protected:
-  void clear();
-
-  /// Delete a subtree rooted at \p start.
-  void clear(PipelineTreeNode *start);
-
   /// Filter function to decide whether an operation should be included
-  virtual bool isOperationSelected(const Operation &op) const;
-
- protected:
-  RootNode *root_ = nullptr;
+  bool isOperationSelected(const Operation &op) const override;
 };
 
 }  // namespace ktdf
