@@ -4,7 +4,8 @@
 // CHECK: #[[$ATTR_0:.+]] = affine_map<(d0, d1) -> (d0, d1)>
 // CHECK: #[[$ATTR_1:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK: #[[$ATTR_2:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 2 >= 0, d1 >= 0, -d1 + 63 >= 0)>
-// CHECK-LABEL:   module {
+// CHECK: module {
+// CHECK:   module {
 // CHECK-NEXT:     func.func @add() {
 // CHECK-NEXT:       %[[CONSTANT_0:.*]] = arith.constant 0 : index
 // CHECK-NEXT:       %[[CONSTANT_1:.*]] = arith.constant 3 : index
@@ -23,7 +24,7 @@
 // CHECK-NEXT:     func.func private @"local-schedule-0"()
 // CHECK-NEXT:   }
 
-// CHECK-LABEL:   module {
+// CHECK:   module {
 // CHECK-NEXT:     func.func private @"local-schedule-0"() {
 // CHECK-NEXT:       %[[CONSTANT_0:.*]] = arith.constant 1024 : index
 // CHECK-NEXT:       %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
@@ -46,6 +47,7 @@
 // CHECK-NEXT:       return
 // CHECK-NEXT:     }
 // CHECK-NEXT:   }
+// CHECK: }
 
 
 
@@ -92,7 +94,7 @@ module {
 
     // Perform add operation on the data tiles.
     %C_data_tile = tensor.empty() : tensor<3x64xf16>
-    linalg.add ins(%A_data_tile, %B_data_tile : tensor<3x64xf16>, tensor<3x64xf16>)
+    %temp = linalg.add ins(%A_data_tile, %B_data_tile : tensor<3x64xf16>, tensor<3x64xf16>)
                 outs(%C_data_tile: tensor<3x64xf16>) -> tensor<3x64xf16>
 
     // Construct a memory view of C from a given address
