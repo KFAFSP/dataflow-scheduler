@@ -45,7 +45,7 @@ struct PrintPipelineTreePass
                    << " ===\n";
 
       // Build the pipeline tree
-      mlir::ktdf::PipelineTree tree;
+      PipelineTree tree;
       tree.compute(*funcOp.getOperation());
 
       // Print the tree structure

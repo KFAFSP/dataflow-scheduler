@@ -42,8 +42,6 @@ using llvm::raw_ostream;
 using mlir::function_ref;
 using mlir::Operation;
 
-namespace mlir {
-
 /// Base class for all nodes in operation tree abstractions.
 /// This class provides generic tree structure and traversal algorithms
 /// that can be reused across different tree types (pipeline trees,
@@ -70,7 +68,7 @@ class OperationTreeNode {
 
   template <class OpTy>
   const OpTy getOpAs() const {
-    return dyn_cast<const OpTy>(getOperation());
+    return mlir::dyn_cast<const OpTy>(getOperation());
   }
   template <class OpTy>
   OpTy getOpAs() {
@@ -140,6 +138,11 @@ class OperationTreeNode {
   /// Derived classes must implement this to identify specific nodes.
   virtual std::string getNodeName() const = 0;
 
+  /// Inserts a child node right after the given position \p pos. If no
+  /// position is given, then it will be added at the end (ie as the last
+  /// child).
+  void insertChildNode(OperationTreeNode *child, OperationTreeNode *pos = nullptr);
+
  protected:
   static void preOrderWalk(OperationTreeNode *n, ActionFuncTy action);
   static void postOrderWalk(OperationTreeNode *n, ActionFuncTy action);
@@ -155,11 +158,6 @@ class OperationTreeNode {
   void setFirstChild(OperationTreeNode *c) { first_child_ = c; }
   void setNextSibling(OperationTreeNode *s) { next_sibling_ = s; }
 
-  /// Inserts a child node right after the given position \p pos. If no
-  /// position is given, then it will be added at the end (ie as the last
-  /// child).
-  void insertChildNode(OperationTreeNode *child, OperationTreeNode *pos = nullptr);
-
  protected:
   Operation *operation_op_;
   OperationTreeNode *parent_node_ = nullptr;
@@ -169,7 +167,7 @@ class OperationTreeNode {
 
 /// Base class for operation tree containers.
 /// Provides tree management (construction, destruction, clearing).
-/// Derived classes should implement compute() to build their specific tree.
+/// Derived classes decide how to build their specific tree.
 class OperationTree {
  public:
   OperationTree() {}
@@ -192,6 +190,14 @@ class OperationTree {
     }
   }
 
+  /// Convenience method to walk the tree starting from root
+  template <OperationTreeNode::WalkOrder Order>
+  void walk(OperationTreeNode::ActionFuncTy action) {
+    if (root_) {
+      OperationTreeNode::walk<Order>(root_, action);
+    }
+  }
+
  protected:
   void clear();
 
@@ -205,8 +211,6 @@ class OperationTree {
  protected:
   OperationTreeNode *root_ = nullptr;
 };
-
-}  // namespace mlir
 
 #endif  // KTIR_SCHEDULER_ANALYSIS_OPERATIONTREE_HPP
 

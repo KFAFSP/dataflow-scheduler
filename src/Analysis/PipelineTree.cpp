@@ -33,6 +33,7 @@
 
 using namespace mlir;
 using namespace mlir::ktdf;
+using namespace llvm;
 
 //===----------------------------------------------------------------------===//
 // StageNode Implementation
@@ -45,9 +46,11 @@ void StageNode::print(raw_ostream& OS, bool showDependencies) const {
   }
   OS << getNodeName();
 
-  if (operation_op_) {
+  if (!isMaterialized()) {
+    OS << " [unmaterialized]";
+  } else if (operation_op_) {
     OS << " ";
-    ktir::utils::printLocation(OS, operation_op_);
+    scheduler::utils::printLocation(OS, operation_op_);
   }
 
   if (showDependencies && !dependencies_.empty()) {
@@ -80,7 +83,9 @@ void PrivateNode::print(raw_ostream& OS, bool showDependencies) const {
   }
   OS << getNodeName();
 
-  if (operation_op_) {
+  if (!isMaterialized()) {
+    OS << " [unmaterialized]";
+  } else if (operation_op_) {
     auto loc = operation_op_->getLoc();
     if (auto fileLoc = dyn_cast<FileLineColLoc>(loc)) {
       OS << " @" << fileLoc.getLine();
@@ -142,24 +147,24 @@ void PipelineTree::compute(Operation& unit) {
   // Create root node
   root_ = new RootNode();
 
-  // Map to track operation to node mapping
-  DenseMap<Operation*, PipelineTreeNode*> opToNode;
+  // Clear the operation-to-node mapping
+  opToNode_.clear();
 
   // Map to track stage IDs
   int nextStageId = 0;
 
   // Helper to create node and link to parent
   auto createAndLinkNode = [&](Operation* op, PipelineTreeNode* node) {
-    opToNode[op] = node;
+    opToNode_[op] = node;
 
     // Find parent: either another selected operation or root
     Operation* parentOp = op->getParentOp();
-    while (parentOp && !opToNode.count(parentOp)) {
+    while (parentOp && !opToNode_.count(parentOp)) {
       parentOp = parentOp->getParentOp();
     }
 
     PipelineTreeNode* parent =
-        parentOp ? opToNode[parentOp] : static_cast<PipelineTreeNode*>(root_);
+        parentOp ? opToNode_[parentOp] : static_cast<PipelineTreeNode*>(root_);
     parent->insertChildNode(node);
   };
 

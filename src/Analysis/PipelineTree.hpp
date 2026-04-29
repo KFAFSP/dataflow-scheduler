@@ -47,9 +47,6 @@
 using llvm::raw_ostream;
 using llvm::StringRef;
 
-namespace mlir {
-namespace ktdf {
-
 // Forward declarations
 class PipelineTree;
 class PipelineTreeNode;
@@ -65,7 +62,8 @@ class PipelineTreeNode : public OperationTreeNode {
   friend class PipelineTree;
 
  public:
-  using OperationTreeNode::OperationTreeNode;
+  PipelineTreeNode(Operation *op)
+      : OperationTreeNode(op), materialized_(op != nullptr) {}
 
   // Pipeline-specific type queries
   virtual bool isRootNode() const { return false; }
@@ -77,11 +75,24 @@ class PipelineTreeNode : public OperationTreeNode {
   // Implement base class pure virtuals
   std::string getNodeType() const override { return "pipeline-tree"; }
   
+  /// Check if this node has been materialized (has an associated IR operation)
+  bool isMaterialized() const { return materialized_; }
+  
+  /// Mark this node as materialized with the given operation
+  void materialize(Operation *op) {
+    assert(op && "expect a valid operation for materialization");
+    operation_op_ = op;
+    materialized_ = true;
+  }
+  
   // Pipeline-specific print with showDependencies option
   virtual void print(raw_ostream &OS, bool showDependencies) const {
     // Default implementation delegates to base class
     OperationTreeNode::print(OS);
   }
+
+ protected:
+  bool materialized_;  // Whether this node has an associated IR operation
 };
 
 /// Root node representing the top-level container
@@ -104,8 +115,8 @@ class LoopNode : public PipelineTreeNode {
     return "loop";
   }
 
-  scf::ForOp getForOp() const {
-    return cast<scf::ForOp>(getOperation());
+  mlir::scf::ForOp getForOp() const {
+    return mlir::cast<mlir::scf::ForOp>(getOperation());
   }
 };
 
@@ -121,7 +132,7 @@ class PipelineNode : public PipelineTreeNode {
   PrivateNode *getPrivateNode() const;
 
   /// Get all stage nodes that are direct children of this pipeline
-  SmallVector<StageNode *> getStages() const;
+  llvm::SmallVector<StageNode *> getStages() const;
 };
 
 /// Stage node representing ktdf.stage operations
@@ -140,7 +151,7 @@ class StageNode : public PipelineTreeNode {
   /// Add a dependency to another stage (token-based synchronization)
   void addDependency(StageNode *target) { dependencies_.push_back(target); }
 
-  const SmallVector<StageNode *> &getDependencies() const {
+  const llvm::SmallVector<StageNode *> &getDependencies() const {
     return dependencies_;
   }
 
@@ -148,7 +159,7 @@ class StageNode : public PipelineTreeNode {
 
  private:
   int stage_id_;
-  SmallVector<StageNode *> dependencies_;  // Stages this stage depends on
+  llvm::SmallVector<StageNode *> dependencies_;  // Stages this stage depends on
 };
 
 /// Private node representing ktdf.private operations
@@ -164,14 +175,14 @@ class PrivateNode : public PipelineTreeNode {
     expanded_buffers_.push_back(allocOp);
   }
 
-  const SmallVector<Operation *> &getExpandedBuffers() const {
+  const llvm::SmallVector<mlir::Operation *> &getExpandedBuffers() const {
     return expanded_buffers_;
   }
 
   void print(raw_ostream &OS, bool showDependencies) const override;
 
  private:
-  SmallVector<Operation *> expanded_buffers_;  // memref allocation operations
+  llvm::SmallVector<mlir::Operation *> expanded_buffers_;  // memref allocation operations
 };
 
 /// Pipeline tree representing the complete hierarchical structure
@@ -204,13 +215,21 @@ class PipelineTree : public OperationTree {
     }
   }
 
+  /// Get the tree node for a given operation
+  PipelineTreeNode *getNodeForOp(Operation *op) const {
+    auto it = opToNode_.find(op);
+    return it != opToNode_.end() ? it->second : nullptr;
+  }
+
  protected:
   /// Filter function to decide whether an operation should be included
-  bool isOperationSelected(const Operation &op) const override;
+  bool isOperationSelected(const mlir::Operation &op) const override;
+
+ private:
+  /// Map from operations to their corresponding tree nodes
+  llvm::DenseMap<mlir::Operation*, PipelineTreeNode*> opToNode_;
 };
 
-}  // namespace ktdf
-}  // namespace mlir
 
 #endif  // KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_HPP
 

@@ -157,57 +157,41 @@ struct StageCoarseningPass
     llvm::outs() << "\n--- Applying 4-Stage Transformation ---\n";
     llvm::outs() << "Loop nest depth: " << candidate.loopNest.size() << "\n";
 
-    // Build initial pipeline tree with loop nest parent as root
-    mlir::ktdf::PipelineTree initialTree;
-    initialTree.compute(*candidate.loopNestParent);
+    // Build pipeline tree once - it will be manipulated throughout the transformation
+    PipelineTree tree;
+    tree.compute(*candidate.loopNestParent);
     llvm::outs() << "=== Initial Pipeline Tree ===\n";
-    initialTree.print(llvm::outs(), false);
+    tree.print(llvm::outs(), false);
     llvm::outs() << "\n";
 
     // Stage 1a: Distribute and sink loops into pipeline
     llvm::outs() << "\n--- Stage 1a: Distribute and Sink into Pipeline ---\n";
-    stage1a_DistributeAndSinkIntoPipeline(candidate);
-
-    // Rebuild tree and print
-    mlir::ktdf::PipelineTree tree1a;
-    tree1a.compute(*candidate.loopNestParent);
+    stage1a_DistributeAndSinkIntoPipeline(candidate, tree);
     llvm::outs() << "\n=== Pipeline Tree after Stage 1a ===\n";
-    tree1a.print(llvm::outs(), false);
+    tree.print(llvm::outs(), false);
     llvm::outs() << "\n";
 
     // Stage 1b: Further sink into stage groups containing a single stage
     // (expand buffers)
     llvm::outs() << "\n--- Stage 1b: Sink into Single-Stage Groups ---\n";
-    stage1b_SinkIntoSingleStage(candidate);
-
-    // Rebuild tree and print
-    mlir::ktdf::PipelineTree tree1b;
-    tree1b.compute(*candidate.loopNestParent);
+    stage1b_SinkIntoSingleStage(candidate, tree);
     llvm::outs() << "\n=== Pipeline Tree after Stage 1b ===\n";
-    tree1b.print(llvm::outs(), false);
+    tree.print(llvm::outs(), false);
     llvm::outs() << "\n";
 
     // Stage 2: Discover and correct illegal structures iteratively
     llvm::outs()
         << "\n--- Stage 2: Discover and Correct Illegal Structures ---\n";
-    stage2_DiscoverAndCorrectStructure(candidate);
-
-    // Rebuild tree and print
-    mlir::ktdf::PipelineTree tree2;
-    tree2.compute(*candidate.loopNestParent);
+    stage2_DiscoverAndCorrectStructure(candidate, tree);
     llvm::outs() << "\n=== Pipeline Tree after Stage 2 ===\n";
-    tree2.print(llvm::outs(), false);
+    tree.print(llvm::outs(), false);
     llvm::outs() << "\n";
 
     // Stage 3: Correct stage dependencies that cross pipeline boundaries
     llvm::outs() << "\n--- Stage 3: Correct Stage Dependencies ---\n";
-    stage3_CorrectStageDependencies(candidate);
-
-    // Rebuild tree and print
-    mlir::ktdf::PipelineTree tree3;
-    tree3.compute(*candidate.loopNestParent);
+    stage3_CorrectStageDependencies(candidate, tree);
     llvm::outs() << "\n=== Pipeline Tree after Stage 3 (Final) ===\n";
-    tree3.print(llvm::outs(), false);
+    tree.print(llvm::outs(), false);
     llvm::outs() << "\n";
   }
 
@@ -215,8 +199,15 @@ struct StageCoarseningPass
   // Stage 1a: Distribute and Sink Loops into Pipeline
   //===--------------------------------------------------------------------===//
 
-  void stage1a_DistributeAndSinkIntoPipeline(TransformCandidate& candidate) {
+  void stage1a_DistributeAndSinkIntoPipeline(TransformCandidate& candidate,
+                                              PipelineTree& tree) {
     llvm::outs() << "Stage 1a: Distributing loops into pipeline...\n";
+
+    // Validate candidate
+    if (!candidate.pipeline || !candidate.loopNestParent) {
+      llvm::outs() << "  ERROR: Invalid candidate (null pipeline or parent)\n";
+      return;
+    }
 
     // Step 1: Perform stage grouping analysis
     llvm::outs() << "\n  Performing stage grouping analysis...\n";
@@ -242,21 +233,75 @@ struct StageCoarseningPass
       }
     }
 
-    // TODO: Implement loop distribution and sinking
-    // For each loop in the nest (outermost to innermost):
-    //   1. Distribute loop body into stage groups (not individual stages)
-    //   2. Sink loop into pipeline, respecting stage groups
-    //   3. Update buffer dimensions (LX buffers remain 1D)
+    // Step 2: For each stage group, create unmaterialized loop nest and insert
+    // as children of pipeline
+    llvm::outs() << "\n  Distributing loop nests to stage groups...\n";
 
-    llvm::outs()
-        << "\n  (Loop distribution and sinking implementation pending)\n";
+    // Process each group
+    for (size_t groupIdx = 0; groupIdx < groups.size(); ++groupIdx) {
+      const auto& group = groups[groupIdx];
+      const llvm::SmallVector<mlir::ktdf::StageOp> stages = group.getStages();
+
+      if (stages.empty()) continue;
+
+      llvm::outs() << "  Group " << groupIdx << ": Creating loop nest for "
+                   << stages.size() << " stage(s)\n";
+
+      // Find stage nodes for this group using the operation-to-node mapping
+      llvm::SmallVector<StageNode*> stageNodes;
+      PipelineTreeNode* pipelineParentNode =
+          tree.getNodeForOp(candidate.pipeline.getOperation());
+      assert(pipelineParentNode && pipelineParentNode->isPipelineNode());
+
+      for (auto stage : stages) {
+        PipelineTreeNode* node =
+            tree.getNodeForOp(stage);
+        assert(node);
+        assert(node->isStageNode());
+        auto* stageNode = static_cast<StageNode*>(node);
+        stageNodes.push_back(stageNode);
+      }
+      assert(!stageNodes.empty());
+
+      // Create nested loop nodes (outermost to innermost)
+      // The outermost loop will be inserted as a child of the pipeline
+      // Each subsequent loop will be a child of the previous loop
+      // The stages will be moved to be children of the innermost loop
+      OperationTreeNode* currentParent = pipelineParentNode;
+
+      for (size_t loopIdx = 0; loopIdx < candidate.loopNest.size(); ++loopIdx) {
+        LoopNode* loopNode =
+            new LoopNode(nullptr);  // Unmaterialized
+
+        // Insert loop node as child of current parent (pipeline or outer loop)
+        currentParent->insertChildNode(loopNode);
+
+        llvm::outs() << "    Created unmaterialized loop node (level "
+                     << loopIdx << ")\n";
+
+        // This loop becomes the parent for the next loop or the stages
+        currentParent = loopNode;
+      }
+
+      // Move all stages in this group to be children of the innermost loop
+      for (StageNode* stageNode : stageNodes) {
+        stageNode->unlink();
+        currentParent->insertChildNode(stageNode);
+      }
+
+      llvm::outs() << "    Moved " << stageNodes.size()
+                   << " stage(s) under loop nest\n";
+    }
+
+    llvm::outs() << "\n  Loop distribution complete.\n";
   }
 
   //===--------------------------------------------------------------------===//
   // Stage 1b: Sink into Stage Groups Containing a Single Stage
   //===--------------------------------------------------------------------===//
 
-  void stage1b_SinkIntoSingleStage(TransformCandidate& candidate) {
+  void stage1b_SinkIntoSingleStage(TransformCandidate& candidate,
+                                    PipelineTree& tree) {
     llvm::outs()
         << "Stage 1b: Conditionally sinking into single-stage groups...\n";
 
@@ -273,7 +318,8 @@ struct StageCoarseningPass
   // Stage 2: Discover and Correct Illegal Structures
   //===--------------------------------------------------------------------===//
 
-  void stage2_DiscoverAndCorrectStructure(TransformCandidate& candidate) {
+  void stage2_DiscoverAndCorrectStructure(TransformCandidate& candidate,
+                                           PipelineTree& tree) {
     llvm::outs()
         << "Stage 2: Discovering and correcting illegal structures...\n";
 
@@ -295,7 +341,7 @@ struct StageCoarseningPass
       llvm::outs() << "  Iteration " << iteration << ":\n";
 
       // Rebuild tree to get current structure
-      mlir::ktdf::PipelineTree tree;
+      PipelineTree tree;
       tree.compute(*candidate.loopNestParent);
       foundIllegalStructure = false;
 
@@ -320,7 +366,8 @@ struct StageCoarseningPass
   // Stage 3: Correct Stage Dependencies Crossing Pipeline Boundaries
   //===--------------------------------------------------------------------===//
 
-  void stage3_CorrectStageDependencies(TransformCandidate& candidate) {
+  void stage3_CorrectStageDependencies(TransformCandidate& candidate,
+                                        PipelineTree& tree) {
     llvm::outs() << "Stage 3: Correcting stage dependencies...\n";
 
     // TODO: Implement dependency correction

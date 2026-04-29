@@ -123,7 +123,7 @@ void StageGroupingAnalysis::dump() const {
     for (auto stage : group.getStages()) {
       if (!first) llvm::outs() << ", ";
       llvm::outs() << "stage";
-      ktir::utils::printLocation(llvm::outs(), stage.getOperation());
+      scheduler::utils::printLocation(llvm::outs(), stage.getOperation());
       first = false;
     }
     llvm::outs() << "]\n";

@@ -26,7 +26,9 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "src/Utils/OperationUtils.hpp"
 
+using namespace llvm;
 using namespace mlir;
 
 //===----------------------------------------------------------------------===//
@@ -91,11 +93,8 @@ void OperationTreeNode::print(raw_ostream& OS) const {
   OS << getNodeName();
 
   if (operation_op_) {
-    // Print location information if available
-    auto loc = operation_op_->getLoc();
-    if (auto fileLoc = dyn_cast<FileLineColLoc>(loc)) {
-      OS << " @" << fileLoc.getLine();
-    }
+    // Print location information using utility function
+    scheduler::utils::printLocation(OS, operation_op_);
   }
   OS << "\n";
 

@@ -8,7 +8,7 @@
 
 #include "mlir/IR/Location.h"
 
-namespace ktir {
+namespace scheduler {
 namespace utils {
 
 void printLocation(llvm::raw_ostream& OS, mlir::Operation* op) {
@@ -26,6 +26,6 @@ void printLocation(llvm::raw_ostream& OS, mlir::Operation* op) {
 }
 
 }  // namespace utils
-}  // namespace ktir
+}  // namespace scheduler
 
 // Made with Bob

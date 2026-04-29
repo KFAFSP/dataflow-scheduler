@@ -10,7 +10,7 @@
 #include "mlir/IR/Operation.h"
 #include "llvm/Support/raw_ostream.h"
 
-namespace ktir {
+namespace scheduler {
 namespace utils {
 
 /// Print the source location of an operation to the output stream.
@@ -19,7 +19,7 @@ namespace utils {
 void printLocation(llvm::raw_ostream& OS, mlir::Operation* op);
 
 } // namespace utils
-} // namespace ktir
+} // namespace scheduler
 
 #endif // SRC_UTILS_OPERATIONUTILS_HPP
 
