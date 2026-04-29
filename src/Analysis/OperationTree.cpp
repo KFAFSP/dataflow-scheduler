@@ -90,7 +90,7 @@ void OperationTreeNode::print(raw_ostream& OS) const {
   for (unsigned i = 0; i < depth; ++i) {
     OS << "  ";
   }
-  OS << getNodeName();
+  OS << getNodeName() << " ";
 
   if (operation_op_) {
     // Print location information using utility function

@@ -36,22 +36,42 @@ using namespace mlir::ktdf;
 using namespace llvm;
 
 //===----------------------------------------------------------------------===//
-// StageNode Implementation
+// PipelineTreeNode Implementation
 //===----------------------------------------------------------------------===//
 
-void StageNode::print(raw_ostream& OS, bool showDependencies) const {
+void PipelineTreeNode::printNodeHeader(raw_ostream& OS) const {
+  // Print indentation based on depth
   unsigned depth = getDepth();
   for (unsigned i = 0; i < depth; ++i) {
     OS << "  ";
   }
+  
+  // Print node name
   OS << getNodeName();
-
+  
+  // Print materialization status and location
   if (!isMaterialized()) {
     OS << " [unmaterialized]";
   } else if (operation_op_) {
     OS << " ";
     scheduler::utils::printLocation(OS, operation_op_);
   }
+}
+
+void PipelineTreeNode::printChildren(raw_ostream& OS, bool showDependencies) const {
+  OperationTreeNode* child = getFirstChild();
+  while (child) {
+    static_cast<PipelineTreeNode*>(child)->print(OS, showDependencies);
+    child = child->getNextSibling();
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// StageNode Implementation
+//===----------------------------------------------------------------------===//
+
+void StageNode::print(raw_ostream& OS, bool showDependencies) const {
+  printNodeHeader(OS);
 
   if (showDependencies && !dependencies_.empty()) {
     OS << " [depends on: ";
@@ -63,13 +83,7 @@ void StageNode::print(raw_ostream& OS, bool showDependencies) const {
   }
 
   OS << "\n";
-
-  // Print children
-  OperationTreeNode* child = getFirstChild();
-  while (child) {
-    static_cast<PipelineTreeNode*>(child)->print(OS, showDependencies);
-    child = child->getNextSibling();
-  }
+  printChildren(OS, showDependencies);
 }
 
 //===----------------------------------------------------------------------===//
@@ -77,33 +91,14 @@ void StageNode::print(raw_ostream& OS, bool showDependencies) const {
 //===----------------------------------------------------------------------===//
 
 void PrivateNode::print(raw_ostream& OS, bool showDependencies) const {
-  unsigned depth = getDepth();
-  for (unsigned i = 0; i < depth; ++i) {
-    OS << "  ";
-  }
-  OS << getNodeName();
-
-  if (!isMaterialized()) {
-    OS << " [unmaterialized]";
-  } else if (operation_op_) {
-    auto loc = operation_op_->getLoc();
-    if (auto fileLoc = dyn_cast<FileLineColLoc>(loc)) {
-      OS << " @" << fileLoc.getLine();
-    }
-  }
+  printNodeHeader(OS);
 
   if (!expanded_buffers_.empty()) {
     OS << " [expanded buffers: " << expanded_buffers_.size() << "]";
   }
 
   OS << "\n";
-
-  // Print children
-  OperationTreeNode* child = getFirstChild();
-  while (child) {
-    static_cast<PipelineTreeNode*>(child)->print(OS, showDependencies);
-    child = child->getNextSibling();
-  }
+  printChildren(OS, showDependencies);
 }
 
 //===----------------------------------------------------------------------===//
@@ -153,20 +148,6 @@ void PipelineTree::compute(Operation& unit) {
   // Map to track stage IDs
   int nextStageId = 0;
 
-  // Helper to create node and link to parent
-  auto createAndLinkNode = [&](Operation* op, PipelineTreeNode* node) {
-    opToNode_[op] = node;
-
-    // Find parent: either another selected operation or root
-    Operation* parentOp = op->getParentOp();
-    while (parentOp && !opToNode_.count(parentOp)) {
-      parentOp = parentOp->getParentOp();
-    }
-
-    PipelineTreeNode* parent =
-        parentOp ? opToNode_[parentOp] : static_cast<PipelineTreeNode*>(root_);
-    parent->insertChildNode(node);
-  };
 
   // Use MLIR's walk to traverse all operations in pre-order
   unit.walk<WalkOrder::PreOrder>([&](Operation* op) {
@@ -174,19 +155,27 @@ void PipelineTree::compute(Operation& unit) {
 
     PipelineTreeNode* node = nullptr;
 
-    // Create appropriate node type based on operation
+    // Create appropriate node type based on operation using factory methods
     if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-      node = new LoopNode(op);
+      node = createLoopNode(op);
     } else if (auto pipelineOp = dyn_cast<PipelineOp>(op)) {
-      node = new PipelineNode(op);
+      node = createPipelineNode(op);
     } else if (auto stageOp = dyn_cast<StageOp>(op)) {
-      node = new StageNode(op, nextStageId++);
+      node = createStageNode(op, nextStageId++);
     } else if (auto privateOp = dyn_cast<PrivateOp>(op)) {
-      node = new PrivateNode(op);
+      node = createPrivateNode(op);
     }
 
     if (node) {
-      createAndLinkNode(op, node);
+      // Find parent: either another selected operation or root
+      Operation* parentOp = op->getParentOp();
+      while (parentOp && !opToNode_.count(parentOp)) {
+        parentOp = parentOp->getParentOp();
+      }
+
+      PipelineTreeNode* parent =
+          parentOp ? opToNode_[parentOp] : static_cast<PipelineTreeNode*>(root_);
+      parent->insertChildNode(node);
     }
   });
 

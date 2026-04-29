@@ -13,15 +13,15 @@ namespace utils {
 
 void printLocation(llvm::raw_ostream& OS, mlir::Operation* op) {
   if (!op) {
-    OS << "@nullptr";
+    OS << "<nullptr op>";
     return;
   }
 
   auto loc = op->getLoc();
   if (auto fileLoc = mlir::dyn_cast<mlir::FileLineColLoc>(loc)) {
-    OS << "@" << fileLoc.getLine();
+    OS << "@ line: " << fileLoc.getLine();
   } else {
-    OS << "@" << op;
+    OS << "@ line: " << op;
   }
 }
 

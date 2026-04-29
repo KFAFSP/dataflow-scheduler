@@ -101,11 +101,18 @@ class PipelineTreeNode : public OperationTreeNode {
   
   // Pipeline-specific print with showDependencies option
   virtual void print(raw_ostream &OS, bool showDependencies) const {
-    // Default implementation delegates to base class
-    OperationTreeNode::print(OS);
+    printNodeHeader(OS);
+    OS << "\n";
+    printChildren(OS, showDependencies);
   }
 
  protected:
+  /// Helper method to print common node information (indentation, name, materialization status, location)
+  void printNodeHeader(raw_ostream &OS) const;
+  
+  /// Helper method to print all children
+  void printChildren(raw_ostream &OS, bool showDependencies) const;
+
   bool materialized_;      // Whether this node has an associated IR operation
   Operation *template_op_; // Template operation to use when materializing this node
 };
@@ -205,12 +212,74 @@ class PrivateNode : public PipelineTreeNode {
 class PipelineTree : public OperationTree {
  public:
   PipelineTree() {}
+  
+  /// Destructor - cleans up all allocated nodes
+  ~PipelineTree() {
+    deleteAllNodes();
+  }
 
   const RootNode *getRoot() const {
     return static_cast<const RootNode *>(OperationTree::getRoot());
   }
   RootNode *getRoot() {
     return static_cast<RootNode *>(OperationTree::getRoot());
+  }
+  
+  /// Factory methods for creating nodes (manages allocation)
+  LoopNode* createLoopNode(mlir::Operation* op) {
+    LoopNode* node = new LoopNode(op);
+    if (op) opToNode_[op] = node;
+    return node;
+  }
+  
+  PipelineNode* createPipelineNode(mlir::Operation* op) {
+    PipelineNode* node = new PipelineNode(op);
+    if (op) opToNode_[op] = node;
+    return node;
+  }
+  
+  StageNode* createStageNode(mlir::Operation* op, int stageId) {
+    StageNode* node = new StageNode(op, stageId);
+    if (op) opToNode_[op] = node;
+    return node;
+  }
+  
+  PrivateNode* createPrivateNode(mlir::Operation* op) {
+    PrivateNode* node = new PrivateNode(op);
+    if (op) opToNode_[op] = node;
+    return node;
+  }
+  
+  /// Delete a single node and remove it from the map
+  void deleteNode(PipelineTreeNode* node) {
+    if (!node) return;
+    
+    // Remove from operation map if it has an operation
+    if (node->getOperation()) {
+      opToNode_.erase(node->getOperation());
+    }
+    
+    // Unlink from tree structure
+    node->unlink();
+    
+    // Delete the node
+    delete node;
+  }
+  
+  /// Delete all nodes in the tree
+  void deleteAllNodes() {
+    llvm::SmallVector<OperationTreeNode *> to_be_deleted;
+    if (root_) {
+      OperationTreeNode::walk<OperationTreeNode::kPostOrder>(root_, [&to_be_deleted](OperationTreeNode* n) {
+        to_be_deleted.push_back(n);
+        return n;
+      });
+      root_ = nullptr;
+    }
+    for (OperationTreeNode* node : to_be_deleted) {
+      delete node;
+    }
+    opToNode_.clear();
   }
 
   /// Build the tree from an MLIR operation (typically a function)

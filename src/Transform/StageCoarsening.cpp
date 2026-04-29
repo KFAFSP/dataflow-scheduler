@@ -275,8 +275,8 @@ struct StageCoarseningPass
       OperationTreeNode* currentParent = pipelineParentNode;
 
       for (size_t loopIdx = 0; loopIdx < candidate.loopNest.size(); ++loopIdx) {
-        // Create unmaterialized loop node with template operation
-        LoopNode* loopNode = new LoopNode(nullptr);  // Unmaterialized
+        // Create unmaterialized loop node using factory method
+        LoopNode* loopNode = tree.createLoopNode(nullptr);  // Unmaterialized
         loopNode->setTemplateOp(candidate.loopNest[loopIdx].getOperation());
 
         // Insert loop node as child of current parent (pipeline or outer loop)
