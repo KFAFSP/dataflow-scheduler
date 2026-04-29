@@ -150,7 +150,8 @@ struct StageCoarseningPass
 
           llvm::outs() << "    -> Found candidate with " << loopNest.size()
                        << " nested loop(s) at ";
-          scheduler::utils::printLocation(llvm::outs(), loopNest.front().getOperation());
+          scheduler::utils::printLocation(llvm::outs(),
+                                          loopNest.front().getOperation());
           llvm::outs() << "\n";
         }
       });
@@ -162,7 +163,8 @@ struct StageCoarseningPass
     llvm::outs() << "\n--- Applying 4-Stage Transformation ---\n";
     llvm::outs() << "Loop nest depth: " << candidate.loopNest.size() << "\n";
 
-    // Build pipeline tree once - it will be manipulated throughout the transformation
+    // Build pipeline tree once - it will be manipulated throughout the
+    // transformation
     PipelineTree tree;
     tree.compute(*candidate.loopNestParent);
     llvm::outs() << "=== Initial Pipeline Tree ===\n";
@@ -205,7 +207,7 @@ struct StageCoarseningPass
   //===--------------------------------------------------------------------===//
 
   void stage1a_DistributeAndSinkIntoPipeline(TransformCandidate& candidate,
-                                              PipelineTree& tree) {
+                                             PipelineTree& tree) {
     llvm::outs() << "Stage 1a: Distributing loops into pipeline...\n";
 
     // Validate candidate
@@ -259,8 +261,7 @@ struct StageCoarseningPass
       assert(pipelineParentNode && pipelineParentNode->isPipelineNode());
 
       for (auto stage : stages) {
-        PipelineTreeNode* node =
-            tree.getNodeForOp(stage);
+        PipelineTreeNode* node = tree.getNodeForOp(stage);
         assert(node);
         assert(node->isStageNode());
         auto* stageNode = static_cast<StageNode*>(node);
@@ -284,7 +285,8 @@ struct StageCoarseningPass
 
         llvm::outs() << "    Created unmaterialized loop node (level "
                      << loopIdx << ") with template from ";
-        scheduler::utils::printLocation(llvm::outs(), candidate.loopNest[loopIdx].getOperation());
+        scheduler::utils::printLocation(
+            llvm::outs(), candidate.loopNest[loopIdx].getOperation());
         llvm::outs() << "\n";
 
         // This loop becomes the parent for the next loop or the stages
@@ -309,7 +311,7 @@ struct StageCoarseningPass
   //===--------------------------------------------------------------------===//
 
   void stage1b_SinkIntoSingleStage(TransformCandidate& candidate,
-                                    PipelineTree& tree) {
+                                   PipelineTree& tree) {
     llvm::outs()
         << "Stage 1b: Conditionally sinking into single-stage groups...\n";
 
@@ -327,7 +329,7 @@ struct StageCoarseningPass
   //===--------------------------------------------------------------------===//
 
   void stage2_DiscoverAndCorrectStructure(TransformCandidate& candidate,
-                                           PipelineTree& tree) {
+                                          PipelineTree& tree) {
     llvm::outs()
         << "Stage 2: Discovering and correcting illegal structures...\n";
 
@@ -375,7 +377,7 @@ struct StageCoarseningPass
   //===--------------------------------------------------------------------===//
 
   void stage3_CorrectStageDependencies(TransformCandidate& candidate,
-                                        PipelineTree& tree) {
+                                       PipelineTree& tree) {
     llvm::outs() << "Stage 3: Correcting stage dependencies...\n";
 
     // TODO: Implement dependency correction

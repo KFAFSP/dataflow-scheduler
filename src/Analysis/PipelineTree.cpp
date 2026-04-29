@@ -45,10 +45,10 @@ void PipelineTreeNode::printNodeHeader(raw_ostream& OS) const {
   for (unsigned i = 0; i < depth; ++i) {
     OS << "  ";
   }
-  
+
   // Print node name
   OS << getNodeName();
-  
+
   // Print materialization status and location
   if (!isMaterialized()) {
     OS << " [unmaterialized]";
@@ -58,7 +58,8 @@ void PipelineTreeNode::printNodeHeader(raw_ostream& OS) const {
   }
 }
 
-void PipelineTreeNode::printChildren(raw_ostream& OS, bool showDependencies) const {
+void PipelineTreeNode::printChildren(raw_ostream& OS,
+                                     bool showDependencies) const {
   OperationTreeNode* child = getFirstChild();
   while (child) {
     static_cast<PipelineTreeNode*>(child)->print(OS, showDependencies);
@@ -148,7 +149,6 @@ void PipelineTree::compute(Operation& unit) {
   // Map to track stage IDs
   int nextStageId = 0;
 
-
   // Use MLIR's walk to traverse all operations in pre-order
   unit.walk<WalkOrder::PreOrder>([&](Operation* op) {
     if (!isOperationSelected(*op)) return;
@@ -173,8 +173,9 @@ void PipelineTree::compute(Operation& unit) {
         parentOp = parentOp->getParentOp();
       }
 
-      PipelineTreeNode* parent =
-          parentOp ? opToNode_[parentOp] : static_cast<PipelineTreeNode*>(root_);
+      PipelineTreeNode* parent = parentOp
+                                     ? opToNode_[parentOp]
+                                     : static_cast<PipelineTreeNode*>(root_);
       parent->insertChildNode(node);
     }
   });
