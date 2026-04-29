@@ -1,5 +1,15 @@
-#include <set>
-#include <unordered_map>
+//===------------------------- ComputeGroupExtraction.cpp ----------------===//
+//
+// IBM Confidential
+// (C) Copyright IBM Corp. 2022, 2025
+//
+// =============================================================================
+//
+/// This pass identifies compute groups (sequences of operations between LoadOps
+/// and StoreOps with the same access tile equivalence class) and extracts them
+/// into separate functions in new modules.
+//
+//===----------------------------------------------------------------------===//
 
 #include "Ktdp/KtdpOps.hpp"
 #include "llvm/ADT/EquivalenceClasses.h"
@@ -43,32 +53,55 @@ struct ComputeGroupExtractionPass
   void runOnOperation() final;
 
  private:
+  /// A compute group is defined as the set of operations between
+  /// first_load and last_store, in addition to any ancestor operations.
   struct ComputeGroup {
-    Block* block;
     Operation* first_load;
     Operation* last_store;
   };
 
   void runOn(ModuleOp module_op);
 
+  /// Walks the ancestor tree of a StoreOp's data operand and unions access
+  /// tiles from any LoadOps found with the StoreOp's access tile.
+  /// @param store_op The StoreOp whose ancestors to walk
+  /// @param access_tile_eq_classes Equivalence classes to update
   void unionAccessTilesFromAncestors(
       mlir::ktdp::StoreOp store_op,
       llvm::EquivalenceClasses<Value>& access_tile_eq_classes);
 
+  /// Print equivalence classes for debugging.
+  /// @param access_tile_eq_classes The equivalence classes to print
   void printEqClasses(llvm::EquivalenceClasses<Value>& access_tile_eq_classes);
 
+  /// Verifiy that a compute operation has valid usage patterns.
+  /// @param op The operation to verify
+  /// @return true if the operation has valid uses, false otherwise
   bool verifyComputeOpUses(Operation* op);
 
+  /// Build equivalence classes of access tiles by processing StoreOps in a
+  /// block.
+  /// @param block The block to process
+  /// @param access_tile_eq_classes Equivalence classes to populate
   void buildAccessTileEqClasses(
       Block* block, llvm::EquivalenceClasses<Value>& access_tile_eq_classes);
 
+  /// Extract a compute group into a new function in a child module.
+  /// @param top_level_module The top-level module containing all child modules
+  /// @param original_module The module containing the original function
+  /// @param group The compute group to extract
   void extractComputeGroup(ModuleOp top_level_module, ModuleOp original_module,
                            const ComputeGroup& group);
 
+  /// Process a block to identify and collect compute groups for extraction.
+  /// @param block The block to process
+  /// @param access_tile_eq_classes Rquivalence classes of access tiles
   void processBlockForExtraction(
       Block* block, llvm::EquivalenceClasses<Value>& access_tile_eq_classes);
 
+  /// Counter for generating unique function names
   int function_counter = 0;
+  /// Collected compute groups
   llvm::SmallVector<ComputeGroup> groups_to_extract_;
 };
 
@@ -81,6 +114,10 @@ void ComputeGroupExtractionPass::unionAccessTilesFromAncestors(
   llvm::SmallVector<Operation*> worklist = {store_op};
   llvm::DenseSet<Operation*> visited;
 
+  // Starting at the store, walk all the ancestors, searching for loads
+  // and union the store's access tile equivalence class with the class
+  // of the load's access tile. This captures the dependencies between
+  // loads and stores.
   while (!worklist.empty()) {
     Operation* current_op = worklist.back();
     worklist.pop_back();
@@ -99,7 +136,7 @@ void ComputeGroupExtractionPass::unionAccessTilesFromAncestors(
     for (Value operand : current_op->getOperands()) {
       if (Operation* operand_def_op = operand.getDefiningOp()) {
         // Special handling for tensor.empty() - follow its uses to find compute
-        // ops
+        // op.
         if (isa<tensor::EmptyOp>(operand_def_op)) {
           // Push all uses of tensor.empty() except stores and current_op
           for (Operation* user : operand_def_op->getUsers()) {
@@ -132,9 +169,7 @@ bool ComputeGroupExtractionPass::verifyComputeOpUses(Operation* op) {
     }
   }
 
-  if (has_store_use && has_compute_use) {
-    return false;
-  }
+  if (has_store_use && has_compute_use) return false;
 
   return true;
 }
@@ -163,8 +198,9 @@ void ComputeGroupExtractionPass::buildAccessTileEqClasses(
     Block* block, llvm::EquivalenceClasses<Value>& access_tile_eq_classes) {
   for (Operation& block_op : block->getOperations()) {
     if (auto store_op = dyn_cast<mlir::ktdp::StoreOp>(&block_op)) {
+      // For every store in block, union its access tile's class with the
+      // classes of the access tiles of its ancestor loads.
       access_tile_eq_classes.insert(store_op.getAccessTile());
-
       unionAccessTilesFromAncestors(store_op, access_tile_eq_classes);
     } else if (llvm::isa<mlir::linalg::LinalgDialect>(block_op.getDialect()) ||
                llvm::isa<mlir::math::MathDialect>(block_op.getDialect()) ||
@@ -174,6 +210,7 @@ void ComputeGroupExtractionPass::buildAccessTileEqClasses(
     }
   }
 }
+
 // Helper function to recursively materialize dependencies
 static void materializeDependency(Value val, IRMapping& mapper,
                                   OpBuilder& builder) {
@@ -195,9 +232,8 @@ static void materializeDependency(Value val, IRMapping& mapper,
 void ComputeGroupExtractionPass::extractComputeGroup(
     ModuleOp top_level_module, ModuleOp original_module,
     const ComputeGroup& group) {
-  if (!group.first_load || !group.last_store) return;
+  assert(group.first_load && group.last_store);
 
-  // Create function name
   std::string func_name =
       "local-schedule-" + std::to_string(function_counter++);
 
@@ -230,7 +266,8 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   // Collect operations to move (from first_load to last_store inclusive)
   llvm::SmallVector<Operation*> ops_to_move;
   bool collecting = false;
-  for (Operation& op : group.block->getOperations()) {
+  Block* group_block = group.first_load->getBlock();
+  for (Operation& op : group_block->getOperations()) {
     if (&op == group.first_load) {
       collecting = true;
     }
@@ -247,20 +284,20 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   auto call_op = func::CallOp::create(builder, top_level_module.getLoc(),
                                       forward_decl, {});
 
-  // Materialize all dependencies and clone operations into the new function
   builder.setInsertionPointToStart(func_block);
   IRMapping mapper;
 
-  // Step 1: Materialize all dependencies for the entire range
+  // Step 1: Materialize all dependencies for the entire range.
+  // (e.g. arith.constants, construct_memory_views, construct_access_tiles)
   for (Operation* op : ops_to_move) {
     for (Value operand : op->getOperands()) {
       materializeDependency(operand, mapper, builder);
     }
   }
 
-  // Step 2: Clone the actual range (skip if already cloned as dependency)
+  // Step 2: Clone the actual range
   for (Operation* op : ops_to_move) {
-    // Check if any result of this op was already cloned
+    // Skip if already cloned as dependency
     bool already_cloned = false;
     for (Value result : op->getResults()) {
       if (mapper.contains(result)) {
@@ -296,19 +333,26 @@ void ComputeGroupExtractionPass::extractComputeGroup(
 
 void ComputeGroupExtractionPass::processBlockForExtraction(
     Block* block, llvm::EquivalenceClasses<Value>& access_tile_eq_classes) {
+  // Keep track of visited equivalence classes of access tiles for the current
+  // block to assert they are not visited multiple times.
   llvm::DenseSet<Value> visited_class_leaders;
   Value current_class_leader = nullptr;
   bool last_mem_op_was_load = false;
   Operation* first_load_op = nullptr;
   Operation* last_store_op = nullptr;
 
+  // Traverse operations in the block, extracting each compute group. Boundaries
+  // are determined by changes in current equivalence class of load/store access
+  // tiles and/or control flow operations.
   for (Operation& block_op : block->getOperations()) {
     // Check for control flow operations - they terminate the current compute
-    // group
+    // group.
+    // Reason: Otherwise, if control flow operations were to be extracted,
+    // we might end up with nested func calls.
     if (isa<scf::ForOp>(&block_op) || isa<scf::IfOp>(&block_op)) {
       // Save current compute group if any
       if (current_class_leader && first_load_op && last_store_op) {
-        groups_to_extract_.push_back({block, first_load_op, last_store_op});
+        groups_to_extract_.push_back({first_load_op, last_store_op});
 
         // Mark current class as visited
         visited_class_leaders.insert(current_class_leader);
@@ -341,7 +385,7 @@ void ComputeGroupExtractionPass::processBlockForExtraction(
 
         // Save the previous compute group
         if (first_load_op && last_store_op) {
-          groups_to_extract_.push_back({block, first_load_op, last_store_op});
+          groups_to_extract_.push_back({first_load_op, last_store_op});
         }
 
         // Mark previous class as visited before switching
@@ -384,7 +428,7 @@ void ComputeGroupExtractionPass::processBlockForExtraction(
 
   // Save the last compute group
   if (first_load_op && last_store_op) {
-    groups_to_extract_.push_back({block, first_load_op, last_store_op});
+    groups_to_extract_.push_back({first_load_op, last_store_op});
   }
 }
 
@@ -393,7 +437,6 @@ void ComputeGroupExtractionPass::runOn(ModuleOp module_op) {
   module_op.walk([&](Block* block) {
     llvm::EquivalenceClasses<Value> access_tile_eq_classes;
 
-    // Build equivalence classes from StoreOps and their ancestor LoadOps
     buildAccessTileEqClasses(block, access_tile_eq_classes);
 
     if (access_tile_eq_classes.empty()) {
@@ -416,8 +459,19 @@ void ComputeGroupExtractionPass::runOn(ModuleOp module_op) {
     return;
   }
 
-  // Restructure: move original content to a child module and create child
-  // modules for extracted functions
+  // Move original content to a child module and create child
+  // modules for extracted functions. New structure:
+  // module {
+  //   module { // original
+  //     func.func @orig {
+  //       <original ops with extracted code replaced by func call>
+  //     }
+  //   }
+  //   module { // extracted module #1
+  //     ...
+  //   }
+  //   ... // other extracted modules
+  // }
   OpBuilder builder(module_op);
 
   // Create a child module for the original content
