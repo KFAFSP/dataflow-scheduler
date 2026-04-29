@@ -17,12 +17,14 @@
 //===----------------------------------------------------------------------===//
 // Stage Coarsening Transformation
 //
-// This pass implements a 4-stage stage coarsening algorithm.
-// Following identification of stage groups (using loop distribution legality
-// rules): Stage 1a: Distribute and sink loops into pipeline Stage 1b: Further
-// sink into stage groups containing a single stage (expand buffers) Stage 2:
-// Discover and correct illegal structures iteratively Stage 3: Correct stage
-// dependencies that cross pipeline boundaries
+// This pass implements a stage-coarsening algorithm as follows.
+// After identification of stage groups (using loop distribution legality
+// rules):
+// Step 1a: Distribute and sink loops into pipeline
+// Step 1b: Further sink into stage groups containing a single stage
+//          (expand buffers)
+// Step 2: Discover and correct illegal structures iteratively
+// Step 3: Correct stage dependencies that cross pipeline boundaries
 //
 // Note: Legality of stage coarsening follows loop distribution rules.
 //       Data dependence analysis will be added in future.
@@ -39,6 +41,7 @@
 #include "src/Analysis/StageGrouping.hpp"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
+#include "src/Utils/OperationUtils.hpp"
 
 namespace ktdf {
 
@@ -146,7 +149,9 @@ struct StageCoarseningPass
           candidates.push_back({loopNest, pipeline, loopNestParent});
 
           llvm::outs() << "    -> Found candidate with " << loopNest.size()
-                       << " nested loop(s)\n";
+                       << " nested loop(s) at ";
+          scheduler::utils::printLocation(llvm::outs(), loopNest.front().getOperation());
+          llvm::outs() << "\n";
         }
       });
     });
@@ -270,14 +275,17 @@ struct StageCoarseningPass
       OperationTreeNode* currentParent = pipelineParentNode;
 
       for (size_t loopIdx = 0; loopIdx < candidate.loopNest.size(); ++loopIdx) {
-        LoopNode* loopNode =
-            new LoopNode(nullptr);  // Unmaterialized
+        // Create unmaterialized loop node with template operation
+        LoopNode* loopNode = new LoopNode(nullptr);  // Unmaterialized
+        loopNode->setTemplateOp(candidate.loopNest[loopIdx].getOperation());
 
         // Insert loop node as child of current parent (pipeline or outer loop)
         currentParent->insertChildNode(loopNode);
 
         llvm::outs() << "    Created unmaterialized loop node (level "
-                     << loopIdx << ")\n";
+                     << loopIdx << ") with template from ";
+        scheduler::utils::printLocation(llvm::outs(), candidate.loopNest[loopIdx].getOperation());
+        llvm::outs() << "\n";
 
         // This loop becomes the parent for the next loop or the stages
         currentParent = loopNode;

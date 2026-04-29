@@ -63,7 +63,11 @@ class PipelineTreeNode : public OperationTreeNode {
 
  public:
   PipelineTreeNode(Operation *op)
-      : OperationTreeNode(op), materialized_(op != nullptr) {}
+      : OperationTreeNode(op), materialized_(op != nullptr), template_op_(nullptr) {}
+  
+  /// Constructor for unmaterialized nodes with a template operation
+  PipelineTreeNode(Operation *op, Operation *templateOp)
+      : OperationTreeNode(op), materialized_(op != nullptr), template_op_(templateOp) {}
 
   // Pipeline-specific type queries
   virtual bool isRootNode() const { return false; }
@@ -77,7 +81,17 @@ class PipelineTreeNode : public OperationTreeNode {
   
   /// Check if this node has been materialized (has an associated IR operation)
   bool isMaterialized() const { return materialized_; }
-  
+
+  /// Get the template operation (used for creating new operations when
+  /// materializing)
+  Operation *getTemplateOp() const { return template_op_; }
+
+  /// Set the template operation
+  void setTemplateOp(Operation *templateOp) {
+    assert(!operation_op_ && "node already has an operation");
+    template_op_ = templateOp;
+  }
+
   /// Mark this node as materialized with the given operation
   void materialize(Operation *op) {
     assert(op && "expect a valid operation for materialization");
@@ -92,7 +106,8 @@ class PipelineTreeNode : public OperationTreeNode {
   }
 
  protected:
-  bool materialized_;  // Whether this node has an associated IR operation
+  bool materialized_;      // Whether this node has an associated IR operation
+  Operation *template_op_; // Template operation to use when materializing this node
 };
 
 /// Root node representing the top-level container
