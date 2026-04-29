@@ -3,7 +3,6 @@
 // RUN: cat /tmp/stderr.$$ | tail -n +7  | awk '{print $4 " " $5}' | FileCheck --check-prefix=CHECK-IR-PASS %s
 
 // CHECK-IR-PASS-LABEL:     ComputeGroupExtractionPass
-// CHECK-IR-PASS-LABEL:     DummyTransformPass
 
 
 module {
