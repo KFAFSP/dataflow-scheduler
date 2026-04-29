@@ -17,7 +17,7 @@ def ComputeGroupExtractionPass : Pass<"compute-group-extraction", "mlir::ModuleO
   let description = [{
     This pass extracts the main and compute groups from the initial module.
   }];
-  let constructor = "ktdf::createComputeGroupExtractionPass()";
+  let constructor = "::ktdf::createComputeGroupExtractionPass()";
 }
 
 #endif // SCHEDULER_TRANSFORM_PASSES
