@@ -87,7 +87,10 @@ class StageGroupingAnalysis {
   bool areInSameGroup(mlir::ktdf::StageOp stage1,
                       mlir::ktdf::StageOp stage2) const;
 
-  /// Print the grouping results for debugging
+  /// Print the grouping results to the given output stream
+  void print(llvm::raw_ostream& OS) const;
+
+  /// Print the grouping results for debugging (to llvm::outs())
   void dump() const;
 
  private:

@@ -52,6 +52,10 @@ void PipelineTreeNode::printNodeHeader(raw_ostream& OS) const {
   // Print materialization status and location
   if (!isMaterialized()) {
     OS << " [unmaterialized]";
+    if (template_op_) {
+      OS << " - template op ";
+      scheduler::utils::printLocation(OS, template_op_);
+    }
   } else if (operation_op_) {
     OS << " ";
     scheduler::utils::printLocation(OS, operation_op_);

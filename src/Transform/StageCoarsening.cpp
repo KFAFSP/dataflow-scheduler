@@ -219,32 +219,15 @@ struct StageCoarseningPass
     // Step 1: Perform stage grouping analysis
     llvm::outs() << "\n  Performing stage grouping analysis...\n";
     StageGroupingAnalysis grouping(candidate.pipeline);
-
-    // Print the stage groups
-    llvm::outs() << "\n  Stage Groups:\n";
-    grouping.dump();
-    llvm::outs() << "\n";
-
-    const auto& groups = grouping.getGroups();
-    llvm::outs() << "  Found " << groups.size() << " stage group(s)\n";
-
-    // Analyze each group
-    for (size_t i = 0; i < groups.size(); ++i) {
-      const auto& group = groups[i];
-      if (group.isSingleStage()) {
-        llvm::outs() << "  Group " << i
-                     << ": Single stage (can sink further in Stage 1b)\n";
-      } else {
-        llvm::outs() << "  Group " << i
-                     << ": Multiple stages (must stay together)\n";
-      }
-    }
+    // Print stage grouping analysis results
+    grouping.print(llvm::outs());
 
     // Step 2: For each stage group, create unmaterialized loop nest and insert
     // as children of pipeline
     llvm::outs() << "\n  Distributing loop nests to stage groups...\n";
 
     // Process each group
+    const auto& groups = grouping.getGroups();
     for (size_t groupIdx = 0; groupIdx < groups.size(); ++groupIdx) {
       const auto& group = groups[groupIdx];
       const llvm::SmallVector<mlir::ktdf::StageOp> stages = group.getStages();
@@ -283,12 +266,6 @@ struct StageCoarseningPass
         // Insert loop node as child of current parent (pipeline or outer loop)
         currentParent->insertChildNode(loopNode);
 
-        llvm::outs() << "    Created unmaterialized loop node (level "
-                     << loopIdx << ") with template from ";
-        scheduler::utils::printLocation(
-            llvm::outs(), candidate.loopNest[loopIdx].getOperation());
-        llvm::outs() << "\n";
-
         // This loop becomes the parent for the next loop or the stages
         currentParent = loopNode;
       }
@@ -301,6 +278,19 @@ struct StageCoarseningPass
 
       llvm::outs() << "    Moved " << stageNodes.size()
                    << " stage(s) under loop nest\n";
+    }
+
+    // Now remove the original loops from the tree
+    // Note that references to their operations still exist as template ops in the unmaterialized nodes
+    for (mlir::scf::ForOp loopOp : candidate.loopNest) {
+      PipelineTreeNode* loopNode = tree.getNodeForOp(loopOp.getOperation());
+      assert(loopNode);
+      assert(loopNode->isLoopNode() && "Expected loop node");
+      // Unlink only the node itself, not its subtree
+      // This moves the loop's children (the pipeline) up to the loop's parent
+      loopNode->unlinkNode();
+      // Delete the now-unlinked loop node
+      tree.deleteNode(loopNode);
     }
 
     llvm::outs() << "\n  Loop distribution complete.\n";

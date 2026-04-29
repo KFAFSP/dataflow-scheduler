@@ -251,6 +251,7 @@ class PipelineTree : public OperationTree {
   }
   
   /// Delete a single node and remove it from the map
+  /// Note: user is responsible for unlinking the node and/or the subtree below it.
   void deleteNode(PipelineTreeNode* node) {
     if (!node) return;
     
@@ -258,9 +259,6 @@ class PipelineTree : public OperationTree {
     if (node->getOperation()) {
       opToNode_.erase(node->getOperation());
     }
-    
-    // Unlink from tree structure
-    node->unlink();
     
     // Delete the node
     delete node;

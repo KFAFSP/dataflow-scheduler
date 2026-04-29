@@ -130,6 +130,52 @@ class OperationTreeNode {
     setParentNode(nullptr);
   }
 
+  /// Unlinks only this node (not its subtree) by moving its children to its parent.
+  /// The children are inserted in place of this node, maintaining tree structure.
+  void unlinkNode() {
+    OperationTreeNode *parent = getParentNode();
+    if (!parent) return;  // Cannot unlink root node
+
+    OperationTreeNode * const prev_sibling = getPrevSibling();
+    OperationTreeNode * const next_sibling = getNextSibling();
+    OperationTreeNode * const first_child = getFirstChild();
+    OperationTreeNode * const last_child = getLastChild();
+
+    // If this node has children, move them to parent
+    if (first_child) {
+      // Connect children's chain to siblings
+      if (prev_sibling) {
+        prev_sibling->setNextSibling(first_child);
+      } else {
+        // This was the first child, so first child becomes new first child
+        parent->setFirstChild(first_child);
+      }
+      
+      // Update parent pointers for all children
+      OperationTreeNode *child = first_child;
+      while (child) {
+        child->setParentNode(parent);
+        if (child == last_child) {
+          child->setNextSibling(next_sibling);
+          break;
+        }
+        child = child->getNextSibling();
+      }
+    } else {
+      // No children, just unlink this node
+      if (prev_sibling) {
+        prev_sibling->setNextSibling(next_sibling);
+      } else {
+        parent->setFirstChild(next_sibling);
+      }
+    }
+
+    // Clear this node's links
+    setFirstChild(nullptr);
+    setNextSibling(nullptr);
+    setParentNode(nullptr);
+  }
+
   /// Get a string representation of the node type.
   /// Derived classes must implement this to identify their tree type.
   virtual std::string getNodeType() const = 0;

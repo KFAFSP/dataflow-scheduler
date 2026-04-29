@@ -111,25 +111,29 @@ bool StageGroupingAnalysis::areInSameGroup(mlir::ktdf::StageOp stage1,
   return it1->second == it2->second;
 }
 
-void StageGroupingAnalysis::dump() const {
-  llvm::outs() << "Stage Grouping Analysis Results:\n";
-  llvm::outs() << "  Total groups: " << groups.size() << "\n\n";
+void StageGroupingAnalysis::print(llvm::raw_ostream& OS) const {
+  OS << "  Total groups: " << groups.size() << "\n\n";
 
   for (size_t i = 0; i < groups.size(); ++i) {
     const auto& group = groups[i];
-    llvm::outs() << "  Group " << i << ":\n";
-    llvm::outs() << "    Stages: [";
+    OS << "  Group " << i << ":\n";
+    OS << "    Stages: [";
     bool first = true;
     for (auto stage : group.getStages()) {
-      if (!first) llvm::outs() << ", ";
-      llvm::outs() << "stage";
-      scheduler::utils::printLocation(llvm::outs(), stage.getOperation());
+      if (!first) OS << ", ";
+      OS << "stage ";
+      scheduler::utils::printLocation(OS, stage.getOperation());
       first = false;
     }
-    llvm::outs() << "]\n";
-    llvm::outs() << "    Single stage: "
-                 << (group.isSingleStage() ? "yes" : "no") << "\n";
+    OS << "]\n";
+    OS << "    Single stage: " << (group.isSingleStage() ? "yes" : "no")
+       << "\n";
   }
+}
+
+void StageGroupingAnalysis::dump() const {
+  llvm::outs() << "Stage Grouping Analysis Results:\n";
+  print(llvm::outs());
 }
 
 void StageGroupingAnalysis::collectStages(
