@@ -4,6 +4,7 @@ add_public_tablegen_target(SchedulerTransformsPassIncGen)
 
 add_library(SchedulerTransforms
     ComputeGroupExtraction.cpp
+    ConstructThreeStagePipeline.cpp
     PipelineTree/Legalizer.cpp
     PipelineTree/Materializer.cpp
     StageCoarsening/BufferExpansion.cpp

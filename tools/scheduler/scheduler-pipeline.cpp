@@ -40,6 +40,7 @@ namespace ktdf {
 void buildKTDPToDFIRPipeline(mlir::OpPassManager& pm) {
   pm.addPass(createComputeGroupExtractionPass());
   pm.addPass(mlir::createSymbolDCEPass());
+  pm.addPass(createConstructThreeStagePipelinePass());
   // todo: pm.addPass(createTileSCFForLoopsPass());
 }
 
