@@ -8,6 +8,62 @@
 /// This pass identifies compute groups (sequences of operations between LoadOps
 /// and StoreOps with the same access tile equivalence class) and extracts them
 /// into separate functions in new modules.
+///
+/// Example transformation:
+///
+/// BEFORE:
+/// -------
+/// module {
+///   func.func @main() {
+///     scf.for %i = %c0 to %N step %c1 {
+///       %tile1 = ktdp.construct_access_tile %A[%i, %c0]
+///       %tile2 = ktdp.construct_access_tile %B[%i, %c0]
+///       %tile3 = ktdp.construct_access_tile %C[%i, %c0]
+///
+///       %a = ktdp.load %tile1 : tensor<1x64xf16>
+///       %b = ktdp.load %tile2 : tensor<1x64xf16>
+///       %c_empty = tensor.empty() : tensor<1x64xf16>
+///       %c = linalg.add ins(%a, %b : tensor<1x64xf16>, tensor<1x64xf16>)
+///                       outs(%c_empty : tensor<1x64xf16>)
+///       ktdp.store %c, %tile3
+///     }
+///   }
+/// }
+///
+/// AFTER:
+/// ------
+/// module {
+///   module {  // Original module
+///     func.func @main() {
+///       scf.for %i = %c0 to %N step %c1 {
+///         func.call @local-schedule-0(%i) : (index) -> ()
+///       }
+///     }
+///     func.func private @local-schedule-0(index)
+///   }
+///   module {  // Extracted function module
+///     func.func private @local-schedule-0(%arg0: index) {
+///       %tile1 = ktdp.construct_access_tile %A[%arg0, %c0]
+///       %tile2 = ktdp.construct_access_tile %B[%arg0, %c0]
+///       %tile3 = ktdp.construct_access_tile %C[%arg0, %c0]
+///
+///       %a = ktdp.load %tile1 : tensor<1x64xf16>
+///       %b = ktdp.load %tile2 : tensor<1x64xf16>
+///       %c_empty = tensor.empty() : tensor<1x64xf16>
+///       %c = linalg.add ins(%a, %b : tensor<1x64xf16>, tensor<1x64xf16>)
+///                       outs(%c_empty : tensor<1x64xf16>)
+///       ktdp.store %c, %tile3
+///       return
+///     }
+///   }
+/// }
+///
+/// Key features:
+/// - Identifies compute groups by access tile equivalence classes
+/// - Extracts operations from first LoadOp to last StoreOp of each class
+/// - Handles iter args (block arguments) by passing them as function parameters
+/// - Recursively materializes dependencies (constants, memory views, etc.)
+/// - Creates nested module structure with forward declarations
 //
 //===----------------------------------------------------------------------===//
 
