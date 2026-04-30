@@ -211,12 +211,42 @@ void ComputeGroupExtractionPass::buildAccessTileEqClasses(
   }
 }
 
+// Helper function to recursively collect iter args from operand dependencies
+static void collectIterArgsUsed(Value val, llvm::DenseSet<Operation*>& visited,
+                                llvm::SmallVectorImpl<Value>& iter_args) {
+  // If this is a block argument (e.g., iter arg from scf.for), add it to the
+  // list of arguments to pass to the extracted function
+  if (isa<BlockArgument>(val)) {
+    // Avoid duplicates
+    if (llvm::find(iter_args, val) == iter_args.end()) {
+      iter_args.push_back(val);
+    }
+    return;
+  }
+
+  Operation* op = val.getDefiningOp();
+
+  // Avoid revisiting operations
+  if (visited.count(op)) return;
+  visited.insert(op);
+
+  // Recursively collect from operands
+  for (Value operand : op->getOperands()) {
+    collectIterArgsUsed(operand, visited, iter_args);
+  }
+}
+
 // Helper function to recursively materialize dependencies
 static void materializeDependency(Value val, IRMapping& mapper,
                                   OpBuilder& builder) {
   // If we already cloned this ancestor, we're done
   if (mapper.contains(val)) return;
-  assert(!isa<BlockArgument>(val) && "Not expecting to clone iter args");
+
+  // If this is a block argument, it should already be mapped
+  if (isa<BlockArgument>(val)) {
+    assert(mapper.contains(val) && "Block argument should be mapped");
+    return;
+  }
 
   Operation* op = val.getDefiningOp();
 
@@ -239,9 +269,40 @@ void ComputeGroupExtractionPass::extractComputeGroup(
 
   OpBuilder builder(top_level_module);
 
+  // Collect operations to move (from first_load to last_store inclusive)
+  llvm::SmallVector<Operation*> ops_to_move;
+  bool collecting = false;
+  Block* group_block = group.first_load->getBlock();
+  for (Operation& op : group_block->getOperations()) {
+    if (&op == group.first_load) {
+      collecting = true;
+    }
+    if (collecting) {
+      ops_to_move.push_back(&op);
+    }
+    if (&op == group.last_store) {
+      break;
+    }
+  }
+
+  // Collect iter args (block arguments) needed by the extracted function
+  llvm::SmallVector<Value> iter_args;
+  llvm::DenseSet<Operation*> visited;
+  for (Operation* op : ops_to_move) {
+    for (Value operand : op->getOperands()) {
+      collectIterArgsUsed(operand, visited, iter_args);
+    }
+  }
+
+  // Build function type with iter_args as parameters
+  llvm::SmallVector<Type> arg_types;
+  for (Value arg : iter_args) {
+    arg_types.push_back(arg.getType());
+  }
+  auto func_type = builder.getFunctionType(arg_types, {});
+
   // Create forward declaration in the original module
   builder.setInsertionPointToEnd(original_module.getBody());
-  auto func_type = builder.getFunctionType({}, {});
   auto forward_decl =
       func::FuncOp::create(top_level_module.getLoc(), func_name, func_type);
   forward_decl.setPrivate();
@@ -259,33 +320,15 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   func_op.setPrivate();
   extracted_module.push_back(func_op);
 
-  // Create entry block
+  // Create entry block with arguments
   Block* func_block = func_op.addEntryBlock();
   builder.setInsertionPointToStart(func_block);
 
-  // Collect operations to move (from first_load to last_store inclusive)
-  llvm::SmallVector<Operation*> ops_to_move;
-  bool collecting = false;
-  Block* group_block = group.first_load->getBlock();
-  for (Operation& op : group_block->getOperations()) {
-    if (&op == group.first_load) {
-      collecting = true;
-    }
-    if (collecting) {
-      ops_to_move.push_back(&op);
-    }
-    if (&op == group.last_store) {
-      break;
-    }
-  }
-
-  // Create call operation before moving operations
-  builder.setInsertionPoint(group.first_load);
-  auto call_op = func::CallOp::create(builder, top_level_module.getLoc(),
-                                      forward_decl, {});
-
-  builder.setInsertionPointToStart(func_block);
+  // Map iter args to function arguments so they can be used when cloning
   IRMapping mapper;
+  for (size_t i = 0; i < iter_args.size(); ++i) {
+    mapper.map(iter_args[i], func_block->getArgument(i));
+  }
 
   // Step 1: Materialize all dependencies for the entire range.
   // (e.g. arith.constants, construct_memory_views, construct_access_tiles)
@@ -311,6 +354,11 @@ void ComputeGroupExtractionPass::extractComputeGroup(
     }
   }
 
+  // Create call operation before erasing operations
+  builder.setInsertionPoint(group.first_load);
+  auto call_op = func::CallOp::create(builder, top_level_module.getLoc(),
+                                      forward_decl, iter_args);
+
   // Step 3: Erase the original operations in reverse order to avoid dangling
   // uses
   for (auto it = ops_to_move.rbegin(); it != ops_to_move.rend(); ++it) {
@@ -328,6 +376,7 @@ void ComputeGroupExtractionPass::extractComputeGroup(
     llvm::dbgs() << "Extracted compute group into function: " << func_name
                  << "\n";
     llvm::dbgs() << "Operations: " << ops_to_move.size() << "\n";
+    llvm::dbgs() << "Block arguments: " << iter_args.size() << "\n";
   });
 }
 
