@@ -41,6 +41,7 @@
 #include "src/Analysis/StageGrouping.hpp"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
+#include "src/Transform/StructuralLegalizer.hpp"
 #include "src/Utils/OperationUtils.hpp"
 
 namespace ktdf {
@@ -92,9 +93,9 @@ struct StageCoarseningPass
     llvm::outs() << "Found " << candidates.size()
                  << " transform candidate(s)\n\n";
 
-    // Step 2: Apply 4-stage transformation to each candidate
+    // Step 2: Apply 4-step transformation to each candidate
     for (TransformCandidate& candidate : candidates) {
-      applyFourStageTransformation(candidate);
+      applyTransformation(candidate);
     }
 
     llvm::outs() << "=== Stage Coarsening Pass Complete ===\n\n";
@@ -159,9 +160,9 @@ struct StageCoarseningPass
     });
   }
 
-  /// Apply the 4-stage transformation algorithm to a candidate
-  void applyFourStageTransformation(TransformCandidate& candidate) {
-    llvm::outs() << "\n--- Applying 4-Stage Transformation ---\n";
+  /// Apply the 4-step transformation algorithm to a candidate
+  void applyTransformation(TransformCandidate& candidate) {
+    llvm::outs() << "\n--- Applying Transformation in steps ---\n";
     llvm::outs() << "Loop nest depth: " << candidate.loop_nest_.size() << "\n";
 
     // Build pipeline tree once - it will be manipulated throughout the
@@ -172,44 +173,50 @@ struct StageCoarseningPass
     tree.print(llvm::outs());
     llvm::outs() << "\n";
 
-    // Stage 1a: Distribute and sink loops into pipeline
-    llvm::outs() << "\n--- Stage 1a: Distribute and Sink into Pipeline ---\n";
-    stage1a_DistributeAndSinkIntoPipeline(candidate, tree);
-    llvm::outs() << "\n=== Pipeline Tree after Stage 1a ===\n";
+    // Perform stage grouping analysis once for both step 1a and 1b
+    llvm::outs() << "\n  Performing stage grouping analysis...\n";
+    StageGroupingAnalysis grouping(candidate.pipeline_);
+    grouping.print(llvm::outs());
+
+    // Step 1a: Distribute and sink loops into pipeline
+    llvm::outs() << "\n--- Step 1a: Distribute and Sink into Pipeline ---\n";
+    step1a_DistributeAndSinkIntoPipeline(candidate, tree, grouping);
+    llvm::outs() << "\n=== Pipeline Tree after Step 1a ===\n";
     tree.print(llvm::outs());
     llvm::outs() << "\n";
 
-    // Stage 1b: Further sink into stage groups containing a single stage
+    // Step 1b: Further sink into stage groups containing a single stage
     // (expand buffers)
-    llvm::outs() << "\n--- Stage 1b: Sink into Single-Stage Groups ---\n";
-    stage1b_SinkIntoSingleStage(candidate, tree);
-    llvm::outs() << "\n=== Pipeline Tree after Stage 1b ===\n";
+    llvm::outs() << "\n--- Step 1b: Sink into Single-Stage Groups ---\n";
+    step1b_SinkIntoSingleStage(candidate, tree, grouping);
+    llvm::outs() << "\n=== Pipeline Tree after Step 1b ===\n";
     tree.print(llvm::outs());
     llvm::outs() << "\n";
 
-    // Stage 2: Discover and correct illegal structures iteratively
+    // Step 2: Discover and correct illegal structures iteratively
     llvm::outs()
-        << "\n--- Stage 2: Discover and Correct Illegal Structures ---\n";
-    stage2_DiscoverAndCorrectStructure(candidate, tree);
-    llvm::outs() << "\n=== Pipeline Tree after Stage 2 ===\n";
+        << "\n--- Step 2: Discover and Correct Illegal Structures ---\n";
+    step2_DiscoverAndCorrectStructure(candidate, tree);
+    llvm::outs() << "\n=== Pipeline Tree after Step 2 ===\n";
     tree.print(llvm::outs());
     llvm::outs() << "\n";
 
-    // Stage 3: Correct stage dependencies that cross pipeline boundaries
-    llvm::outs() << "\n--- Stage 3: Correct Stage Dependencies ---\n";
-    stage3_CorrectStageDependencies(candidate, tree);
-    llvm::outs() << "\n=== Pipeline Tree after Stage 3 (Final) ===\n";
+    // Step 3: Correct stage dependencies that cross pipeline boundaries
+    llvm::outs() << "\n--- Step 3: Correct Stage Dependencies ---\n";
+    step3_CorrectStageDependencies(candidate, tree);
+    llvm::outs() << "\n=== Pipeline Tree after Step 3 (Final) ===\n";
     tree.print(llvm::outs());
     llvm::outs() << "\n";
   }
 
   //===--------------------------------------------------------------------===//
-  // Stage 1a: Distribute and Sink Loops into Pipeline
+  // Step 1a: Distribute and Sink Loops into Pipeline
   //===--------------------------------------------------------------------===//
 
-  void stage1a_DistributeAndSinkIntoPipeline(TransformCandidate& candidate,
-                                             PipelineTree& tree) {
-    llvm::outs() << "Stage 1a: Distributing loops into pipeline...\n";
+  void step1a_DistributeAndSinkIntoPipeline(
+      TransformCandidate& candidate, PipelineTree& tree,
+      const StageGroupingAnalysis& grouping) {
+    llvm::outs() << "Step 1a: Distributing loops into pipeline...\n";
 
     // Validate candidate
     if (!candidate.pipeline_ || !candidate.loop_nest_parent_) {
@@ -217,13 +224,7 @@ struct StageCoarseningPass
       return;
     }
 
-    // Step 1: Perform stage grouping analysis
-    llvm::outs() << "\n  Performing stage grouping analysis...\n";
-    StageGroupingAnalysis grouping(candidate.pipeline_);
-    // Print stage grouping analysis results
-    grouping.print(llvm::outs());
-
-    // Step 2: For each stage group, create unmaterialized loop nest and insert
+    // For each stage group, create unmaterialized loop nest and insert
     // as children of pipeline
     llvm::outs() << "\n  Distributing loop nests to stage groups...\n";
 
@@ -300,78 +301,137 @@ struct StageCoarseningPass
   }
 
   //===--------------------------------------------------------------------===//
-  // Stage 1b: Sink into Stage Groups Containing a Single Stage
+  // Step 1b: Sink into Stage Groups Containing a Single Stage
   //===--------------------------------------------------------------------===//
 
-  void stage1b_SinkIntoSingleStage(TransformCandidate& candidate,
-                                   PipelineTree& tree) {
+  void step1b_SinkIntoSingleStage(TransformCandidate& candidate,
+                                  PipelineTree& tree,
+                                  const StageGroupingAnalysis& grouping) {
     llvm::outs()
-        << "Stage 1b: Conditionally sinking into single-stage groups...\n";
+        << "Step 1b: Conditionally sinking into single-stage groups...\n";
 
-    // TODO: Implement conditional sinking with buffer expansion
-    // For each stage group containing only a single stage:
-    //   1. Check if sinking is legal (dependence analysis)
-    //   2. If legal, sink loop into that stage
-    //   3. Expand LX buffers from 1D to tile-sized
+    const llvm::SmallVector<StageGroup>& groups = grouping.getGroups();
 
-    llvm::outs() << "  (Implementation pending)\n";
-  }
+    // Find the pipeline node in the tree
+    PipelineTreeNode* pipeline_node =
+        tree.getNodeForOp(candidate.pipeline_.getOperation());
+    assert(pipeline_node && pipeline_node->isPipelineNode());
 
-  //===--------------------------------------------------------------------===//
-  // Stage 2: Discover and Correct Illegal Structures
-  //===--------------------------------------------------------------------===//
+    // Process each stage group
+    for (size_t group_idx = 0; group_idx < groups.size(); ++group_idx) {
+      const StageGroup& group = groups[group_idx];
 
-  void stage2_DiscoverAndCorrectStructure(TransformCandidate& candidate,
-                                          PipelineTree& tree) {
-    llvm::outs()
-        << "Stage 2: Discovering and correcting illegal structures...\n";
-
-    // TODO: Implement iterative structure discovery and correction
-    // Repeat until no illegal structures found:
-    //   1. Rebuild pipeline tree
-    //   2. Discover illegal patterns:
-    //      - Pattern 1: Pipeline → Loop → Multiple Stages (missing wrapping
-    //      stage)
-    //      - Pattern 2: Stage without Pipeline parent (missing nested pipeline)
-    //   3. Correct each illegal structure
-    //   4. Check for new illegal structures introduced by corrections
-
-    bool found_illegal_structure = true;
-    int iteration = 0;
-
-    while (found_illegal_structure && iteration < 10) {  // Safety limit
-      iteration++;
-      llvm::outs() << "  Iteration " << iteration << ":\n";
-
-      // Rebuild tree to get current structure
-      PipelineTree tree;
-      tree.compute(*candidate.loop_nest_parent_);
-      found_illegal_structure = false;
-
-      // TODO: Traverse tree to discover illegal patterns
-      // TODO: Correct each illegal structure found
-      // TODO: Set found_illegal_structure = true if corrections were made
-
-      if (!found_illegal_structure) {
-        llvm::outs() << "    No illegal structures found.\n";
+      // Only process single-stage groups
+      if (!group.isSingleStage()) {
+        llvm::outs() << "  Group " << group_idx << ": Skipping (contains "
+                     << group.getStages().size() << " stages)\n";
+        continue;
       }
+
+      mlir::ktdf::StageOp stage = group.getFirstStage();
+      llvm::outs() << "  Group " << group_idx
+                   << ": Processing single-stage group with stage at ";
+      scheduler::utils::printLocation(llvm::outs(), stage.getOperation());
+      llvm::outs() << "\n";
+
+      // Find the stage node in the tree
+      PipelineTreeNode* stage_node = tree.getNodeForOp(stage.getOperation());
+      assert(stage_node && stage_node->isStageNode());
+
+      // The stage's parent should be the innermost loop from step 1a
+      OperationTreeNode* innermost_loop = stage_node->getParentNode();
+      assert(innermost_loop && "Stage should have a parent by now");
+
+      PipelineTreeNode* innermost_loop_pipeline =
+          static_cast<PipelineTreeNode*>(innermost_loop);
+      assert(innermost_loop_pipeline->isLoopNode() &&
+             "Stage's parent should be a loop node from step 1a");
+
+      // Find the outermost loop in the nest by walking up to the pipeline
+      PipelineTreeNode* outermost_loop = innermost_loop_pipeline;
+      OperationTreeNode* parent = outermost_loop->getParentNode();
+      while (parent) {
+        PipelineTreeNode* parent_pipeline =
+            static_cast<PipelineTreeNode*>(parent);
+        if (parent_pipeline->isPipelineNode()) {
+          // Reached the pipeline, outermost_loop is correct
+          assert(parent == pipeline_node &&
+                 "Outermost loop should be a child of the pipeline");
+          break;
+        }
+        assert(parent_pipeline->isLoopNode() &&
+               "Expected loop node while walking up to pipeline");
+        outermost_loop = parent_pipeline;
+        parent = outermost_loop->getParentNode();
+      }
+
+      llvm::outs() << "    Sinking loop nest into stage\n";
+
+      // Sink the loop nest into the stage:
+      assert(outermost_loop->getParentNode() == pipeline_node);
+      OperationTreeNode* insert = outermost_loop->getPrevSibling();
+      outermost_loop->unlink();
+      stage_node->unlink();
+      stage_node->insertChildNode(outermost_loop);
+      pipeline_node->insertChildNode(stage_node, insert);
+
+      llvm::outs() << "    Successfully sank loop nest into stage\n";
+
+      // TODO: Expand LX buffers from 1D to tile-sized
+      // This requires:
+      // 1. Identifying which buffers in the private region are used by this
+      // stage
+      // 2. Determining the tile size from the loop bounds
+      // 3. Marking these buffers as "expanded" in the PrivateNode
+      // 4. Recording which data transfers and operations need to be updated
+      llvm::outs() << "    TODO: Buffer expansion not yet implemented\n";
     }
 
-    if (iteration >= 10) {
-      llvm::outs() << "  WARNING: Reached iteration limit, may have unresolved "
-                      "structures\n";
-    }
-
-    llvm::outs() << "  (Implementation pending)\n";
+    llvm::outs() << "  Step 1b complete.\n";
   }
 
   //===--------------------------------------------------------------------===//
-  // Stage 3: Correct Stage Dependencies Crossing Pipeline Boundaries
+  // Step 2: Discover and Correct Illegal Structures
   //===--------------------------------------------------------------------===//
 
-  void stage3_CorrectStageDependencies(TransformCandidate& candidate,
-                                       PipelineTree& tree) {
-    llvm::outs() << "Stage 3: Correcting stage dependencies...\n";
+  void step2_DiscoverAndCorrectStructure(TransformCandidate& candidate,
+                                         PipelineTree& tree) {
+    llvm::outs()
+        << "Step 2: Discovering and correcting illegal structures...\n";
+
+    scheduler::structural_legality::Legalizer legalizer;
+
+    // Identify all violations
+    const llvm::SmallVector<scheduler::structural_legality::Violation>& violations =
+        legalizer.identifyViolations(tree);
+
+    if (violations.empty()) {
+      llvm::outs() << "  No structure violations found.\n";
+      return;
+    }
+
+    llvm::outs() << "  Found " << violations.size()
+                 << " violation(s):\n";
+    for (const auto& violation : violations) {
+      llvm::outs() << "    - ";
+      violation.print(llvm::outs());
+      llvm::outs() << "\n";
+    }
+
+    // Correct all violations
+    llvm::outs() << "\n  Correcting violations:\n";
+    legalizer.correctViolations(tree);
+
+    llvm::outs() << "  Step 2 complete.\n";
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Step 3: Correct Stage Dependencies Crossing Pipeline Boundaries
+  //===--------------------------------------------------------------------===//
+
+  void step3_CorrectStageDependencies(TransformCandidate& candidate,
+                                      PipelineTree& tree) {
+    llvm::outs() << "Step 3: Correcting stage dependencies...\n";
 
     // TODO: Implement dependency correction
     // For each stage dependency that crosses pipeline boundaries:
