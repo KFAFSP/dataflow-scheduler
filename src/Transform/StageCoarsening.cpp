@@ -281,7 +281,8 @@ struct StageCoarseningPass
     }
 
     // Now remove the original loops from the tree
-    // Note that references to their operations still exist as template ops in the unmaterialized nodes
+    // Note that references to their operations still exist as template ops in
+    // the unmaterialized nodes
     for (mlir::scf::ForOp loopOp : candidate.loopNest) {
       PipelineTreeNode* loopNode = tree.getNodeForOp(loopOp.getOperation());
       assert(loopNode);

@@ -35,13 +35,15 @@ namespace ktdf {
 StageGroupingAnalysis::StageGroupingAnalysis(mlir::ktdf::PipelineOp pipeline) {
   llvm::SmallVector<mlir::ktdf::StageOp> stages;
   collectStages(stages, pipeline);
-
-  // Delegate to ArrayRef constructor
-  *this = StageGroupingAnalysis(llvm::ArrayRef<mlir::ktdf::StageOp>(stages));
+  init(stages);
 }
 
 StageGroupingAnalysis::StageGroupingAnalysis(
     llvm::ArrayRef<mlir::ktdf::StageOp> stages) {
+  init(stages);
+}
+
+void StageGroupingAnalysis::init(llvm::ArrayRef<mlir::ktdf::StageOp> stages) {
   if (stages.empty()) return;
 
   // Use EquivalenceClasses to group stages based on shared resources

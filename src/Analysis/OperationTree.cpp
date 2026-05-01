@@ -39,8 +39,8 @@ unsigned OperationTreeNode::getNumberOfChildren() const {
   unsigned count = 0;
   OperationTreeNode* child = getFirstChild();
   while (child) {
-    ++count;
     child = child->getNextSibling();
+    ++count;
   }
   return count;
 }
@@ -55,12 +55,12 @@ OperationTreeNode* OperationTreeNode::getLastChild() const {
 }
 
 OperationTreeNode* OperationTreeNode::getPrevSibling() const {
-  if (!parent_node_) return nullptr;
-  OperationTreeNode* prev = nullptr;
-  OperationTreeNode* curr = parent_node_->getFirstChild();
-  while (curr && curr != this) {
-    prev = curr;
-    curr = curr->getNextSibling();
+  assert(getParentNode() && "expected a parent");
+  OperationTreeNode* prev = getParentNode()->getFirstChild();
+  if (prev == this) return nullptr;
+  while (prev) {
+    if (prev->getNextSibling() == this) break;
+    prev = prev->getNextSibling();
   }
   return prev;
 }
@@ -68,42 +68,73 @@ OperationTreeNode* OperationTreeNode::getPrevSibling() const {
 void OperationTreeNode::insertChildNode(OperationTreeNode* child,
                                         OperationTreeNode* pos) {
   assert(child && "Cannot insert null child");
-  child->setParentNode(this);
-
-  if (!pos) {
-    // Insert at the end
-    OperationTreeNode* last = getLastChild();
-    if (last) {
-      last->setNextSibling(child);
-    } else {
-      setFirstChild(child);
-    }
-  } else {
-    // Insert after pos
-    child->setNextSibling(pos->getNextSibling());
+  if (isLeaf()) {
+    assert(pos == nullptr && "position incorrectly specified");
+    setFirstChild(child);
+  } else if (pos) {
+    assert(pos->getParentNode() == this &&
+           "expected position to be one of the existing children of this node");
+    OperationTreeNode* old_pos_next = pos->getNextSibling();
     pos->setNextSibling(child);
-  }
+    child->setNextSibling(old_pos_next);
+  } else
+    getLastChild()->setNextSibling(child);
+  child->setParentNode(this);
 }
 
 void OperationTreeNode::print(raw_ostream& OS) const {
-  unsigned depth = getDepth();
-  for (unsigned i = 0; i < depth; ++i) {
-    OS << "  ";
-  }
-  OS << getNodeName() << " ";
+  preOrderWalk(const_cast<OperationTreeNode*>(this),
+               [&OS](OperationTreeNode* n) {
+                 auto* op = n->getOperation();
+                 unsigned depth = n->getDepth();
+                 OS.indent(depth - 1);
+                 scheduler::utils::printLocation(OS, op);
+                 return nullptr;
+               });
+}
 
-  if (operation_op_) {
-    // Print location information using utility function
-    scheduler::utils::printLocation(OS, operation_op_);
-  }
-  OS << "\n";
+void OperationTreeNode::unlinkNode() {
+  OperationTreeNode* parent = getParentNode();
+  if (!parent) return;  // Cannot unlink root node
 
-  // Print children
-  OperationTreeNode* child = getFirstChild();
-  while (child) {
-    child->print(OS);
-    child = child->getNextSibling();
+  OperationTreeNode* const prev_sibling = getPrevSibling();
+  OperationTreeNode* const next_sibling = getNextSibling();
+  OperationTreeNode* const first_child = getFirstChild();
+  OperationTreeNode* const last_child = getLastChild();
+
+  // If this node has children, move them to parent
+  if (first_child) {
+    // Connect children's chain to siblings
+    if (prev_sibling) {
+      prev_sibling->setNextSibling(first_child);
+    } else {
+      // This was the first child, so first child becomes new first child
+      parent->setFirstChild(first_child);
+    }
+
+    // Update parent pointers for all children
+    OperationTreeNode* child = first_child;
+    while (child) {
+      child->setParentNode(parent);
+      if (child == last_child) {
+        child->setNextSibling(next_sibling);
+        break;
+      }
+      child = child->getNextSibling();
+    }
+  } else {
+    // No children, just unlink this node
+    if (prev_sibling) {
+      prev_sibling->setNextSibling(next_sibling);
+    } else {
+      parent->setFirstChild(next_sibling);
+    }
   }
+
+  // Clear this node's links
+  setFirstChild(nullptr);
+  setNextSibling(nullptr);
+  setParentNode(nullptr);
 }
 
 //===----------------------------------------------------------------------===//
@@ -112,8 +143,8 @@ void OperationTreeNode::print(raw_ostream& OS) const {
 
 void OperationTreeNode::preOrderWalk(OperationTreeNode* n,
                                      ActionFuncTy action) {
-  if (!n) return;
-  action(n);
+  assert(n && "expected valid node");
+  (void)action(n);
   OperationTreeNode* child = n->getFirstChild();
   while (child) {
     preOrderWalk(child, action);
@@ -123,57 +154,54 @@ void OperationTreeNode::preOrderWalk(OperationTreeNode* n,
 
 void OperationTreeNode::postOrderWalk(OperationTreeNode* n,
                                       ActionFuncTy action) {
-  if (!n) return;
+  assert(n && "expected valid node");
   OperationTreeNode* child = n->getFirstChild();
   while (child) {
     postOrderWalk(child, action);
     child = child->getNextSibling();
   }
-  action(n);
+  (void)action(n);
 }
 
 OperationTreeNode* OperationTreeNode::preOrderGuidedWalk(OperationTreeNode* n,
                                                          ActionFuncTy action) {
-  if (!n) return nullptr;
-  OperationTreeNode* result = action(n);
-  if (result) return result;
-
+  assert(n && "expected valid node");
+  OperationTreeNode* next_node = action(n);
+  if (next_node)
+    assert(n->getParentNode() == next_node->getParentNode() &&
+           "make sure action returns a true sibling");
   OperationTreeNode* child = n->getFirstChild();
   while (child) {
-    result = preOrderGuidedWalk(child, action);
-    if (result) return result;
-    child = child->getNextSibling();
+    child = preOrderGuidedWalk(child, action);
   }
-  return nullptr;
+  return next_node;
 }
 
 OperationTreeNode* OperationTreeNode::postOrderGuidedWalk(OperationTreeNode* n,
                                                           ActionFuncTy action) {
-  if (!n) return nullptr;
-
+  assert(n && "expected valid node");
   OperationTreeNode* child = n->getFirstChild();
   while (child) {
-    OperationTreeNode* result = postOrderGuidedWalk(child, action);
-    if (result) return result;
-    child = child->getNextSibling();
+    child = postOrderGuidedWalk(child, action);
   }
-
-  return action(n);
+  OperationTreeNode* next_node = action(n);
+  if (next_node)
+    assert(n->getParentNode() == next_node->getParentNode() &&
+           "make sure action returns a true sibling");
+  return next_node;
 }
 
 void OperationTreeNode::breadthFirstWalk(OperationTreeNode* n,
                                          ActionFuncTy action) {
-  if (!n) return;
-
+  assert(n && "expected valid node");
   std::queue<OperationTreeNode*> queue;
   queue.push(n);
-
   while (!queue.empty()) {
-    OperationTreeNode* curr = queue.front();
+    OperationTreeNode* curr_node = queue.front();
+    assert(curr_node && "expected valid node");
+    (void)action(curr_node);
     queue.pop();
-    action(curr);
-
-    OperationTreeNode* child = curr->getFirstChild();
+    OperationTreeNode* child = curr_node->getFirstChild();
     while (child) {
       queue.push(child);
       child = child->getNextSibling();
@@ -184,34 +212,49 @@ void OperationTreeNode::breadthFirstWalk(OperationTreeNode* n,
 void OperationTreeNode::reverseBreadthFirstWalk(OperationTreeNode* n,
                                                 ActionFuncTy action,
                                                 bool keep_order) {
-  if (!n) return;
-
+  assert(n && "expected valid node");
+  SmallVector<OperationTreeNode*> stack;
   std::queue<OperationTreeNode*> queue;
-  SmallVector<OperationTreeNode*> nodes;
-
   queue.push(n);
-
   while (!queue.empty()) {
-    OperationTreeNode* curr = queue.front();
+    OperationTreeNode* curr_node = queue.front();
+    assert(curr_node && "expected valid node");
+    stack.push_back(curr_node);
     queue.pop();
-    nodes.push_back(curr);
-
-    OperationTreeNode* child = curr->getFirstChild();
-    while (child) {
-      queue.push(child);
-      child = child->getNextSibling();
+    OperationTreeNode* child = curr_node->getFirstChild();
+    if (!keep_order) {
+      while (child) {
+        queue.push(child);
+        child = child->getNextSibling();
+      }
+    } else {
+      // Add sibilings to the queue in reverse order to counter the reversal
+      // effect of the main stack.
+      SmallVector<OperationTreeNode*> s;
+      while (child) {
+        s.push_back(child);
+        child = child->getNextSibling();
+      }
+      while (!s.empty()) {
+        queue.push(s.back());
+        s.pop_back();
+      }
     }
   }
 
-  // Process in reverse order
-  for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-    action(*it);
+  while (!stack.empty()) {
+    (void)action(stack.back());
+    stack.pop_back();
   }
 }
 
 //===----------------------------------------------------------------------===//
 // Template Specializations
 //===----------------------------------------------------------------------===//
+
+/// Caller must ensure action does not remove \\p n itself or any parent or
+/// ancestor nodes. The action can add or remove sibling or children of \\p n,
+/// but new children won't be further visited.
 
 template <>
 void OperationTreeNode::walk<OperationTreeNode::kPreOrder>(
@@ -255,24 +298,29 @@ void OperationTreeNode::walk<OperationTreeNode::kKeepOrderRBFS>(
   reverseBreadthFirstWalk(n, action, true);
 }
 
-//===----------------------------------------------------------------------===//
-// OperationTree Implementation
-//===----------------------------------------------------------------------===//
-
 void OperationTree::clear() {
-  if (!root_) return;
-  clear(root_->getFirstChild());
-  delete root_;
+  if (!empty()) {
+    SmallVector<OperationTreeNode*> to_be_deleted;
+    OperationTreeNode::walk<OperationTreeNode::WalkOrder::kPostOrder>(
+        getRoot(), [&](OperationTreeNode* n) {
+          to_be_deleted.push_back(n);
+          return nullptr;
+        });
+    for (OperationTreeNode* n : to_be_deleted) delete n;
+  } else if (root_)
+    delete root_;
   root_ = nullptr;
 }
 
 void OperationTree::clear(OperationTreeNode* start) {
-  if (!start) return;
-
-  // Post-order deletion to avoid dangling pointers
-  OperationTreeNode::walk<OperationTreeNode::kPostOrder>(
-      start, [](OperationTreeNode* n) {
-        delete n;
-        return n;
+  assert(start && "expected valid node");
+  if (root_ && start == root_) clear();
+  start->unlink();
+  SmallVector<OperationTreeNode*> to_be_deleted;
+  OperationTreeNode::walk<OperationTreeNode::WalkOrder::kPostOrder>(
+      start, [&](OperationTreeNode* n) {
+        to_be_deleted.push_back(n);
+        return nullptr;
       });
+  for (OperationTreeNode* n : to_be_deleted) delete n;
 }

@@ -94,8 +94,8 @@ class StageGroupingAnalysis {
   void dump() const;
 
  private:
-  llvm::SmallVector<StageGroup> groups;
-  llvm::DenseMap<mlir::Operation*, unsigned> stageToGroup;
+
+  void init(llvm::ArrayRef<mlir::ktdf::StageOp> stages);
 
   /// Collect all stages from the pipeline
   void collectStages(llvm::SmallVector<mlir::ktdf::StageOp>& stages,
@@ -110,6 +110,9 @@ class StageGroupingAnalysis {
   void analyzeDataTransfer(mlir::ktdf::DataTransferOp transfer,
                           llvm::SmallSet<mlir::ktdf::MemorySpace, 4>& memorySpaces,
                           llvm::SmallSet<mlir::ktdf::FifoType, 4>& fifoTypes);
+
+  llvm::SmallVector<StageGroup> groups;
+  llvm::DenseMap<mlir::Operation*, unsigned> stageToGroup;
 };
 
 }  // namespace ktdf

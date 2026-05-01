@@ -144,11 +144,8 @@ bool PipelineTree::isOperationSelected(const Operation& op) const {
 }
 
 void PipelineTree::compute(Operation& unit) {
-  // Create root node
-  root_ = new RootNode();
-
-  // Clear the operation-to-node mapping
-  opToNode_.clear();
+  // Create root node if not present already.
+  root_ = root_ ? root_ : new RootNode();
 
   // Map to track stage IDs
   int nextStageId = 0;
@@ -157,9 +154,8 @@ void PipelineTree::compute(Operation& unit) {
   unit.walk<WalkOrder::PreOrder>([&](Operation* op) {
     if (!isOperationSelected(*op)) return;
 
-    PipelineTreeNode* node = nullptr;
-
     // Create appropriate node type based on operation using factory methods
+    PipelineTreeNode* node = nullptr;
     if (auto forOp = dyn_cast<scf::ForOp>(op)) {
       node = createLoopNode(op);
     } else if (auto pipelineOp = dyn_cast<PipelineOp>(op)) {
@@ -169,19 +165,20 @@ void PipelineTree::compute(Operation& unit) {
     } else if (auto privateOp = dyn_cast<PrivateOp>(op)) {
       node = createPrivateNode(op);
     }
+    if (!node) return;
 
-    if (node) {
-      // Find parent: either another selected operation or root
-      Operation* parentOp = op->getParentOp();
-      while (parentOp && !opToNode_.count(parentOp)) {
-        parentOp = parentOp->getParentOp();
-      }
-
-      PipelineTreeNode* parent = parentOp
-                                     ? opToNode_[parentOp]
-                                     : static_cast<PipelineTreeNode*>(root_);
-      parent->insertChildNode(node);
+    // Find parent: either another selected operation or root
+    OperationTreeNode* parent = root_;
+    Operation* curr_op = op;
+    while ((curr_op = curr_op->getParentOp())) {
+      if (!isOperationSelected(*curr_op)) continue;
+      auto parentIt = opToNode_.find(curr_op);
+      assert(parentIt != opToNode_.end() &&
+             "expected parent to be in the map (due to pre-order traversal)");
+      parent = parentIt->getSecond();
+      break;
     }
+    parent->insertChildNode(node);
   });
 
   // TODO: Build stage dependencies by analyzing token flow

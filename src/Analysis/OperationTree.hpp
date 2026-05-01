@@ -97,17 +97,58 @@ class OperationTreeNode {
   bool isOutermost() const { return getDepth() == 1; }
   bool isLeaf() const { return getFirstChild() == nullptr; }
 
-  /// Traversal action function type
+  /// The traversal functions below will call back an action function on each
+  /// node visited. The action takes a node as input and operates on it. For
+  /// guided walks the action would return the node where the traversal should
+  /// continue from. For all other walks, the action's return value is ignored,
+  /// so the function can return nullptr in those cases.
   using ActionFuncTy = function_ref<OperationTreeNode *(OperationTreeNode *n)>;
 
-  /// Walk order enumeration
+  /// This enum indicates the types of walks supported. In the comments that
+  /// follow, 'n' is the node being operated on.
   enum WalkOrder {
+    /// Caller must ensure action does not remove 'n' itself or any parent or
+    /// ancestor nodes. The action can add or remove sibling or children of
+    /// 'n', but new children won't be further visited.
     kPostOrder = 1,
+
+    /// Caller must ensure action does not remove 'n' itself or any parent or
+    /// ancestor nodes. The action can add or remove sibling or children of 'n'.
     kPreOrder,
+
+    /// Similar to above functions, except action also determines which
+    /// sibling to visit next.
     kPostOrderGuided,
     kPreOrderGuided,
+
+    /// BFS walk of the tree rooted at 'n'. The action must not remove
+    /// itself, its siblings or any parent or ancestor. The action can only
+    /// remove descendents of 'n'.
     kBFS,
+
+    /// Bottom-up breadth-first traversal.
+    ///
+    /// This walk visits sibilings in reverse order (right to left).
+    ///
+    /// The action must not remove parent nodes or nodes to left of the current
+    /// node. If action removes nodes, it can only remove nodes to the right of
+    /// the given node (since they have already been visited).
+    ///
+    /// The action can add new nodes, but the new nodes won't be further
+    /// visited.
     kReverseBFS,
+
+    /// Bottom-up breadth-first traversal.
+    ///
+    /// This walk visits sibilings from left to right (program order), at the
+    /// expense of more compile-time and memory.
+    ///
+    /// The action must not remove parent nodes or nodes to right of the current
+    /// node. If action removes nodes, it can only remove nodes to the left of
+    /// the given node (since they have already been visited).
+    ///
+    /// The action can add new nodes, but the new nodes won't be further
+    /// visited.
     kKeepOrderRBFS,
   };
 
@@ -132,49 +173,7 @@ class OperationTreeNode {
 
   /// Unlinks only this node (not its subtree) by moving its children to its parent.
   /// The children are inserted in place of this node, maintaining tree structure.
-  void unlinkNode() {
-    OperationTreeNode *parent = getParentNode();
-    if (!parent) return;  // Cannot unlink root node
-
-    OperationTreeNode * const prev_sibling = getPrevSibling();
-    OperationTreeNode * const next_sibling = getNextSibling();
-    OperationTreeNode * const first_child = getFirstChild();
-    OperationTreeNode * const last_child = getLastChild();
-
-    // If this node has children, move them to parent
-    if (first_child) {
-      // Connect children's chain to siblings
-      if (prev_sibling) {
-        prev_sibling->setNextSibling(first_child);
-      } else {
-        // This was the first child, so first child becomes new first child
-        parent->setFirstChild(first_child);
-      }
-      
-      // Update parent pointers for all children
-      OperationTreeNode *child = first_child;
-      while (child) {
-        child->setParentNode(parent);
-        if (child == last_child) {
-          child->setNextSibling(next_sibling);
-          break;
-        }
-        child = child->getNextSibling();
-      }
-    } else {
-      // No children, just unlink this node
-      if (prev_sibling) {
-        prev_sibling->setNextSibling(next_sibling);
-      } else {
-        parent->setFirstChild(next_sibling);
-      }
-    }
-
-    // Clear this node's links
-    setFirstChild(nullptr);
-    setNextSibling(nullptr);
-    setParentNode(nullptr);
-  }
+  void unlinkNode();
 
   /// Get a string representation of the node type.
   /// Derived classes must implement this to identify their tree type.
@@ -211,8 +210,12 @@ class OperationTreeNode {
   OperationTreeNode *next_sibling_ = nullptr;
 };
 
-/// Base class for operation tree containers.
-/// Provides tree management (construction, destruction, clearing).
+/// Conceptually a program consists of a forest of operation trees with
+/// OperationNodes being the building blocks of such trees. The OperationTree
+/// class introduces a synthetic root node and collects all such trees under
+/// that single root. Clients would not directly instantiate this class. Instead
+/// they should derived from it, and provide functions that iterate over the IR
+/// and construct the tree.
 /// Derived classes decide how to build their specific tree.
 class OperationTree {
  public:
@@ -221,7 +224,11 @@ class OperationTree {
   OperationTree(const OperationTree &) = delete;
   virtual ~OperationTree() { clear(); }
 
-  const OperationTreeNode *getRoot() const { return root_; }
+  const OperationTreeNode* getRoot() const {
+    assert(root_ && root_->getNextSibling() == nullptr &&
+           root_->getParentNode() == nullptr && "invalid root");
+    return root_;
+  }
   OperationTreeNode *getRoot() { return root_; }
 
   bool empty() const { return !root_ || !root_->getFirstChild(); }
