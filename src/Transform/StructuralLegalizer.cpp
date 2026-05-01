@@ -36,7 +36,7 @@ bool PipelineChildrenRule::isViolated(PipelineTreeNode* node,
   if (!node->isPipelineNode()) {
     return false;
   }
-  
+
   OperationTreeNode* child = node->getFirstChild();
   while (child) {
     PipelineTreeNode* child_pnode = static_cast<PipelineTreeNode*>(child);
@@ -45,35 +45,73 @@ bool PipelineChildrenRule::isViolated(PipelineTreeNode* node,
     }
     child = child->getNextSibling();
   }
-  
+
   return false;
 }
 
 bool PipelineChildrenRule::fixViolation(PipelineTreeNode* violating_node,
                                         PipelineTree& tree,
                                         int& next_stage_id) {
-  llvm::outs() << "      Creating stage wrapper for "
+  // violating_node is the pipeline that has illegal children
+  // Group consecutive illegal children and wrap each group in a single stage
+
+  assert(violating_node->isPipelineNode() && "Expected pipeline node");
+
+  llvm::outs() << "      Wrapping illegal children of pipeline "
                << violating_node->getNodeName() << "\n";
-  
-  // Create a new stage
-  StageNode* new_stage =
-      tree.createStageNode(nullptr, next_stage_id++);
-  
-  // Get the pipeline parent
-  OperationTreeNode* pipeline_parent = violating_node->getParentNode();
-  assert(pipeline_parent && "Violating node should have a parent");
-  
-  // Unlink the violating node from pipeline
-  violating_node->unlink();
-  
-  // Insert coarsened stage as child of pipeline
-  pipeline_parent->insertChildNode(new_stage);
-  
-  // Insert violating node as child of coarsened stage
-  new_stage->insertChildNode(violating_node);
-  
-  llvm::outs() << "      Created coarsened stage "
-               << (next_stage_id - 1) << "\n";
+
+  // Group consecutive illegal children
+  llvm::SmallVector<llvm::SmallVector<PipelineTreeNode*>> illegal_groups;
+  llvm::SmallVector<PipelineTreeNode*> current_group;
+
+  OperationTreeNode* child = violating_node->getFirstChild();
+  while (child) {
+    PipelineTreeNode* child_pnode = static_cast<PipelineTreeNode*>(child);
+
+    if (!child_pnode->isPrivateNode() && !child_pnode->isStageNode()) {
+      // Illegal child - add to current group
+      current_group.push_back(child_pnode);
+    } else {
+      // Legal child - close current group if any
+      if (!current_group.empty()) {
+        illegal_groups.push_back(current_group);
+        current_group.clear();
+      }
+    }
+
+    child = child->getNextSibling();
+  }
+
+  // Don't forget the last group
+  if (!current_group.empty()) {
+    illegal_groups.push_back(current_group);
+  }
+
+  // Wrap each group in a new stage
+  for (const auto& group : illegal_groups) {
+    llvm::outs() << "        Creating coarsened stage wrapper for "
+                 << group.size() << " consecutive illegal child(ren)\n";
+
+    // Create a new coarsened stage
+    StageNode* new_stage = tree.createStageNode(nullptr, next_stage_id++);
+
+    // Get the position of the first child in the group for insertion
+    OperationTreeNode* insert_before = group[0]->getPrevSibling();
+
+    // Unlink all children in the group and add them to the new stage
+    for (PipelineTreeNode* illegal_child : group) {
+      illegal_child->unlink();
+      new_stage->insertChildNode(illegal_child);
+    }
+
+    // Insert coarsened stage as child of pipeline (at the position of the first
+    // child)
+    violating_node->insertChildNode(new_stage, insert_before);
+
+    llvm::outs() << "        Created coarsened stage " << (next_stage_id - 1)
+                 << "\n";
+  }
+
   return true;
 }
 
@@ -87,12 +125,12 @@ bool StageParentRule::isViolated(PipelineTreeNode* node,
   if (!node->isStageNode()) {
     return false;
   }
-  
+
   OperationTreeNode* parent = node->getParentNode();
   if (!parent) {
     return false;
   }
-  
+
   PipelineTreeNode* parent_pnode = static_cast<PipelineTreeNode*>(parent);
   return !parent_pnode->isPipelineNode();
 }
@@ -102,24 +140,26 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
                                    int& next_coarsened_stage_id) {
   llvm::outs() << "      Creating nested pipeline for stage "
                << violating_node->getNodeName() << "\n";
-  
+
   assert(violating_node->isStageNode() && "Expected stage node");
-  
+
   // Get the non-pipeline parent
   OperationTreeNode* parent = violating_node->getParentNode();
   assert(parent && "Stage should have a parent");
   PipelineTreeNode* parent_pnode = static_cast<PipelineTreeNode*>(parent);
-  assert(!parent_pnode->isPipelineNode() && "Parent should not be a pipeline since expected violation");
-  
+  assert(!parent_pnode->isPipelineNode() &&
+         "Parent should not be a pipeline since expected violation");
+
   // Create a new nested pipeline node (unmaterialized)
   PipelineNode* nested_pipeline = tree.createPipelineNode(nullptr);
-  
+
   // Get the template from the nearest ancestor pipeline
   OperationTreeNode* ancestor = parent_pnode->getParentNode();
   while (ancestor) {
     PipelineTreeNode* ancestor_pnode = static_cast<PipelineTreeNode*>(ancestor);
     if (ancestor_pnode->isPipelineNode()) {
-      PipelineNode* ancestor_pipeline = static_cast<PipelineNode*>(ancestor_pnode);
+      PipelineNode* ancestor_pipeline =
+          static_cast<PipelineNode*>(ancestor_pnode);
       if (ancestor_pipeline->getOperation()) {
         nested_pipeline->setTemplateOp(ancestor_pipeline->getOperation());
       } else {
@@ -131,9 +171,9 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
     }
     ancestor = ancestor->getParentNode();
   }
-  
+
   llvm::outs() << "      Created nested pipeline node\n";
-  
+
   // Collect all stage siblings that should move to the nested pipeline
   // (all stages that are children of the same non-pipeline parent)
   llvm::SmallVector<StageNode*> stages_to_move;
@@ -145,41 +185,42 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
     }
     child = child->getNextSibling();
   }
-  
+
   llvm::outs() << "      Moving " << stages_to_move.size()
                << " stage(s) to nested pipeline\n";
-  
+
   // Insert the nested pipeline as a child of the parent
   // Get the position before the first stage
   OperationTreeNode* insert_before = nullptr;
   if (!stages_to_move.empty()) {
     insert_before = stages_to_move[0]->getPrevSibling();
   }
-  
+
   parent_pnode->insertChildNode(nested_pipeline, insert_before);
-  
+
   // Move all stages to be children of the nested pipeline
   for (StageNode* stage : stages_to_move) {
     stage->unlink();
     nested_pipeline->insertChildNode(stage);
   }
-  
+
   // TODO: Privatize buffers for nested pipeline
   // This requires:
   // 1. Identify buffers used by stages in the nested pipeline
   // 2. Create a new PrivateNode for the nested pipeline
   // 3. Move or duplicate buffer allocations
   // 4. Update data transfer operations
-  
+
   // TODO: Create new tokens for nested pipeline
   // This requires:
   // 1. Analyze stage dependencies within the nested pipeline
   // 2. Create token operations for the nested pipeline
   // 3. Update stage operations to use new tokens
-  
+
   llvm::outs() << "      Nested pipeline created successfully\n";
-  llvm::outs() << "      TODO: Buffer privatization and token creation not yet implemented\n";
-  
+  llvm::outs() << "      TODO: Buffer privatization and token creation not yet "
+                  "implemented\n";
+
   return true;
 }
 
@@ -197,27 +238,71 @@ Legalizer::Legalizer() : next_coarsened_stage_id_(1000) {
   rules_.push_back(std::make_unique<StageParentRule>());
 }
 
-const llvm::SmallVector<Violation>& Legalizer::identifyViolations(PipelineTree& tree) {
+int Legalizer::findAndFixViolations(PipelineTree& tree) {
+  int iteration = 0;
+
+  // Collect initial violations
   violations_.clear();
   collectViolations(tree);
-  
-  return violations_;
-}
 
-void Legalizer::correctViolations(PipelineTree& tree) {
-  for (auto& violation : violations_) {
-    llvm::outs() << "    Correcting: ";
+  if (violations_.empty()) {
+    llvm::outs() << "  No structure violations found.\n";
+    return 0;
+  }
+
+  // Iteratively fix violations until none remain
+  while (!violations_.empty()) {
+    ++iteration;
+
+    llvm::outs() << "  Iteration " << iteration << ": Found "
+                 << violations_.size() << " violation(s)\n";
+
+    // Print all violations found in this iteration
+    for (const Violation& violation : violations_) {
+      llvm::outs() << "    - ";
+      violation.print(llvm::outs());
+      llvm::outs() << "\n";
+    }
+
+    // Fix the first violation
+    Violation& violation = violations_.front();
+    llvm::outs() << "  Correcting: ";
     violation.print(llvm::outs());
     llvm::outs() << "\n";
-    
-    // Let the rule fix its own violation
+
     violation.rule->fixViolation(violation.violating_node, tree,
                                  next_coarsened_stage_id_);
+
+    llvm::outs() << "tree after fixing violation:\n";
+    tree.print(llvm::outs());
+
+    // Re-collect violations after the fix
+    // (fixing one violation may resolve or create others)
+    violations_.clear();
+    collectViolations(tree);
   }
-  violations_.clear();
+
+  llvm::outs() << "  All violations resolved after " << iteration
+               << " iteration(s)\n";
+
+  return iteration;
 }
 
 void Legalizer::collectViolations(PipelineTree& tree) {
+  // NOTE: This collects ALL violations in the tree, but correctViolations()
+  // only fixes the first one before re-collecting. This means we do redundant
+  // work checking nodes after the first violation is found.
+  //
+  // TODO: Enhance OperationTree::walk() to support early termination when
+  // the client signals (e.g., by returning a special value or throwing an
+  // exception). This would allow us to stop traversal after finding the
+  // first violation, improving efficiency.
+  //
+  // Current overhead is acceptable because:
+  // - Trees are typically small (dozens of nodes, not thousands)
+  // - Violations converge quickly (usually 1-2 iterations)
+  // - Tree traversal is O(n) which is fast for small n
+
   OperationTreeNode::walk<OperationTreeNode::kPreOrder>(
       tree.getRoot(), [&](OperationTreeNode* node) {
         PipelineTreeNode* pnode = static_cast<PipelineTreeNode*>(node);
@@ -232,7 +317,7 @@ void Legalizer::collectViolations(PipelineTree& tree) {
             } else if (llvm::isa<StageParentRule>(rule.get())) {
               rule_copy = std::make_unique<StageParentRule>();
             }
-            
+
             violations_.emplace_back(std::move(rule_copy), pnode);
           }
         }

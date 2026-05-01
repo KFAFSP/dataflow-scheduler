@@ -118,11 +118,9 @@ class Legalizer {
  public:
   Legalizer();
 
-  /// Identify all structure violations in the tree
-  const llvm::SmallVector<Violation>& identifyViolations(PipelineTree& tree);
-
-  /// Correct all identified violations
-  void correctViolations(PipelineTree& tree);
+  /// Find and fix all structure violations iteratively until none remain
+  /// Returns the number of iterations required
+  int findAndFixViolations(PipelineTree& tree);
 
  private:
   /// Collect all structure violations in the tree

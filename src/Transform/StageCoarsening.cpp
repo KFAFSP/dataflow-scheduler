@@ -401,26 +401,8 @@ struct StageCoarseningPass
 
     scheduler::structural_legality::Legalizer legalizer;
 
-    // Identify all violations
-    const llvm::SmallVector<scheduler::structural_legality::Violation>& violations =
-        legalizer.identifyViolations(tree);
-
-    if (violations.empty()) {
-      llvm::outs() << "  No structure violations found.\n";
-      return;
-    }
-
-    llvm::outs() << "  Found " << violations.size()
-                 << " violation(s):\n";
-    for (const auto& violation : violations) {
-      llvm::outs() << "    - ";
-      violation.print(llvm::outs());
-      llvm::outs() << "\n";
-    }
-
-    // Correct all violations
-    llvm::outs() << "\n  Correcting violations:\n";
-    legalizer.correctViolations(tree);
+    // Find and fix all violations iteratively
+    legalizer.findAndFixViolations(tree);
 
     llvm::outs() << "  Step 2 complete.\n";
   }
