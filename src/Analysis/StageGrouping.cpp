@@ -65,7 +65,7 @@ void StageGroupingAnalysis::init(llvm::ArrayRef<mlir::ktdf::StageOp> stages) {
 
   // Build groups by iterating over equivalence classes
   // Only process leader entries to avoid creating empty groups
-  unsigned groupId = 0;
+  unsigned group_id = 0;
 
   for (auto it = ec.begin(), end = ec.end(); it != end; ++it) {
     // Skip non-leader entries
@@ -76,21 +76,21 @@ void StageGroupingAnalysis::init(llvm::ArrayRef<mlir::ktdf::StageOp> stages) {
 
     // Iterate over all members of this equivalence class
     for (auto mi = ec.member_begin(**it); mi != ec.member_end(); ++mi) {
-      unsigned stageIdx = *mi;
-      group.addStage(stages[stageIdx]);
+      unsigned stage_idx = *mi;
+      group.addStage(stages[stage_idx]);
 
-      auto mutableStage = const_cast<mlir::ktdf::StageOp&>(stages[stageIdx]);
-      stageToGroup[mutableStage.getOperation()] = groupId;
+      auto mutable_stage = const_cast<mlir::ktdf::StageOp&>(stages[stage_idx]);
+      stage_to_group_[mutable_stage.getOperation()] = group_id;
     }
 
-    groups.push_back(group);
-    groupId++;
+    groups_.push_back(group);
+    group_id++;
   }
 }
 
 void StageGroupingAnalysis::analyze() {
   llvm::outs() << "Stage grouping analysis complete\n";
-  llvm::outs() << "  Total groups: " << groups.size() << "\n";
+  llvm::outs() << "  Total groups: " << groups_.size() << "\n";
   llvm::outs() << "  Grouping based on:\n";
   llvm::outs() << "    - Shared SFP register usage\n";
   llvm::outs() << "    - Shared FIFO buffer access\n";
@@ -98,37 +98,38 @@ void StageGroupingAnalysis::analyze() {
 
 const StageGroup* StageGroupingAnalysis::getGroupForStage(
     mlir::ktdf::StageOp stage) const {
-  auto it = stageToGroup.find(stage.getOperation());
-  if (it == stageToGroup.end()) return nullptr;
-  return &groups[it->second];
+  auto it = stage_to_group_.find(stage.getOperation());
+  if (it == stage_to_group_.end()) return nullptr;
+  return &groups_[it->second];
 }
 
 bool StageGroupingAnalysis::areInSameGroup(mlir::ktdf::StageOp stage1,
                                            mlir::ktdf::StageOp stage2) const {
-  auto it1 = stageToGroup.find(stage1.getOperation());
-  auto it2 = stageToGroup.find(stage2.getOperation());
+  auto it1 = stage_to_group_.find(stage1.getOperation());
+  auto it2 = stage_to_group_.find(stage2.getOperation());
 
-  if (it1 == stageToGroup.end() || it2 == stageToGroup.end()) return false;
+  if (it1 == stage_to_group_.end() || it2 == stage_to_group_.end())
+    return false;
 
   return it1->second == it2->second;
 }
 
-void StageGroupingAnalysis::print(llvm::raw_ostream& OS) const {
-  OS << "  Total groups: " << groups.size() << "\n\n";
+void StageGroupingAnalysis::print(llvm::raw_ostream& os) const {
+  os << "  Total groups: " << groups_.size() << "\n\n";
 
-  for (size_t i = 0; i < groups.size(); ++i) {
-    const auto& group = groups[i];
-    OS << "  Group " << i << ":\n";
-    OS << "    Stages: [";
+  for (size_t i = 0; i < groups_.size(); ++i) {
+    const StageGroup& group = groups_[i];
+    os << "  Group " << i << ":\n";
+    os << "    Stages: [";
     bool first = true;
-    for (auto stage : group.getStages()) {
-      if (!first) OS << ", ";
-      OS << "stage ";
-      scheduler::utils::printLocation(OS, stage.getOperation());
+    for (mlir::ktdf::StageOp stage : group.getStages()) {
+      if (!first) os << ", ";
+      os << "stage ";
+      scheduler::utils::printLocation(os, stage.getOperation());
       first = false;
     }
-    OS << "]\n";
-    OS << "    Single stage: " << (group.isSingleStage() ? "yes" : "no")
+    os << "]\n";
+    os << "    Single stage: " << (group.isSingleStage() ? "yes" : "no")
        << "\n";
   }
 }
@@ -163,63 +164,63 @@ bool StageGroupingAnalysis::shouldGroupTogether(mlir::ktdf::StageOp stage1,
   //    require grouping
   // 2. Access the same FIFO types (just the enum, not sizes/element types)
 
-  llvm::SmallSet<mlir::ktdf::MemorySpace, 4> stage1RegFiles;
-  llvm::SmallSet<mlir::ktdf::MemorySpace, 4> stage2RegFiles;
-  llvm::SmallSet<mlir::ktdf::FifoType, 4> stage1FIFOs;
-  llvm::SmallSet<mlir::ktdf::FifoType, 4> stage2FIFOs;
+  llvm::SmallSet<mlir::ktdf::MemorySpace, 4> stage1_reg_files;
+  llvm::SmallSet<mlir::ktdf::MemorySpace, 4> stage2_reg_files;
+  llvm::SmallSet<mlir::ktdf::FifoType, 4> stage1_fifos;
+  llvm::SmallSet<mlir::ktdf::FifoType, 4> stage2_fifos;
 
   // Helper to check if a memory space is a register file
-  auto isRegisterFile = [](mlir::ktdf::MemorySpace memSpace) {
+  auto isRegisterFile = [](mlir::ktdf::MemorySpace mem_space) {
     // Currently only SFPRegisterFile is a register file
-    return memSpace == mlir::ktdf::MemorySpace::SFPRegisterFile;
+    return mem_space == mlir::ktdf::MemorySpace::SFPRegisterFile;
   };
 
   // Helper to analyze a value for register files or FIFO types
   auto analyzeValue = [&](mlir::Value val,
-                          llvm::SmallSet<mlir::ktdf::MemorySpace, 4>& regFiles,
+                          llvm::SmallSet<mlir::ktdf::MemorySpace, 4>& reg_files,
                           llvm::SmallSet<mlir::ktdf::FifoType, 4>& fifos) {
-    if (auto memrefType = mlir::dyn_cast<mlir::MemRefType>(val.getType())) {
-      auto memSpace = memrefType.getMemorySpace();
-      if (memSpace) {
+    if (auto memref_type = mlir::dyn_cast<mlir::MemRefType>(val.getType())) {
+      auto mem_space = memref_type.getMemorySpace();
+      if (mem_space) {
         // Try to cast to the custom MemorySpaceCustomAttr
-        if (auto memSpaceAttr =
-                mlir::dyn_cast<mlir::ktdf::MemorySpaceCustomAttr>(memSpace)) {
-          auto memSpaceEnum = memSpaceAttr.getValue();
-          if (isRegisterFile(memSpaceEnum)) {
-            regFiles.insert(memSpaceEnum);
+        if (auto mem_space_attr =
+                mlir::dyn_cast<mlir::ktdf::MemorySpaceCustomAttr>(mem_space)) {
+          auto mem_space_enum = mem_space_attr.getValue();
+          if (isRegisterFile(mem_space_enum)) {
+            reg_files.insert(mem_space_enum);
           }
         }
       }
-    } else if (auto fifoSlotType =
+    } else if (auto fifo_slot_type =
                    mlir::dyn_cast<mlir::ktdf::FifoSlotType>(val.getType())) {
-      fifos.insert(fifoSlotType.getFifoType());
+      fifos.insert(fifo_slot_type.getFifoType());
     }
   };
 
   // Analyze ALL operations in stage1 - check all operands
   stage1.walk([&](mlir::Operation* op) {
     for (auto operand : op->getOperands()) {
-      analyzeValue(operand, stage1RegFiles, stage1FIFOs);
+      analyzeValue(operand, stage1_reg_files, stage1_fifos);
     }
   });
 
   // Analyze ALL operations in stage2 - check all operands
   stage2.walk([&](mlir::Operation* op) {
     for (auto operand : op->getOperands()) {
-      analyzeValue(operand, stage2RegFiles, stage2FIFOs);
+      analyzeValue(operand, stage2_reg_files, stage2_fifos);
     }
   });
 
   // Group if they share any register file
-  for (auto regFile : stage1RegFiles) {
-    if (stage2RegFiles.contains(regFile)) {
+  for (mlir::ktdf::MemorySpace reg_file : stage1_reg_files) {
+    if (stage2_reg_files.contains(reg_file)) {
       return true;
     }
   }
 
   // Group if they share any FIFO types
-  for (auto fifoType : stage1FIFOs) {
-    if (stage2FIFOs.contains(fifoType)) {
+  for (mlir::ktdf::FifoType fifo_type : stage1_fifos) {
+    if (stage2_fifos.contains(fifo_type)) {
       return true;
     }
   }
@@ -229,37 +230,38 @@ bool StageGroupingAnalysis::shouldGroupTogether(mlir::ktdf::StageOp stage1,
 
 void StageGroupingAnalysis::analyzeDataTransfer(
     mlir::ktdf::DataTransferOp transfer,
-    llvm::SmallSet<mlir::ktdf::MemorySpace, 4>& registerFiles,
-    llvm::SmallSet<mlir::ktdf::FifoType, 4>& fifoTypes) {
+    llvm::SmallSet<mlir::ktdf::MemorySpace, 4>& register_files,
+    llvm::SmallSet<mlir::ktdf::FifoType, 4>& fifo_types) {
   // Helper to check if a memory space is a register file
-  auto isRegisterFile = [](mlir::ktdf::MemorySpace memSpace) {
+  auto isRegisterFile = [](mlir::ktdf::MemorySpace mem_space) {
     // Currently only SFPRegisterFile is a register file
-    return memSpace == mlir::ktdf::MemorySpace::SFPRegisterFile;
+    return mem_space == mlir::ktdf::MemorySpace::SFPRegisterFile;
   };
 
   // Check source and destination for register files or FIFO types
   auto checkValue = [&](mlir::Value val) {
-    if (auto memrefType = mlir::dyn_cast<mlir::MemRefType>(val.getType())) {
-      auto memSpace = memrefType.getMemorySpace();
-      if (memSpace) {
+    if (auto memref_type = mlir::dyn_cast<mlir::MemRefType>(val.getType())) {
+      auto mem_space = memref_type.getMemorySpace();
+      if (mem_space) {
         // Extract memory space enum from attribute
-        if (auto memSpaceAttr = mlir::dyn_cast<mlir::Attribute>(memSpace)) {
-          if (auto intAttr = mlir::dyn_cast<mlir::IntegerAttr>(memSpaceAttr)) {
+        if (auto mem_space_attr = mlir::dyn_cast<mlir::Attribute>(mem_space)) {
+          if (auto int_attr =
+                  mlir::dyn_cast<mlir::IntegerAttr>(mem_space_attr)) {
             // Convert integer to MemorySpace enum
-            auto memSpaceEnum =
-                static_cast<mlir::ktdf::MemorySpace>(intAttr.getInt());
+            auto mem_space_enum =
+                static_cast<mlir::ktdf::MemorySpace>(int_attr.getInt());
             // Only track register files, not LX or HBM
-            if (isRegisterFile(memSpaceEnum)) {
-              registerFiles.insert(memSpaceEnum);
+            if (isRegisterFile(mem_space_enum)) {
+              register_files.insert(mem_space_enum);
             }
           }
         }
       }
-    } else if (auto fifoSlotType =
+    } else if (auto fifo_slot_type =
                    mlir::dyn_cast<mlir::ktdf::FifoSlotType>(val.getType())) {
       // Store only the FIFO type enum (e.g., "sfp-to-lxsu", "lxlu-to-sfp")
       // not the full type with sizes and element types
-      fifoTypes.insert(fifoSlotType.getFifoType());
+      fifo_types.insert(fifo_slot_type.getFifoType());
     }
   };
 

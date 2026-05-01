@@ -57,38 +57,38 @@ void KTDFDialect::initialize() {
 // Custom parser for sizes list that supports both SSA values and constants
 static ParseResult parseSizesList(
     OpAsmParser& parser, SmallVectorImpl<OpAsmParser::UnresolvedOperand>& sizes,
-    DenseI64ArrayAttr& staticSizes) {
-  SmallVector<int64_t> staticSizeValues;
-  SmallVector<OpAsmParser::UnresolvedOperand> dynamicSizes;
+    DenseI64ArrayAttr& static_sizes) {
+  SmallVector<int64_t> static_size_values;
+  SmallVector<OpAsmParser::UnresolvedOperand> dynamic_sizes;
 
-  auto parseElt = [&]() -> ParseResult {
+  auto parse_elt = [&]() -> ParseResult {
     OpAsmParser::UnresolvedOperand operand;
     auto res = parser.parseOptionalOperand(operand);
     if (res.has_value() && succeeded(res.value())) {
       // It's an SSA value
-      dynamicSizes.push_back(operand);
-      staticSizeValues.push_back(ShapedType::kDynamic);
+      dynamic_sizes.push_back(operand);
+      static_size_values.push_back(ShapedType::kDynamic);
       return success();
     }
 
     // Try to parse as integer constant
     int64_t value;
     if (succeeded(parser.parseInteger(value))) {
-      staticSizeValues.push_back(value);
+      static_size_values.push_back(value);
       return success();
     }
 
     return failure();
   };
 
-  if (parser.parseLSquare() || parser.parseCommaSeparatedList(parseElt) ||
+  if (parser.parseLSquare() || parser.parseCommaSeparatedList(parse_elt) ||
       parser.parseRSquare())
     return failure();
 
   // Set the results
-  sizes.append(dynamicSizes.begin(), dynamicSizes.end());
-  if (!staticSizeValues.empty()) {
-    staticSizes = parser.getBuilder().getDenseI64ArrayAttr(staticSizeValues);
+  sizes.append(dynamic_sizes.begin(), dynamic_sizes.end());
+  if (!static_size_values.empty()) {
+    static_sizes = parser.getBuilder().getDenseI64ArrayAttr(static_size_values);
   }
 
   return success();
@@ -96,20 +96,20 @@ static ParseResult parseSizesList(
 
 // Custom printer for sizes list
 static void printSizesList(OpAsmPrinter& printer, Operation* op,
-                           OperandRange sizes, DenseI64ArrayAttr staticSizes) {
+                           OperandRange sizes, DenseI64ArrayAttr static_sizes) {
   printer << "[";
 
-  if (!staticSizes) {
+  if (!static_sizes) {
     // All dynamic - print SSA values
     llvm::interleaveComma(sizes, printer);
   } else {
     // Mix of static and dynamic
-    ArrayRef<int64_t> staticValues = staticSizes;
-    unsigned dynamicIdx = 0;
+    ArrayRef<int64_t> static_values = static_sizes;
+    unsigned dynamic_idx = 0;
 
-    llvm::interleaveComma(staticValues, printer, [&](int64_t value) {
+    llvm::interleaveComma(static_values, printer, [&](int64_t value) {
       if (ShapedType::isDynamic(value)) {
-        printer << sizes[dynamicIdx++];
+        printer << sizes[dynamic_idx++];
       } else {
         printer << value;
       }
@@ -481,22 +481,22 @@ LogicalResult DataTransferOp::verify() {
 
   // Verify that static and dynamic sizes are consistent
   auto verifySize = [&](OperandRange dynamicSizes,
-                        std::optional<ArrayRef<int64_t>> staticSizes,
+                        std::optional<ArrayRef<int64_t>> static_sizes,
                         StringRef name) -> LogicalResult {
-    if (!staticSizes) {
+    if (!static_sizes) {
       // All sizes are dynamic - no verification needed
       return success();
     }
 
-    ArrayRef<int64_t> staticValues = *staticSizes;
-    unsigned numDynamic = llvm::count_if(
-        staticValues, [](int64_t val) { return ShapedType::isDynamic(val); });
+    ArrayRef<int64_t> static_values = *static_sizes;
+    unsigned num_dynamic = llvm::count_if(
+        static_values, [](int64_t val) { return ShapedType::isDynamic(val); });
 
-    if (dynamicSizes.size() != numDynamic) {
+    if (dynamicSizes.size() != num_dynamic) {
       return emitOpError("number of dynamic ")
              << name << " sizes (" << dynamicSizes.size()
              << ") must match number of dynamic entries in static_" << name
-             << "_sizes (" << numDynamic << ")";
+             << "_sizes (" << num_dynamic << ")";
     }
 
     return success();
@@ -610,40 +610,40 @@ LogicalResult WriteToFifoOp::verify() {
 // Build with mixed static/dynamic sizes (OpFoldResult can be either Attribute
 // or Value)
 void DataTransferOp::build(OpBuilder& builder, OperationState& result,
-                           Value source, ValueRange sourceIndices,
-                           ArrayRef<OpFoldResult> sourceSizes,
-                           Value destination, ValueRange destIndices,
-                           ArrayRef<OpFoldResult> destSizes) {
-  SmallVector<int64_t> staticSourceSizes, staticDestSizes;
-  SmallVector<Value> dynamicSourceSizes, dynamicDestSizes;
+                           Value source, ValueRange source_indices,
+                           ArrayRef<OpFoldResult> source_sizes,
+                           Value destination, ValueRange dest_indices,
+                           ArrayRef<OpFoldResult> dest_sizes) {
+  SmallVector<int64_t> static_source_sizes, static_dest_sizes;
+  SmallVector<Value> dynamic_source_sizes, dynamic_dest_sizes;
 
   // Dispatch OpFoldResults into static attributes and dynamic values
-  dispatchIndexOpFoldResults(sourceSizes, dynamicSourceSizes,
-                             staticSourceSizes);
-  dispatchIndexOpFoldResults(destSizes, dynamicDestSizes, staticDestSizes);
+  dispatchIndexOpFoldResults(source_sizes, dynamic_source_sizes,
+                             static_source_sizes);
+  dispatchIndexOpFoldResults(dest_sizes, dynamic_dest_sizes, static_dest_sizes);
 
   // Build the operation with separated static and dynamic components
-  build(builder, result, source, sourceIndices, dynamicSourceSizes, destination,
-        destIndices, dynamicDestSizes,
-        builder.getDenseI64ArrayAttr(staticSourceSizes),
-        builder.getDenseI64ArrayAttr(staticDestSizes));
+  build(builder, result, source, source_indices, dynamic_source_sizes,
+        destination, dest_indices, dynamic_dest_sizes,
+        builder.getDenseI64ArrayAttr(static_source_sizes),
+        builder.getDenseI64ArrayAttr(static_dest_sizes));
 }
 
 // Build with all static sizes
 void DataTransferOp::build(OpBuilder& builder, OperationState& result,
-                           Value source, ValueRange sourceIndices,
-                           ArrayRef<int64_t> sourceSizes, Value destination,
-                           ValueRange destIndices,
-                           ArrayRef<int64_t> destSizes) {
+                           Value source, ValueRange source_indices,
+                           ArrayRef<int64_t> source_sizes, Value destination,
+                           ValueRange dest_indices,
+                           ArrayRef<int64_t> dest_sizes) {
   // Convert static sizes to OpFoldResult (as attributes)
-  SmallVector<OpFoldResult> sourceSizeValues = llvm::map_to_vector<4>(
-      sourceSizes,
+  SmallVector<OpFoldResult> source_size_values = llvm::map_to_vector<4>(
+      source_sizes,
       [&](int64_t v) -> OpFoldResult { return builder.getI64IntegerAttr(v); });
-  SmallVector<OpFoldResult> destSizeValues = llvm::map_to_vector<4>(
-      destSizes,
+  SmallVector<OpFoldResult> dest_size_values = llvm::map_to_vector<4>(
+      dest_sizes,
       [&](int64_t v) -> OpFoldResult { return builder.getI64IntegerAttr(v); });
 
   // Delegate to the OpFoldResult builder
-  build(builder, result, source, sourceIndices, sourceSizeValues, destination,
-        destIndices, destSizeValues);
+  build(builder, result, source, source_indices, source_size_values,
+        destination, dest_indices, dest_size_values);
 }

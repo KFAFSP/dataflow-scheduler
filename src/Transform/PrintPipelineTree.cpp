@@ -52,7 +52,7 @@ struct PrintPipelineTreePass
       if (tree.empty()) {
         llvm::outs() << "(empty tree)\n";
       } else {
-        tree.print(llvm::outs(), showDependencies);
+        tree.print(llvm::outs());
       }
 
       llvm::outs() << "=== End Pipeline Tree ===\n\n";

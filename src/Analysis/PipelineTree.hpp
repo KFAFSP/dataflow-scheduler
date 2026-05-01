@@ -66,8 +66,8 @@ class PipelineTreeNode : public OperationTreeNode {
       : OperationTreeNode(op), materialized_(op != nullptr), template_op_(nullptr) {}
   
   /// Constructor for unmaterialized nodes with a template operation
-  PipelineTreeNode(Operation *op, Operation *templateOp)
-      : OperationTreeNode(op), materialized_(op != nullptr), template_op_(templateOp) {}
+  PipelineTreeNode(Operation *op, Operation *template_op)
+      : OperationTreeNode(op), materialized_(op != nullptr), template_op_(template_op) {}
 
   // Pipeline-specific type queries
   virtual bool isRootNode() const { return false; }
@@ -87,9 +87,9 @@ class PipelineTreeNode : public OperationTreeNode {
   Operation *getTemplateOp() const { return template_op_; }
 
   /// Set the template operation
-  void setTemplateOp(Operation *templateOp) {
+  void setTemplateOp(Operation *template_op) {
     assert(!operation_op_ && "node already has an operation");
-    template_op_ = templateOp;
+    template_op_ = template_op;
   }
 
   /// Mark this node as materialized with the given operation
@@ -99,19 +99,18 @@ class PipelineTreeNode : public OperationTreeNode {
     materialized_ = true;
   }
   
-  // Pipeline-specific print with showDependencies option
-  virtual void print(raw_ostream &OS, bool showDependencies) const {
-    printNodeHeader(OS);
-    OS << "\n";
-    printChildren(OS, showDependencies);
+  virtual void print(raw_ostream &os) const override {
+    printNodeHeader(os);
+    os << "\n";
+    printChildren(os);
   }
 
  protected:
   /// Helper method to print common node information (indentation, name, materialization status, location)
-  void printNodeHeader(raw_ostream &OS) const;
+  void printNodeHeader(raw_ostream &os) const;
   
   /// Helper method to print all children
-  void printChildren(raw_ostream &OS, bool showDependencies) const;
+  void printChildren(raw_ostream &os) const;
 
   bool materialized_;      // Whether this node has an associated IR operation
   Operation *template_op_; // Template operation to use when materializing this node
@@ -160,8 +159,8 @@ class PipelineNode : public PipelineTreeNode {
 /// Stage node representing ktdf.stage operations
 class StageNode : public PipelineTreeNode {
  public:
-  StageNode(Operation *op, int stageId)
-      : PipelineTreeNode(op), stage_id_(stageId) {}
+  StageNode(Operation *op, int stage_id)
+      : PipelineTreeNode(op), stage_id_(stage_id) {}
 
   bool isStageNode() const final override { return true; }
   std::string getNodeName() const override {
@@ -177,7 +176,7 @@ class StageNode : public PipelineTreeNode {
     return dependencies_;
   }
 
-  void print(raw_ostream &OS, bool showDependencies) const override;
+  void print(raw_ostream &os) const override;
 
  private:
   int stage_id_;
@@ -193,15 +192,15 @@ class PrivateNode : public PipelineTreeNode {
   std::string getNodeName() const override { return "private"; }
 
   /// Track expanded buffer allocations (memref.alloc operations)
-  void addExpandedBuffer(Operation *allocOp) {
-    expanded_buffers_.push_back(allocOp);
+  void addExpandedBuffer(Operation *alloc) {
+    expanded_buffers_.push_back(alloc);
   }
 
   const llvm::SmallVector<mlir::Operation *> &getExpandedBuffers() const {
     return expanded_buffers_;
   }
 
-  void print(raw_ostream &OS, bool showDependencies) const override;
+  void print(raw_ostream &os) const override;
 
  private:
   llvm::SmallVector<mlir::Operation *> expanded_buffers_;  // memref allocation operations
@@ -238,8 +237,8 @@ class PipelineTree : public OperationTree {
     return node;
   }
   
-  StageNode* createStageNode(mlir::Operation* op, int stageId) {
-    StageNode* node = new StageNode(op, stageId);
+  StageNode* createStageNode(mlir::Operation* op, int stage_id) {
+    StageNode* node = new StageNode(op, stage_id);
     if (op) opToNode_[op] = node;
     return node;
   }
@@ -286,15 +285,6 @@ class PipelineTree : public OperationTree {
   void recompute(Operation &unit) {
     clear();
     compute(unit);
-  }
-
-  /// Pipeline-specific print method that supports showing dependencies
-  void print(raw_ostream &OS, bool showDependencies) const {
-    OperationTreeNode *n = getRoot()->getFirstChild();
-    while (n) {
-      static_cast<PipelineTreeNode*>(n)->print(OS, showDependencies);
-      n = n->getNextSibling();
-    }
   }
 
   /// Get the tree node for a given operation

@@ -18,8 +18,8 @@ void printLocation(llvm::raw_ostream& OS, mlir::Operation* op) {
   }
 
   auto loc = op->getLoc();
-  if (auto fileLoc = mlir::dyn_cast<mlir::FileLineColLoc>(loc)) {
-    OS << "@ line: " << fileLoc.getLine();
+  if (auto file_loc = mlir::dyn_cast<mlir::FileLineColLoc>(loc)) {
+    OS << "@ line: " << file_loc.getLine();
   } else {
     OS << "@ line: " << op;
   }

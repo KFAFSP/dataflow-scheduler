@@ -39,29 +39,29 @@ namespace ktdf {
 struct StageGroup {
 
   /// Add a stage to this group
-  void addStage(mlir::ktdf::StageOp stage) { stages.push_back(stage); }
+  void addStage(mlir::ktdf::StageOp stage) { stages_.push_back(stage); }
 
   /// Check if this is a single-stage group
-  bool isSingleStage() const { return stages.size() == 1; }
+  bool isSingleStage() const { return stages_.size() == 1; }
 
   /// Get the first stage in the group
   mlir::ktdf::StageOp getFirstStage() const {
-    return stages.empty() ? nullptr : stages.front();
+    return stages_.empty() ? nullptr : stages_.front();
   }
 
   /// Get the last stage in the group
   mlir::ktdf::StageOp getLastStage() const {
-    return stages.empty() ? nullptr : stages.back();
+    return stages_.empty() ? nullptr : stages_.back();
   }
 
   /// Get all stages in the group
   const llvm::SmallVector<mlir::ktdf::StageOp>& getStages() const {
-    return stages;
+    return stages_;
   }
 
   private:
   /// Stages in this group (in program order)
-  llvm::SmallVector<mlir::ktdf::StageOp> stages;
+  llvm::SmallVector<mlir::ktdf::StageOp> stages_;
 };
 
 /// Stage Grouping Analysis
@@ -78,7 +78,7 @@ class StageGroupingAnalysis {
   void analyze();
 
   /// Get all stage groups
-  const llvm::SmallVector<StageGroup>& getGroups() const { return groups; }
+  const llvm::SmallVector<StageGroup>& getGroups() const { return groups_; }
 
   /// Get the group that contains a given stage
   const StageGroup* getGroupForStage(mlir::ktdf::StageOp stage) const;
@@ -88,7 +88,7 @@ class StageGroupingAnalysis {
                       mlir::ktdf::StageOp stage2) const;
 
   /// Print the grouping results to the given output stream
-  void print(llvm::raw_ostream& OS) const;
+  void print(llvm::raw_ostream& os) const;
 
   /// Print the grouping results for debugging (to llvm::outs())
   void dump() const;
@@ -108,11 +108,11 @@ class StageGroupingAnalysis {
   
   /// Analyze a data transfer operation for memory spaces and FIFO usage
   void analyzeDataTransfer(mlir::ktdf::DataTransferOp transfer,
-                          llvm::SmallSet<mlir::ktdf::MemorySpace, 4>& memorySpaces,
-                          llvm::SmallSet<mlir::ktdf::FifoType, 4>& fifoTypes);
+                          llvm::SmallSet<mlir::ktdf::MemorySpace, 4>& memory_spaces,
+                          llvm::SmallSet<mlir::ktdf::FifoType, 4>& fifo_types);
 
-  llvm::SmallVector<StageGroup> groups;
-  llvm::DenseMap<mlir::Operation*, unsigned> stageToGroup;
+  llvm::SmallVector<StageGroup> groups_;
+  llvm::DenseMap<mlir::Operation*, unsigned> stage_to_group_;
 };
 
 }  // namespace ktdf

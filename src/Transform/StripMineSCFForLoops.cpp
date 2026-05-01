@@ -53,65 +53,65 @@ struct StripMineSCFForLoopsPass
 
     // Collect all scf.for loops
     llvm::SmallVector<mlir::scf::ForOp> allLoops;
-    op->walk([&](mlir::scf::ForOp forOp) { allLoops.push_back(forOp); });
+    op->walk([&](mlir::scf::ForOp for_op) { allLoops.push_back(for_op); });
 
     // Strip-mine each loop individually
-    for (mlir::scf::ForOp forOp : allLoops) {
-      stripMineLoop(forOp, rewriter);
+    for (mlir::scf::ForOp for_op : allLoops) {
+      stripMineLoop(for_op, rewriter);
     }
   }
 
  private:
-  void stripMineLoop(mlir::scf::ForOp forOp, mlir::IRRewriter& rewriter) {
+  void stripMineLoop(mlir::scf::ForOp for_op, mlir::IRRewriter& rewriter) {
     // Determine strip-mine factor (tile size)
-    int64_t stripMineFactor = stripMineSize.empty() ? 32 : stripMineSize[0];
+    int64_t strip_mine_factor = stripMineSize.empty() ? 32 : stripMineSize[0];
 
     // Create tile size as a Value
-    rewriter.setInsertionPoint(forOp);
-    mlir::Location loc = forOp.getLoc();
-    mlir::Value tileSizeVal =
-        mlir::arith::ConstantIndexOp::create(rewriter, loc, stripMineFactor);
+    rewriter.setInsertionPoint(for_op);
+    mlir::Location loc = for_op.getLoc();
+    mlir::Value tile_size_val =
+        mlir::arith::ConstantIndexOp::create(rewriter, loc, strip_mine_factor);
 
     // Save original bounds and step for potential normalization
-    mlir::Value origLb = forOp.getLowerBound();
-    mlir::Value origStep = forOp.getStep();
+    mlir::Value orig_lb = for_op.getLowerBound();
+    mlir::Value orig_step = for_op.getStep();
 
     // Use MLIR's tile utility to strip-mine this single loop
     // Pass the loop as both the loop to tile and the target
-    llvm::SmallVector<mlir::scf::ForOp> loopsToTile = {forOp};
-    llvm::SmallVector<mlir::Value> tileSizes = {tileSizeVal};
+    llvm::SmallVector<mlir::scf::ForOp> loops_to_tile = {for_op};
+    llvm::SmallVector<mlir::Value> tile_sizes = {tile_size_val};
 
     // The tile function performs strip-mining by creating an outer loop
     // that iterates over blocks and an inner loop that iterates within blocks
-    auto innerLoops = mlir::tile(loopsToTile, tileSizes, forOp);
+    auto inner_loops = mlir::tile(loops_to_tile, tile_sizes, for_op);
 
     // If normalization is enabled and we got an inner loop, normalize it
-    if (normalizeInnerLoop && !innerLoops.empty()) {
-      mlir::scf::ForOp innerLoop = innerLoops[0];
+    if (normalizeInnerLoop && !inner_loops.empty()) {
+      mlir::scf::ForOp inner_loop = inner_loops[0];
 
       // Get the current bounds of the inner loop
-      mlir::Value innerLb = innerLoop.getLowerBound();
-      mlir::Value innerUb = innerLoop.getUpperBound();
-      mlir::Value innerStep = innerLoop.getStep();
+      mlir::Value inner_lb = inner_loop.getLowerBound();
+      mlir::Value inner_ub = inner_loop.getUpperBound();
+      mlir::Value inner_step = inner_loop.getStep();
 
       // Use MLIR's emitNormalizedLoopBounds to compute normalized bounds
-      rewriter.setInsertionPoint(innerLoop);
-      auto normalizedRange = mlir::emitNormalizedLoopBounds(
-          rewriter, loc, innerLb, innerUb, innerStep);
+      rewriter.setInsertionPoint(inner_loop);
+      auto normalized_range = mlir::emitNormalizedLoopBounds(
+          rewriter, loc, inner_lb, inner_ub, inner_step);
 
       // Update the inner loop to use normalized bounds (0 to size, step 1)
-      innerLoop.setLowerBound(mlir::getValueOrCreateConstantIndexOp(
-          rewriter, loc, normalizedRange.offset));
-      innerLoop.setUpperBound(mlir::getValueOrCreateConstantIndexOp(
-          rewriter, loc, normalizedRange.size));
-      innerLoop.setStep(mlir::getValueOrCreateConstantIndexOp(
-          rewriter, loc, normalizedRange.stride));
+      inner_loop.setLowerBound(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalized_range.offset));
+      inner_loop.setUpperBound(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalized_range.size));
+      inner_loop.setStep(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalized_range.stride));
 
       // Use MLIR's denormalizeInductionVariable to replace uses of the
-      // normalized IV with: innerLb + iv * innerStep
-      rewriter.setInsertionPointToStart(innerLoop.getBody());
+      // normalized IV with: inner_lb + iv * inner_step
+      rewriter.setInsertionPointToStart(inner_loop.getBody());
       mlir::denormalizeInductionVariable(
-          rewriter, loc, innerLoop.getInductionVar(), innerLb, innerStep);
+          rewriter, loc, inner_loop.getInductionVar(), inner_lb, inner_step);
     }
   }
 };

@@ -65,29 +65,29 @@ Type FifoSlotType::parse(AsmParser& parser) {
   if (parser.parseLess()) return Type();
 
   // Parse the FifoType enum as a string keyword
-  std::string fifoTypeStr;
-  if (parser.parseKeywordOrString(&fifoTypeStr)) return Type();
+  std::string fifo_type_str;
+  if (parser.parseKeywordOrString(&fifo_type_str)) return Type();
 
   // Convert string to FifoType enum
-  auto fifoType = symbolizeFifoType(fifoTypeStr);
-  if (!fifoType) {
+  auto fifo_type = symbolizeFifoType(fifo_type_str);
+  if (!fifo_type) {
     parser.emitError(parser.getCurrentLocation(), "invalid FIFO type: ")
-        << fifoTypeStr;
+        << fifo_type_str;
     return Type();
   }
 
   if (parser.parseComma()) return Type();
 
   // Parse dimension (NxType or ?xType)
-  int64_t numElements;
-  Type elementType;
+  int64_t num_elements;
+  Type element_type;
 
   // Try to parse '?' for dynamic dimension
   if (succeeded(parser.parseOptionalQuestion())) {
-    numElements = mlir::ShapedType::kDynamic;
+    num_elements = mlir::ShapedType::kDynamic;
   } else {
     // Parse static dimension
-    if (parser.parseInteger(numElements)) return Type();
+    if (parser.parseInteger(num_elements)) return Type();
   }
 
   // Parse 'x' - use parseXInDimensionList which handles 'x' in dimension
@@ -95,13 +95,13 @@ Type FifoSlotType::parse(AsmParser& parser) {
   if (parser.parseXInDimensionList()) return Type();
 
   // Parse element type
-  if (parser.parseType(elementType)) return Type();
+  if (parser.parseType(element_type)) return Type();
 
   if (parser.parseGreater()) return Type();
 
   return FifoSlotType::getChecked(
       [&] { return parser.emitError(parser.getCurrentLocation()); },
-      parser.getContext(), *fifoType, numElements, elementType);
+      parser.getContext(), *fifo_type, num_elements, element_type);
 }
 
 //===----------------------------------------------------------------------===//

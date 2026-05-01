@@ -60,81 +60,82 @@ struct TileSCFForLoopsPass
     mlir::IRRewriter rewriter(op->getContext());
 
     // Collect all outermost scf.for loops (roots of perfectly nested loops)
-    llvm::SmallVector<mlir::scf::ForOp> rootLoops;
-    op->walk([&](mlir::scf::ForOp forOp) {
+    llvm::SmallVector<mlir::scf::ForOp> root_loops;
+    op->walk([&](mlir::scf::ForOp for_op) {
       // Check if this is a root (not nested inside another scf.for)
-      if (!forOp->getParentOfType<mlir::scf::ForOp>()) {
-        rootLoops.push_back(forOp);
+      if (!for_op->getParentOfType<mlir::scf::ForOp>()) {
+        root_loops.push_back(for_op);
       }
     });
 
     // Tile each perfectly nested loop nest
-    for (mlir::scf::ForOp rootLoop : rootLoops) {
-      tileLoopNest(rootLoop, rewriter);
+    for (mlir::scf::ForOp root_loop : root_loops) {
+      tileLoopNest(root_loop, rewriter);
     }
   }
 
  private:
-  void tileLoopNest(mlir::scf::ForOp rootLoop, mlir::IRRewriter& rewriter) {
+  void tileLoopNest(mlir::scf::ForOp root_loop, mlir::IRRewriter& rewriter) {
     // Collect the perfectly nested loops starting from root
-    llvm::SmallVector<mlir::scf::ForOp> nestedLoops;
-    mlir::getPerfectlyNestedLoops(nestedLoops, rootLoop);
+    llvm::SmallVector<mlir::scf::ForOp> nested_loops;
+    mlir::getPerfectlyNestedLoops(nested_loops, root_loop);
 
-    if (nestedLoops.empty()) return;
+    if (nested_loops.empty()) return;
 
     // Prepare tile sizes as Values
-    llvm::SmallVector<mlir::Value> tileSizeValues;
-    rewriter.setInsertionPoint(rootLoop);
-    mlir::Location loc = rootLoop.getLoc();
+    llvm::SmallVector<mlir::Value> tile_size_values;
+    rewriter.setInsertionPoint(root_loop);
+    mlir::Location loc = root_loop.getLoc();
 
     // Use configured tile sizes, or default to 32 for each loop
-    for (size_t i = 0; i < nestedLoops.size(); ++i) {
-      int64_t tileSize = (i < tileSizes.size()) ? tileSizes[i] : 32;
-      tileSizeValues.push_back(
-          mlir::arith::ConstantIndexOp::create(rewriter, loc, tileSize));
+    for (size_t i = 0; i < nested_loops.size(); ++i) {
+      int64_t tile_size = (i < tileSizes.size()) ? tileSizes[i] : 32;
+      tile_size_values.push_back(
+          mlir::arith::ConstantIndexOp::create(rewriter, loc, tile_size));
     }
 
     // Use MLIR's tilePerfectlyNested utility to tile the loop nest
     // This will create the outer tiled loops and inner point loops
-    auto innerLoops = mlir::tilePerfectlyNested(rootLoop, tileSizeValues);
+    auto inner_loops = mlir::tilePerfectlyNested(root_loop, tile_size_values);
 
     // If normalization is enabled, normalize the inner loops
-    if (normalizeInnerLoops && !innerLoops.empty()) {
-      normalizeInnerTiledLoops(nestedLoops, innerLoops, rewriter);
+    if (normalizeInnerLoops && !inner_loops.empty()) {
+      normalizeInnerTiledLoops(nested_loops, inner_loops, rewriter);
     }
   }
 
-  void normalizeInnerTiledLoops(llvm::ArrayRef<mlir::scf::ForOp> originalLoops,
-                                llvm::ArrayRef<mlir::scf::ForOp> innerLoops,
+  void normalizeInnerTiledLoops(llvm::ArrayRef<mlir::scf::ForOp> original_loops,
+                                llvm::ArrayRef<mlir::scf::ForOp> inner_loops,
                                 mlir::IRRewriter& rewriter) {
     // For each inner loop, normalize it to start at 0 and denormalize the IV
-    for (size_t i = 0; i < innerLoops.size() && i < originalLoops.size(); ++i) {
-      mlir::scf::ForOp innerLoop = innerLoops[i];
+    for (size_t i = 0; i < inner_loops.size() && i < original_loops.size();
+         ++i) {
+      mlir::scf::ForOp inner_loop = inner_loops[i];
 
       // Get the original lower bound and step before normalization
-      mlir::Value origLb = innerLoop.getLowerBound();
-      mlir::Value origStep = innerLoop.getStep();
-      mlir::Location loc = innerLoop.getLoc();
+      mlir::Value orig_lb = inner_loop.getLowerBound();
+      mlir::Value orig_step = inner_loop.getStep();
+      mlir::Location loc = inner_loop.getLoc();
 
       // Use MLIR's emitNormalizedLoopBounds to compute normalized bounds
-      rewriter.setInsertionPoint(innerLoop);
-      mlir::Value ub = innerLoop.getUpperBound();
-      auto normalizedRange =
-          mlir::emitNormalizedLoopBounds(rewriter, loc, origLb, ub, origStep);
+      rewriter.setInsertionPoint(inner_loop);
+      mlir::Value ub = inner_loop.getUpperBound();
+      auto normalized_range =
+          mlir::emitNormalizedLoopBounds(rewriter, loc, orig_lb, ub, orig_step);
 
       // Update the loop to use normalized bounds (0 to size, step 1)
-      innerLoop.setLowerBound(mlir::getValueOrCreateConstantIndexOp(
-          rewriter, loc, normalizedRange.offset));
-      innerLoop.setUpperBound(mlir::getValueOrCreateConstantIndexOp(
-          rewriter, loc, normalizedRange.size));
-      innerLoop.setStep(mlir::getValueOrCreateConstantIndexOp(
-          rewriter, loc, normalizedRange.stride));
+      inner_loop.setLowerBound(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalized_range.offset));
+      inner_loop.setUpperBound(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalized_range.size));
+      inner_loop.setStep(mlir::getValueOrCreateConstantIndexOp(
+          rewriter, loc, normalized_range.stride));
 
       // Use MLIR's denormalizeInductionVariable to replace uses of the
-      // normalized IV with: origLb + iv * origStep
-      rewriter.setInsertionPointToStart(innerLoop.getBody());
+      // normalized IV with: orig_lb + iv * orig_step
+      rewriter.setInsertionPointToStart(inner_loop.getBody());
       mlir::denormalizeInductionVariable(
-          rewriter, loc, innerLoop.getInductionVar(), origLb, origStep);
+          rewriter, loc, inner_loop.getInductionVar(), orig_lb, orig_step);
     }
   }
 };

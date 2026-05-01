@@ -39,34 +39,33 @@ using namespace llvm;
 // PipelineTreeNode Implementation
 //===----------------------------------------------------------------------===//
 
-void PipelineTreeNode::printNodeHeader(raw_ostream& OS) const {
+void PipelineTreeNode::printNodeHeader(raw_ostream& os) const {
   // Print indentation based on depth
   unsigned depth = getDepth();
   for (unsigned i = 0; i < depth; ++i) {
-    OS << "  ";
+    os << "  ";
   }
 
   // Print node name
-  OS << getNodeName();
+  os << getNodeName();
 
   // Print materialization status and location
   if (!isMaterialized()) {
-    OS << " [unmaterialized]";
+    os << " [unmaterialized]";
     if (template_op_) {
-      OS << " - template op ";
-      scheduler::utils::printLocation(OS, template_op_);
+      os << " - template op ";
+      scheduler::utils::printLocation(os, template_op_);
     }
   } else if (operation_op_) {
-    OS << " ";
-    scheduler::utils::printLocation(OS, operation_op_);
+    os << " ";
+    scheduler::utils::printLocation(os, operation_op_);
   }
 }
 
-void PipelineTreeNode::printChildren(raw_ostream& OS,
-                                     bool showDependencies) const {
+void PipelineTreeNode::printChildren(raw_ostream& os) const {
   OperationTreeNode* child = getFirstChild();
   while (child) {
-    static_cast<PipelineTreeNode*>(child)->print(OS, showDependencies);
+    static_cast<PipelineTreeNode*>(child)->print(os);
     child = child->getNextSibling();
   }
 }
@@ -75,35 +74,36 @@ void PipelineTreeNode::printChildren(raw_ostream& OS,
 // StageNode Implementation
 //===----------------------------------------------------------------------===//
 
-void StageNode::print(raw_ostream& OS, bool showDependencies) const {
-  printNodeHeader(OS);
+void StageNode::print(raw_ostream& os) const {
+  constexpr bool kShowDependencies = false;
+  printNodeHeader(os);
 
-  if (showDependencies && !dependencies_.empty()) {
-    OS << " [depends on: ";
+  if (kShowDependencies && !dependencies_.empty()) {
+    os << " [depends on: ";
     for (size_t i = 0; i < dependencies_.size(); ++i) {
-      if (i > 0) OS << ", ";
-      OS << "Stage " << dependencies_[i]->getStageId();
+      if (i > 0) os << ", ";
+      os << "Stage " << dependencies_[i]->getStageId();
     }
-    OS << "]";
+    os << "]";
   }
 
-  OS << "\n";
-  printChildren(OS, showDependencies);
+  os << "\n";
+  printChildren(os);
 }
 
 //===----------------------------------------------------------------------===//
 // PrivateNode Implementation
 //===----------------------------------------------------------------------===//
 
-void PrivateNode::print(raw_ostream& OS, bool showDependencies) const {
-  printNodeHeader(OS);
+void PrivateNode::print(raw_ostream& os) const {
+  printNodeHeader(os);
 
   if (!expanded_buffers_.empty()) {
-    OS << " [expanded buffers: " << expanded_buffers_.size() << "]";
+    os << " [expanded buffers: " << expanded_buffers_.size() << "]";
   }
 
-  OS << "\n";
-  printChildren(OS, showDependencies);
+  os << "\n";
+  printChildren(os);
 }
 
 //===----------------------------------------------------------------------===//
@@ -148,7 +148,7 @@ void PipelineTree::compute(Operation& unit) {
   root_ = root_ ? root_ : new RootNode();
 
   // Map to track stage IDs
-  int nextStageId = 0;
+  int next_stage_id = 0;
 
   // Use MLIR's walk to traverse all operations in pre-order
   unit.walk<WalkOrder::PreOrder>([&](Operation* op) {
@@ -161,7 +161,7 @@ void PipelineTree::compute(Operation& unit) {
     } else if (auto pipelineOp = dyn_cast<PipelineOp>(op)) {
       node = createPipelineNode(op);
     } else if (auto stageOp = dyn_cast<StageOp>(op)) {
-      node = createStageNode(op, nextStageId++);
+      node = createStageNode(op, next_stage_id++);
     } else if (auto privateOp = dyn_cast<PrivateOp>(op)) {
       node = createPrivateNode(op);
     }
@@ -172,10 +172,10 @@ void PipelineTree::compute(Operation& unit) {
     Operation* curr_op = op;
     while ((curr_op = curr_op->getParentOp())) {
       if (!isOperationSelected(*curr_op)) continue;
-      auto parentIt = opToNode_.find(curr_op);
-      assert(parentIt != opToNode_.end() &&
+      auto parent_it = opToNode_.find(curr_op);
+      assert(parent_it != opToNode_.end() &&
              "expected parent to be in the map (due to pre-order traversal)");
-      parent = parentIt->getSecond();
+      parent = parent_it->getSecond();
       break;
     }
     parent->insertChildNode(node);
