@@ -41,9 +41,9 @@
 // CHECK-NEXT:       %[[EMPTY_0:.*]] = tensor.empty() : tensor<3x64xf16>
 // CHECK-NEXT:       %[[CONSTANT_4:.*]] = arith.constant 18432 : index
 // CHECK-NEXT:       %[[CONSTRUCT_MEMORY_VIEW_2:.*]] = ktdp.construct_memory_view %[[CONSTANT_4]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-NEXT:       %[[CONSTRUCT_ACCESS_TILE_2:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_2]]{{\[}}%[[MULI_0]], %[[CONSTANT_2]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
 // CHECK-NEXT:       %[[ADD_0:.*]] = linalg.add ins(%[[LOAD_0]], %[[LOAD_1]] : tensor<3x64xf16>, tensor<3x64xf16>) outs(%[[EMPTY_0]] : tensor<3x64xf16>) -> tensor<3x64xf16>
-// CHECK-NEXT:       ktdp.store %[[EMPTY_0]], %[[CONSTRUCT_ACCESS_TILE_2]] : tensor<3x64xf16>, <3x64xindex>
+// CHECK-NEXT:       %[[CONSTRUCT_ACCESS_TILE_2:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_2]]{{\[}}%[[MULI_0]], %[[CONSTANT_2]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
+// CHECK-NEXT:       ktdp.store %[[ADD_0]], %[[CONSTRUCT_ACCESS_TILE_2]] : tensor<3x64xf16>, <3x64xindex>
 // CHECK-NEXT:       return
 // CHECK-NEXT:     }
 // CHECK-NEXT:   }
@@ -94,7 +94,7 @@ module {
 
     // Perform add operation on the data tiles.
     %C_data_tile = tensor.empty() : tensor<3x64xf16>
-    %temp = linalg.add ins(%A_data_tile, %B_data_tile : tensor<3x64xf16>, tensor<3x64xf16>)
+    %result = linalg.add ins(%A_data_tile, %B_data_tile : tensor<3x64xf16>, tensor<3x64xf16>)
                 outs(%C_data_tile: tensor<3x64xf16>) -> tensor<3x64xf16>
 
     // Construct a memory view of C from a given address
@@ -110,7 +110,7 @@ module {
     } : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
 
     // Store data into the access tile.
-    ktdp.store %C_data_tile, %C_access_tile : tensor<3x64xf16>, !ktdp.access_tile<3x64xindex>
+    ktdp.store %result, %C_access_tile : tensor<3x64xf16>, !ktdp.access_tile<3x64xindex>
 
     return
   }

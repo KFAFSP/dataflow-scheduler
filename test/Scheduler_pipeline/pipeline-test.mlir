@@ -47,11 +47,11 @@ module {
 
     // Perform add operation on the data tiles.
     %C_data_tile = tensor.empty() : tensor<3x64xf16>
-    linalg.add ins(%A_data_tile, %B_data_tile : tensor<3x64xf16>, tensor<3x64xf16>)
+    %C_result = linalg.add ins(%A_data_tile, %B_data_tile : tensor<3x64xf16>, tensor<3x64xf16>)
                 outs(%C_data_tile: tensor<3x64xf16>) -> tensor<3x64xf16>
 
-    // extract 1x64 slice of C_data_tile
-    %C_data_subtile = tensor.extract_slice %C_data_tile[0, 0] [1, 64] [1, 1]
+    // extract 1x64 slice of C_result
+    %C_data_subtile = tensor.extract_slice %C_result[0, 0] [1, 64] [1, 1]
       : tensor<3x64xf16> to tensor<1x64xf16>
 
     // Construct a memory view of C from a given address

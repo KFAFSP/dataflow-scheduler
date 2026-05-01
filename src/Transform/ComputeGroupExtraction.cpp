@@ -190,21 +190,8 @@ void ComputeGroupExtractionPass::unionAccessTilesFromAncestors(
     }
 
     for (Value operand : current_op->getOperands()) {
-      if (Operation* operand_def_op = operand.getDefiningOp()) {
-        // Special handling for tensor.empty() - follow its uses to find compute
-        // op.
-        if (isa<tensor::EmptyOp>(operand_def_op)) {
-          // Push all uses of tensor.empty() except stores and current_op
-          for (Operation* user : operand_def_op->getUsers()) {
-            if (user == current_op || isa<mlir::ktdp::StoreOp>(user)) {
-              continue;
-            }
-            worklist.push_back(user);
-          }
-          continue;
-        }
+      if (Operation* operand_def_op = operand.getDefiningOp())
         worklist.push_back(operand_def_op);
-      }
     }
   }
 }
