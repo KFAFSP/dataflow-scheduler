@@ -105,6 +105,18 @@ class PipelineTreeNode : public OperationTreeNode {
     printChildren(os);
   }
 
+  /// Find the outermost loop visited as you traverse up the tree until the stop function returns true.
+  /// Returns nullptr if no loop was visited during the traversal.
+  static PipelineTreeNode* findOutermostLoop(
+      PipelineTreeNode* start_node,
+      std::function<bool(const PipelineTreeNode*)> stop);
+
+  /// Find the innermost loop in a loop nest by walking down the first child chain.
+  /// Stops when hitting a non-loop node or when there are no more children.
+  /// Returns nullptr if the input node is nullptr or not a loop. 
+  /// Otherwise returns \p start_node if no other inner loop is found.
+  static PipelineTreeNode* findInnermostLoop(PipelineTreeNode* start_node);
+
  protected:
   /// Helper method to print common node information (indentation, name, materialization status, location)
   void printNodeHeader(raw_ostream &os) const;

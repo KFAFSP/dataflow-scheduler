@@ -9,6 +9,7 @@ add_library(SchedulerTransforms
     PrintPipelineTree.cpp
     StageCoarsening.cpp
     StructuralLegalizer.cpp
+    PipelineTreeMaterializer.cpp
 )
 
 target_link_libraries(SchedulerTransforms
