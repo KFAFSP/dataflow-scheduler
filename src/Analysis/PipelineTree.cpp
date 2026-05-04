@@ -194,7 +194,7 @@ PipelineTreeNode* PipelineTreeNode::findOutermostLoop(
     PipelineTreeNode* start_node,
     std::function<bool(const PipelineTreeNode*)> stop) {
   if (!start_node) return nullptr;
-  
+
   PipelineTreeNode* outermost_loop = nullptr;
   PipelineTreeNode* current = start_node;
 
@@ -208,9 +208,10 @@ PipelineTreeNode* PipelineTreeNode::findOutermostLoop(
   return outermost_loop;
 }
 
-PipelineTreeNode* PipelineTreeNode::findInnermostLoop(PipelineTreeNode* start_node) {
+PipelineTreeNode* PipelineTreeNode::findInnermostLoop(
+    PipelineTreeNode* start_node) {
   if (!start_node || !start_node->isLoopNode()) return nullptr;
-  
+
   PipelineTreeNode* innermost_loop = start_node;
 
   while (true) {

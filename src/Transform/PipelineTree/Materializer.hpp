@@ -70,6 +70,16 @@ class PipelineTreeMaterializer {
                           mlir::OpBuilder& builder,
                           mlir::IRMapping& value_map);
 
+  /// Helper to materialize all children of a node
+  void materializeChildren(PipelineTreeNode& parent_node,
+                          mlir::OpBuilder& builder,
+                          mlir::IRMapping& value_map);
+
+  /// Helper to clone stage body operations
+  void cloneStageBody(mlir::ktdf::StageOp orig_stage,
+                     mlir::OpBuilder& builder,
+                     mlir::IRMapping& value_map);
+
   /// Tracking map from tree nodes to their materialized operations
   llvm::DenseMap<PipelineTreeNode*, mlir::Operation*> node_to_materialized_op_;
 };

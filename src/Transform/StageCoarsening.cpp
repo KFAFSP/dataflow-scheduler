@@ -126,7 +126,6 @@ struct StageCoarseningPass
 
   /// Generate the transformed IR from the manipulated PipelineTree
   void GenerateTransformedIR(TransformCandidate& candidate, PipelineTree& tree);
-
 };
 
 //===----------------------------------------------------------------------===//
@@ -421,9 +420,8 @@ void StageCoarseningPass::SinkIntoSingleStage(
 
     // Find the outermost loop in the nest by walking up to the pipeline
     PipelineTreeNode* outermost_loop = PipelineTreeNode::findOutermostLoop(
-        innermost_loop_pipeline, [](const PipelineTreeNode* node) {
-          return node->isPipelineNode();
-        });
+        innermost_loop_pipeline,
+        [](const PipelineTreeNode* node) { return node->isPipelineNode(); });
     assert(outermost_loop && "Expected to find an outermost loop");
 
     LLVM_DEBUG(llvm::dbgs() << "    Sinking loop nest into stage\n");
@@ -509,7 +507,6 @@ void StageCoarseningPass::GenerateTransformedIR(TransformCandidate& candidate,
 
   LLVM_DEBUG(llvm::dbgs() << "  IR generation complete.\n");
 }
-
 
 }  // namespace
 }  // namespace ktdf

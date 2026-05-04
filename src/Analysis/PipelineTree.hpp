@@ -92,6 +92,13 @@ class PipelineTreeNode : public OperationTreeNode {
     template_op_ = template_op;
   }
 
+  /// Get the operation if materialized, otherwise get the template operation
+  /// This is a convenience method for code that needs to access either the
+  /// materialized operation or the template operation for unmaterialized nodes
+  Operation *getOperationOrTemplate() const {
+    return isMaterialized() ? getOperation() : getTemplateOp();
+  }
+
   /// Mark this node as materialized with the given operation
   void materialize(Operation *op) {
     assert(op && "expect a valid operation for materialization");

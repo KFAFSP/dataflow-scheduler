@@ -33,10 +33,10 @@ mlir::Operation* PipelineTreeMaterializer::materialize(
     mlir::IRMapping& value_map) {
   // Clear any previous materialization state
   node_to_materialized_op_.clear();
-  
+
   // Materialize the root and all its children
   materializeTreeNode(root_node, builder, value_map);
-  
+
   // Return the materialized operation for the root
   return getMaterializedOp(root_node);
 }
@@ -47,9 +47,9 @@ mlir::Operation* PipelineTreeMaterializer::getMaterializedOp(
   return it != node_to_materialized_op_.end() ? it->second : nullptr;
 }
 
-void PipelineTreeMaterializer::materializeTreeNode(
-    PipelineTreeNode& node, mlir::OpBuilder& builder,
-    mlir::IRMapping& value_map) {
+void PipelineTreeMaterializer::materializeTreeNode(PipelineTreeNode& node,
+                                                   mlir::OpBuilder& builder,
+                                                   mlir::IRMapping& value_map) {
   // Handle different node types
   if (node.isLoopNode()) {
     auto& loop_node = static_cast<LoopNode&>(node);
@@ -82,12 +82,30 @@ void PipelineTreeMaterializer::materializeTreeNode(
   }
 }
 
+void PipelineTreeMaterializer::materializeChildren(
+    PipelineTreeNode& parent_node, mlir::OpBuilder& builder,
+    mlir::IRMapping& value_map) {
+  OperationTreeNode* child = parent_node.getFirstChild();
+  while (child) {
+    materializeTreeNode(static_cast<PipelineTreeNode&>(*child), builder,
+                        value_map);
+    child = child->getNextSibling();
+  }
+}
+
+void PipelineTreeMaterializer::cloneStageBody(mlir::ktdf::StageOp orig_stage,
+                                              mlir::OpBuilder& builder,
+                                              mlir::IRMapping& value_map) {
+  mlir::Block* orig_body = &orig_stage.getBody().front();
+  for (mlir::Operation& op : orig_body->without_terminator()) {
+    builder.clone(op, value_map);
+  }
+}
+
 mlir::scf::ForOp PipelineTreeMaterializer::materializeLoopNode(
     LoopNode& loop_node, mlir::OpBuilder& builder, mlir::IRMapping& value_map) {
   // Get the template operation to copy loop bounds from
-  mlir::Operation* template_op = loop_node.isMaterialized()
-                                     ? loop_node.getOperation()
-                                     : loop_node.getTemplateOp();
+  mlir::Operation* template_op = loop_node.getOperationOrTemplate();
 
   assert(template_op && "Loop node must have either operation or template");
   auto template_for = mlir::cast<mlir::scf::ForOp>(template_op);
@@ -114,18 +132,9 @@ mlir::scf::ForOp PipelineTreeMaterializer::materializeLoopNode(
   // Track the materialized operation
   node_to_materialized_op_[&loop_node] = new_loop.getOperation();
 
-  // Set insertion point inside the loop body
+  // Set insertion point inside the loop body and materialize children
   builder.setInsertionPointToStart(new_loop.getBody());
-
-  // Materialize children inside the loop body
-  OperationTreeNode* child = loop_node.getFirstChild();
-  while (child) {
-    materializeTreeNode(static_cast<PipelineTreeNode&>(*child), builder,
-                        value_map);
-    child = child->getNextSibling();
-  }
-
-  // Restore insertion point after the loop
+  materializeChildren(loop_node, builder, value_map);
   builder.setInsertionPointAfter(new_loop);
 
   LLVM_DEBUG(llvm::dbgs() << "    Created loop with IV mapped\n");
@@ -136,9 +145,7 @@ mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
     StageNode& stage_node, mlir::OpBuilder& builder,
     mlir::IRMapping& value_map) {
   // Get the original stage operation (or template for unmaterialized stages)
-  mlir::Operation* orig_stage_op = stage_node.isMaterialized()
-                                       ? stage_node.getOperation()
-                                       : stage_node.getTemplateOp();
+  mlir::Operation* orig_stage_op = stage_node.getOperationOrTemplate();
 
   mlir::Location loc = builder.getUnknownLoc();
   mlir::ktdf::StageOp orig_stage;
@@ -168,12 +175,7 @@ mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
   if (first_child) {
     // Stage has children (loops), materialize them first
     LLVM_DEBUG(llvm::dbgs() << "    Stage has children, materializing them\n");
-    OperationTreeNode* child = first_child;
-    while (child) {
-      materializeTreeNode(static_cast<PipelineTreeNode&>(*child), builder,
-                          value_map);
-      child = child->getNextSibling();
-    }
+    materializeChildren(stage_node, builder, value_map);
 
     // Now clone the stage body into the innermost loop
     if (orig_stage) {
@@ -193,23 +195,15 @@ mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
           node_to_materialized_op_[innermost_loop_node];
       assert(innermost_op && "Innermost loop should have been materialized");
 
-      // Set insertion point to the innermost loop body
+      // Set insertion point to the innermost loop body and clone stage body
       auto loop_op = mlir::cast<mlir::scf::ForOp>(innermost_op);
       builder.setInsertionPointToStart(loop_op.getBody());
-
-      // Clone the original stage body operations
-      mlir::Block* orig_body = &orig_stage.getBody().front();
-      for (mlir::Operation& op : orig_body->without_terminator()) {
-        builder.clone(op, value_map);
-      }
+      cloneStageBody(orig_stage, builder, value_map);
     }
   } else if (orig_stage) {
     // Stage has no children, clone the original stage body directly
     LLVM_DEBUG(llvm::dbgs() << "    Cloning original stage body\n");
-    mlir::Block* orig_body = &orig_stage.getBody().front();
-    for (mlir::Operation& op : orig_body->without_terminator()) {
-      builder.clone(op, value_map);
-    }
+    cloneStageBody(orig_stage, builder, value_map);
   } else {
     llvm_unreachable("Unmaterialized stage with no children and no template");
   }
@@ -226,9 +220,7 @@ mlir::ktdf::PipelineOp PipelineTreeMaterializer::materializePipelineNode(
     PipelineNode& pipeline_node, mlir::OpBuilder& builder,
     mlir::IRMapping& value_map) {
   // Get the original or template pipeline operation
-  mlir::Operation* template_op = pipeline_node.isMaterialized()
-                                     ? pipeline_node.getOperation()
-                                     : pipeline_node.getTemplateOp();
+  mlir::Operation* template_op = pipeline_node.getOperationOrTemplate();
 
   assert(template_op && "Pipeline node must have either operation or template");
   auto template_pipeline = mlir::cast<mlir::ktdf::PipelineOp>(template_op);
@@ -240,19 +232,10 @@ mlir::ktdf::PipelineOp PipelineTreeMaterializer::materializePipelineNode(
   // Track the materialized operation
   node_to_materialized_op_[&pipeline_node] = new_pipeline.getOperation();
 
-  // Set insertion point inside the pipeline body
+  // Set insertion point inside the pipeline body and materialize children
   mlir::Block* pipeline_body = &new_pipeline.getBody().front();
   builder.setInsertionPointToStart(pipeline_body);
-
-  // Materialize children (private, stages, etc.)
-  OperationTreeNode* child = pipeline_node.getFirstChild();
-  while (child) {
-    materializeTreeNode(static_cast<PipelineTreeNode&>(*child), builder,
-                        value_map);
-    child = child->getNextSibling();
-  }
-
-  // Restore insertion point after the pipeline
+  materializeChildren(pipeline_node, builder, value_map);
   builder.setInsertionPointAfter(new_pipeline);
 
   LLVM_DEBUG(llvm::dbgs() << "    Created pipeline\n");
