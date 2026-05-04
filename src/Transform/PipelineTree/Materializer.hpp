@@ -22,8 +22,8 @@
 // (loops, pipelines, stages) while maintaining value mappings for SSA values.
 //===----------------------------------------------------------------------===//
 
-#ifndef KTIR_SCHEDULER_TRANSFORM_PIPELINETREEMATERIALIZER_HPP
-#define KTIR_SCHEDULER_TRANSFORM_PIPELINETREEMATERIALIZER_HPP
+#ifndef KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_MATERIALIZER_HPP
+#define KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_MATERIALIZER_HPP
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
@@ -76,6 +76,6 @@ class PipelineTreeMaterializer {
 
 }  // namespace scheduler
 
-#endif  // KTIR_SCHEDULER_TRANSFORM_PIPELINETREEMATERIALIZER_HPP
+#endif  // KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_MATERIALIZER_HPP
 
 // Made with Bob

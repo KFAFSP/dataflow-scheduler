@@ -18,7 +18,7 @@
 // Pipeline Tree Materializer Implementation
 //===----------------------------------------------------------------------===//
 
-#include "PipelineTreeMaterializer.hpp"
+#include "Materializer.hpp"
 
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"

@@ -46,8 +46,8 @@
 #include "src/Analysis/StageGrouping.hpp"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
-#include "src/Transform/StructuralLegalizer.hpp"
-#include "src/Transform/PipelineTreeMaterializer.hpp"
+#include "src/Transform/PipelineTree/Legalizer.hpp"
+#include "src/Transform/PipelineTree/Materializer.hpp"
 #include "src/Utils/OperationUtils.hpp"
 
 namespace ktdf {
@@ -457,7 +457,7 @@ void StageCoarseningPass::DiscoverAndCorrectStructure(
   LLVM_DEBUG(
       llvm::dbgs() << "Discovering and correcting illegal structures...\n");
 
-  scheduler::structural_legality::Legalizer legalizer;
+  scheduler::pipeline_tree::Legalizer legalizer;
 
   // Find and fix all violations iteratively
   legalizer.findAndFixViolations(tree);

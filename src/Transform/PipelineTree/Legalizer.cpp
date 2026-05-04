@@ -15,10 +15,10 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
-// Structural Legalizer Implementation
+// Pipeline Tree Legalizer Implementation
 //===----------------------------------------------------------------------===//
 
-#include "StructuralLegalizer.hpp"
+#include "Legalizer.hpp"
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -26,8 +26,8 @@
 
 namespace scheduler {
 
-#define DEBUG_TYPE "structural-legalizer"
-namespace structural_legality {
+#define DEBUG_TYPE "pipeline-tree-legalizer"
+namespace pipeline_tree {
 
 //===----------------------------------------------------------------------===//
 // Rule Implementations
@@ -339,7 +339,7 @@ void Legalizer::collectViolations(PipelineTree& tree) {
       });
 }
 
-}  // namespace structural_legality
+}  // namespace pipeline_tree
 }  // namespace scheduler
 
 // Made with Bob

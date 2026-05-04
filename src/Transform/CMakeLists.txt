@@ -8,8 +8,8 @@ add_library(SchedulerTransforms
     StripMineSCFForLoops.cpp
     PrintPipelineTree.cpp
     StageCoarsening.cpp
-    StructuralLegalizer.cpp
-    PipelineTreeMaterializer.cpp
+    PipelineTree/Legalizer.cpp
+    PipelineTree/Materializer.cpp
 )
 
 target_link_libraries(SchedulerTransforms

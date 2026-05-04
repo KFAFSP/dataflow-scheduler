@@ -15,14 +15,14 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
-// Structural Legalizer
+// Pipeline Tree Legalizer
 //
 // This file defines a legalizer for discovering and correcting structure
-// violations in pipeline trees. 
+// violations in pipeline trees.
 //===----------------------------------------------------------------------===//
 
-#ifndef KTIR_SCHEDULER_TRANSFORM_STRUCTURALLEGALIZER_HPP
-#define KTIR_SCHEDULER_TRANSFORM_STRUCTURALLEGALIZER_HPP
+#ifndef KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_LEGALIZER_HPP
+#define KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_LEGALIZER_HPP
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
@@ -31,7 +31,7 @@
 #include <string>
 
 namespace scheduler {
-namespace structural_legality {
+namespace pipeline_tree {
 
 /// Rule kind enumeration for RTTI
 enum class RuleKind {
@@ -131,8 +131,8 @@ class Legalizer {
   llvm::SmallVector<std::unique_ptr<Rule>> rules_;  // All rules to check
 };
 
-}  // namespace structural_legality
+}  // namespace pipeline_tree
 }  // namespace scheduler
 
-#endif  // KTIR_SCHEDULER_TRANSFORM_STRUCTURALLEGALIZER_HPP
+#endif  // KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_LEGALIZER_HPP
 
