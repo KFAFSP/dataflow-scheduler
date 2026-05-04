@@ -36,6 +36,7 @@
 #include "mlir/Pass/Pass.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
+#include "src/Utils/SchedulerExtContext.h"
 
 #define PASS_NAME "construct-three-stage-pipeline"
 #define DEBUG_TYPE PASS_NAME
@@ -61,6 +62,10 @@ namespace {
 struct ConstructThreeStagePipelinePass
     : public ::ktdf::impl::ConstructThreeStagePipelinePassBase<
           ConstructThreeStagePipelinePass> {
+  ConstructThreeStagePipelinePass(
+      const scheduler::SchedulerExtContext& scheduler_ctx)
+      : scheduler_ctx_(scheduler_ctx) {}
+
   void getDependentDialects(DialectRegistry& registry) const override {
     ConstructThreeStagePipelinePassBase::getDependentDialects(registry);
     // Register bufferization interface implementations
@@ -75,6 +80,11 @@ struct ConstructThreeStagePipelinePass
   void runOnOperation() final;
 
  private:
+  const scheduler::SchedulerExtContext& schedulerExtContext() const {
+    return scheduler_ctx_;
+  }
+  const scheduler::SchedulerExtContext& scheduler_ctx_;
+
   // Run one-shot bufferization on the module
   LogicalResult bufferizeModule(ModuleOp module);
 
@@ -103,7 +113,7 @@ LogicalResult ConstructThreeStagePipelinePass::bufferizeModule(
 
 SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
     linalg::LinalgOp linalgOp) {
-  constexpr int64_t STICK_SIZE = 64;
+  const int64_t STICK_SIZE = schedulerExtContext().getStickSize();
   SmallVector<int64_t> tileSizes;
 
   // Get shape from output operand (after bufferization, linalg ops have no
@@ -248,10 +258,14 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
 
 namespace ktdf {
 
+std::unique_ptr<mlir::Pass> createConstructThreeStagePipelinePass(
+    const scheduler::SchedulerExtContext& scheduler_ctx) {
+  return std::make_unique<ConstructThreeStagePipelinePass>(scheduler_ctx);
+}
+
 std::unique_ptr<mlir::Pass> createConstructThreeStagePipelinePass() {
-  return std::make_unique<ConstructThreeStagePipelinePass>();
+  return std::make_unique<ConstructThreeStagePipelinePass>(
+      scheduler::SchedulerExtContext::dummyContext());
 }
 
 }  // namespace ktdf
-
-// Made with Bob

@@ -10,14 +10,22 @@ class Pass;
 class OpPassManager;
 }  // namespace mlir
 
+namespace scheduler {
+struct SchedulerExtContext;
+}  // namespace scheduler
+
 namespace ktdf {
 
 std::unique_ptr<mlir::Pass> createComputeGroupExtractionPass();
-std::unique_ptr<mlir::Pass> createConstructThreeStagePipelinePass();
+std::unique_ptr<mlir::Pass> createConstructThreeStagePipelinePass(
+    const scheduler::SchedulerExtContext& scheduler_ctx);
 std::unique_ptr<mlir::Pass> createTileSCFForLoopsPass();
 std::unique_ptr<mlir::Pass> createStripMineSCFForLoopsPass();
 std::unique_ptr<mlir::Pass> createStageCoarseningPass();
-void buildKTDPToDFIRPipeline(mlir::OpPassManager& pm);
+
+void buildKTDPToDFIRPipeline(
+    mlir::OpPassManager& pm,
+    const scheduler::SchedulerExtContext& scheduler_ctx);
 
 }  // namespace ktdf
 

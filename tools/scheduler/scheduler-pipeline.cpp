@@ -2,6 +2,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
 #include "src/Transform/Passes.h"
+#include "src/Utils/SchedulerExtContext.h"
 #include "tools/scheduler-driver-lib/scheduler-main.h"
 
 // Include MLIR pass registration headers as needed
@@ -29,18 +30,22 @@ void registerPassesForScheduler() {
 
 void registerPassPipelinesForScheduler() {
   mlir::PassPipelineRegistration<>(
-      "kEmitDFIR", "Emit DataflowIR",
-      [](mlir::OpPassManager& pm) { ::ktdf::buildKTDPToDFIRPipeline(pm); });
+      "kEmitDFIR", "Emit DataflowIR", [](mlir::OpPassManager& pm) {
+        ::ktdf::buildKTDPToDFIRPipeline(
+            pm, scheduler::SchedulerExtContext::dummyContext());
+      });
 }
 
 }  // namespace scheduler
 
 namespace ktdf {
 
-void buildKTDPToDFIRPipeline(mlir::OpPassManager& pm) {
+void buildKTDPToDFIRPipeline(
+    mlir::OpPassManager& pm,
+    const scheduler::SchedulerExtContext& scheduler_ctx) {
   pm.addPass(createComputeGroupExtractionPass());
   pm.addPass(mlir::createSymbolDCEPass());
-  pm.addPass(createConstructThreeStagePipelinePass());
+  pm.addPass(createConstructThreeStagePipelinePass(scheduler_ctx));
   // todo: pm.addPass(createTileSCFForLoopsPass());
 }
 

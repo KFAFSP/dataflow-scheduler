@@ -1,5 +1,9 @@
 add_library(SchedulerUtils
   OperationUtils.cpp
+  SchedulerExtContext.cpp
+
+  LINK_LIBS PUBLIC
+  MLIRIR
 )
 
 target_link_libraries(SchedulerUtils
