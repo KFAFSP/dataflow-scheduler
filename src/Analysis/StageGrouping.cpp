@@ -20,12 +20,14 @@
 
 #include "llvm/ADT/EquivalenceClasses.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Operation.h"
 #include "src/Dialects/KTDF/KTDFTypes.hpp"
 #include "src/Utils/OperationUtils.hpp"
 
+#define DEBUG_TYPE "stage-grouping"
 namespace ktdf {
 
 //===----------------------------------------------------------------------===//
@@ -89,11 +91,13 @@ void StageGroupingAnalysis::init(llvm::ArrayRef<mlir::ktdf::StageOp> stages) {
 }
 
 void StageGroupingAnalysis::analyze() {
-  llvm::outs() << "Stage grouping analysis complete\n";
-  llvm::outs() << "  Total groups: " << groups_.size() << "\n";
-  llvm::outs() << "  Grouping based on:\n";
-  llvm::outs() << "    - Shared SFP register usage\n";
-  llvm::outs() << "    - Shared FIFO buffer access\n";
+  LLVM_DEBUG({
+    llvm::dbgs() << "Stage grouping analysis complete\n";
+    llvm::dbgs() << "  Total groups: " << groups_.size() << "\n";
+    llvm::dbgs() << "  Grouping based on:\n";
+    llvm::dbgs() << "    - Shared SFP register usage\n";
+    llvm::dbgs() << "    - Shared FIFO buffer access\n";
+  });
 }
 
 const StageGroup* StageGroupingAnalysis::getGroupForStage(
@@ -135,8 +139,8 @@ void StageGroupingAnalysis::print(llvm::raw_ostream& os) const {
 }
 
 void StageGroupingAnalysis::dump() const {
-  llvm::outs() << "Stage Grouping Analysis Results:\n";
-  print(llvm::outs());
+  llvm::dbgs() << "Stage Grouping Analysis Results:\n";
+  print(llvm::dbgs());
 }
 
 void StageGroupingAnalysis::collectStages(

@@ -35,6 +35,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -52,6 +53,8 @@ namespace ktdf {
 
 #define GEN_PASS_DEF_STAGECOARSENINGPASS
 #include "src/Transform/Passes.h.inc"
+
+#define DEBUG_TYPE "stage-coarsening"
 
 namespace {
 
@@ -169,27 +172,29 @@ struct StageCoarseningPass
 void StageCoarseningPass::runOnOperation() {
   auto module_op = getOperation();
 
-  llvm::outs() << "\n=== Stage Coarsening Pass ===\n";
-  llvm::outs() << "Loop nest depth: " << loopNestDepth << "\n\n";
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n=== Stage Coarsening Pass ===\n";
+    llvm::dbgs() << "Loop nest depth: " << loopNestDepth << "\n\n";
+  });
 
   // Identify all transform candidates
   llvm::SmallVector<TransformCandidate> candidates;
   identifyTransformCandidates(module_op, candidates);
 
   if (candidates.empty()) {
-    llvm::outs() << "No transform candidates found.\n";
+    LLVM_DEBUG(llvm::dbgs() << "No transform candidates found.\n");
     return;
   }
 
-  llvm::outs() << "Found " << candidates.size()
-               << " transform candidate(s)\n\n";
+  LLVM_DEBUG(llvm::dbgs() << "Found " << candidates.size()
+                          << " transform candidate(s)\n\n");
 
   // Apply transformation to each candidate
   for (TransformCandidate& candidate : candidates) {
     applyTransformation(candidate);
   }
 
-  llvm::outs() << "=== Stage Coarsening Pass Complete ===\n\n";
+  LLVM_DEBUG(llvm::dbgs() << "=== Stage Coarsening Pass Complete ===\n\n");
 }
 
 void StageCoarseningPass::identifyTransformCandidates(
@@ -197,11 +202,13 @@ void StageCoarseningPass::identifyTransformCandidates(
     llvm::SmallVector<TransformCandidate>& candidates) {
   // Walk all functions in the module
   module_op.walk([&](mlir::func::FuncOp func_op) {
-    llvm::outs() << "Analyzing function: " << func_op.getName() << "\n";
+    LLVM_DEBUG(llvm::dbgs()
+               << "Analyzing function: " << func_op.getName() << "\n");
 
     // Find all pipelines in this function
     func_op.walk([&](mlir::ktdf::PipelineOp pipeline) {
-      llvm::outs() << "  Found pipeline, checking for loop nest above it...\n";
+      LLVM_DEBUG(llvm::dbgs()
+                 << "  Found pipeline, checking for loop nest above it...\n");
 
       // Walk up the parent chain to find perfectly nested loops
       mlir::Operation* current_op = pipeline.getOperation();
@@ -236,62 +243,78 @@ void StageCoarseningPass::identifyTransformCandidates(
 
         candidates.push_back({loop_nest, pipeline, loop_nest_parent});
 
-        llvm::outs() << "    -> Found candidate with " << loop_nest.size()
-                     << " nested loop(s) at ";
-        scheduler::utils::printLocation(llvm::outs(),
-                                        loop_nest.front().getOperation());
-        llvm::outs() << "\n";
+        LLVM_DEBUG({
+          llvm::dbgs() << "    -> Found candidate with " << loop_nest.size()
+                       << " nested loop(s) at ";
+          scheduler::utils::printLocation(llvm::dbgs(),
+                                          loop_nest.front().getOperation());
+          llvm::dbgs() << "\n";
+        });
       }
     });
   });
 }
 
 void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
-  llvm::outs() << "\n--- Applying Transformation in steps ---\n";
-  llvm::outs() << "Loop nest depth: " << candidate.loop_nest_.size() << "\n";
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n--- Applying Transformation in steps ---\n";
+    llvm::dbgs() << "Loop nest depth: " << candidate.loop_nest_.size() << "\n";
+  });
 
   // Build pipeline tree once - it will be manipulated throughout the
   // transformation
   PipelineTree tree;
   tree.compute(*candidate.loop_nest_parent_);
-  llvm::outs() << "=== Initial Pipeline Tree ===\n";
-  tree.print(llvm::outs());
-  llvm::outs() << "\n";
+  LLVM_DEBUG({
+    llvm::dbgs() << "=== Initial Pipeline Tree ===\n";
+    tree.print(llvm::dbgs());
+    llvm::dbgs() << "\n";
+  });
 
   // Perform stage grouping analysis once
-  llvm::outs() << "\n  Performing stage grouping analysis...\n";
+  LLVM_DEBUG(llvm::dbgs() << "\n  Performing stage grouping analysis...\n");
   StageGroupingAnalysis grouping(candidate.pipeline_);
-  grouping.print(llvm::outs());
+  LLVM_DEBUG(grouping.print(llvm::dbgs()));
 
   // Step 2a: Distribute and sink loops into pipeline
-  llvm::outs() << "\n--- Step 2a: Distribute and Sink into Pipeline ---\n";
+  LLVM_DEBUG(
+      llvm::dbgs() << "\n--- Step 2a: Distribute and Sink into Pipeline ---\n");
   DistributeAndSinkIntoPipeline(candidate, tree, grouping);
-  llvm::outs() << "\n=== Pipeline Tree after Step 2a ===\n";
-  tree.print(llvm::outs());
-  llvm::outs() << "\n";
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n=== Pipeline Tree after Step 2a ===\n";
+    tree.print(llvm::dbgs());
+    llvm::dbgs() << "\n";
+  });
 
   // Step 2b: Further sink into stage groups containing a single stage
   // (expand buffers)
-  llvm::outs() << "\n--- Step 2b: Sink into Single-Stage Groups ---\n";
+  LLVM_DEBUG(
+      llvm::dbgs() << "\n--- Step 2b: Sink into Single-Stage Groups ---\n");
   SinkIntoSingleStage(candidate, tree, grouping);
-  llvm::outs() << "\n=== Pipeline Tree after Step 2b ===\n";
-  tree.print(llvm::outs());
-  llvm::outs() << "\n";
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n=== Pipeline Tree after Step 2b ===\n";
+    tree.print(llvm::dbgs());
+    llvm::dbgs() << "\n";
+  });
 
   // Step 2c: Discover and correct illegal structures iteratively
-  llvm::outs()
-      << "\n--- Step 2c: Discover and Correct Illegal Structures ---\n";
+  LLVM_DEBUG(llvm::dbgs()
+             << "\n--- Step 2c: Discover and Correct Illegal Structures ---\n");
   DiscoverAndCorrectStructure(candidate, tree);
-  llvm::outs() << "\n=== Pipeline Tree after Step 2c ===\n";
-  tree.print(llvm::outs());
-  llvm::outs() << "\n";
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n=== Pipeline Tree after Step 2c ===\n";
+    tree.print(llvm::dbgs());
+    llvm::dbgs() << "\n";
+  });
 
   // Step 2d: Correct stage dependencies that cross pipeline boundaries
-  llvm::outs() << "\n--- Step 2d: Correct Stage Dependencies ---\n";
+  LLVM_DEBUG(llvm::dbgs() << "\n--- Step 2d: Correct Stage Dependencies ---\n");
   CorrectStageDependencies(candidate, tree);
-  llvm::outs() << "\n=== Pipeline Tree after Step 2d (Final) ===\n";
-  tree.print(llvm::outs());
-  llvm::outs() << "\n";
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n=== Pipeline Tree after Step 2d (Final) ===\n";
+    tree.print(llvm::dbgs());
+    llvm::dbgs() << "\n";
+  });
 
   // Step 3: Generate transformed IR from the manipulated tree
   GenerateTransformedIR(candidate, tree);
@@ -300,17 +323,19 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
 void StageCoarseningPass::DistributeAndSinkIntoPipeline(
     TransformCandidate& candidate, PipelineTree& tree,
     const StageGroupingAnalysis& grouping) {
-  llvm::outs() << "Distributing loops into pipeline...\n";
+  LLVM_DEBUG(llvm::dbgs() << "Distributing loops into pipeline...\n");
 
   // Validate candidate
   if (!candidate.pipeline_ || !candidate.loop_nest_parent_) {
-    llvm::outs() << "  ERROR: Invalid candidate (null pipeline or parent)\n";
+    LLVM_DEBUG(llvm::dbgs()
+               << "  ERROR: Invalid candidate (null pipeline or parent)\n");
     return;
   }
 
   // For each stage group, create unmaterialized loop nest and insert
   // as children of pipeline
-  llvm::outs() << "\n  Distributing loop nests to stage groups...\n";
+  LLVM_DEBUG(
+      llvm::dbgs() << "\n  Distributing loop nests to stage groups...\n");
 
   // Process each group
   const llvm::SmallVector<StageGroup>& groups = grouping.getGroups();
@@ -320,8 +345,9 @@ void StageCoarseningPass::DistributeAndSinkIntoPipeline(
 
     if (stages.empty()) continue;
 
-    llvm::outs() << "  Group " << group_idx << ": Creating loop nest for "
-                 << stages.size() << " stage(s)\n";
+    LLVM_DEBUG(llvm::dbgs()
+               << "  Group " << group_idx << ": Creating loop nest for "
+               << stages.size() << " stage(s)\n");
 
     // Find stage nodes for this group using the operation-to-node mapping
     llvm::SmallVector<StageNode*> stage_nodes;
@@ -363,8 +389,8 @@ void StageCoarseningPass::DistributeAndSinkIntoPipeline(
       current_parent->insertChildNode(stage_node);
     }
 
-    llvm::outs() << "    Moved " << stage_nodes.size()
-                 << " stage(s) under loop nest\n";
+    LLVM_DEBUG(llvm::dbgs() << "    Moved " << stage_nodes.size()
+                            << " stage(s) under loop nest\n");
   }
 
   // Now remove the original loops from the tree
@@ -381,13 +407,13 @@ void StageCoarseningPass::DistributeAndSinkIntoPipeline(
     tree.deleteNode(loop_node);
   }
 
-  llvm::outs() << "\n  Loop distribution complete.\n";
+  LLVM_DEBUG(llvm::dbgs() << "\n  Loop distribution complete.\n");
 }
 
 void StageCoarseningPass::SinkIntoSingleStage(
     TransformCandidate& candidate, PipelineTree& tree,
     const StageGroupingAnalysis& grouping) {
-  llvm::outs() << "Sinking into single-stage groups...\n";
+  LLVM_DEBUG(llvm::dbgs() << "Sinking into single-stage groups...\n");
 
   const llvm::SmallVector<StageGroup>& groups = grouping.getGroups();
 
@@ -402,16 +428,19 @@ void StageCoarseningPass::SinkIntoSingleStage(
 
     // Only process single-stage groups
     if (!group.isSingleStage()) {
-      llvm::outs() << "  Group " << group_idx << ": Skipping (contains "
-                   << group.getStages().size() << " stages)\n";
+      LLVM_DEBUG(llvm::dbgs()
+                 << "  Group " << group_idx << ": Skipping (contains "
+                 << group.getStages().size() << " stages)\n");
       continue;
     }
 
     mlir::ktdf::StageOp stage = group.getFirstStage();
-    llvm::outs() << "  Group " << group_idx
-                 << ": Processing single-stage group with stage at ";
-    scheduler::utils::printLocation(llvm::outs(), stage.getOperation());
-    llvm::outs() << "\n";
+    LLVM_DEBUG({
+      llvm::dbgs() << "  Group " << group_idx
+                   << ": Processing single-stage group with stage at ";
+      scheduler::utils::printLocation(llvm::dbgs(), stage.getOperation());
+      llvm::dbgs() << "\n";
+    });
 
     // Find the stage node in the tree
     PipelineTreeNode* stage_node = tree.getNodeForOp(stage.getOperation());
@@ -430,7 +459,7 @@ void StageCoarseningPass::SinkIntoSingleStage(
     PipelineTreeNode* outermost_loop =
         findOutermostLoop(innermost_loop_pipeline, pipeline_node);
 
-    llvm::outs() << "    Sinking loop nest into stage\n";
+    LLVM_DEBUG(llvm::dbgs() << "    Sinking loop nest into stage\n");
 
     // Sink the loop nest into the stage:
     assert(outermost_loop->getParentNode() == pipeline_node);
@@ -440,7 +469,7 @@ void StageCoarseningPass::SinkIntoSingleStage(
     stage_node->insertChildNode(outermost_loop);
     pipeline_node->insertChildNode(stage_node, insert);
 
-    llvm::outs() << "    Successfully sank loop nest into stage\n";
+    LLVM_DEBUG(llvm::dbgs() << "    Successfully sank loop nest into stage\n");
 
     // TODO: Expand LX buffers from 1D to tile-sized
     // This requires:
@@ -449,27 +478,29 @@ void StageCoarseningPass::SinkIntoSingleStage(
     // 2. Determining the tile size from the loop bounds
     // 3. Marking these buffers as "expanded" in the PrivateNode
     // 4. Recording which data transfers and operations need to be updated
-    llvm::outs() << "    TODO: Buffer expansion not yet implemented\n";
+    LLVM_DEBUG(llvm::dbgs()
+               << "    TODO: Buffer expansion not yet implemented\n");
   }
 
-  llvm::outs() << "  Sinking into single-stage groups complete.\n";
+  LLVM_DEBUG(llvm::dbgs() << "  Sinking into single-stage groups complete.\n");
 }
 
 void StageCoarseningPass::DiscoverAndCorrectStructure(
     TransformCandidate& candidate, PipelineTree& tree) {
-  llvm::outs() << "Discovering and correcting illegal structures...\n";
+  LLVM_DEBUG(
+      llvm::dbgs() << "Discovering and correcting illegal structures...\n");
 
   scheduler::structural_legality::Legalizer legalizer;
 
   // Find and fix all violations iteratively
   legalizer.findAndFixViolations(tree);
 
-  llvm::outs() << "  Structure legalization complete.\n";
+  LLVM_DEBUG(llvm::dbgs() << "  Structure legalization complete.\n");
 }
 
 void StageCoarseningPass::CorrectStageDependencies(
     TransformCandidate& candidate, PipelineTree& tree) {
-  llvm::outs() << "Correcting stage dependencies...\n";
+  LLVM_DEBUG(llvm::dbgs() << "Correcting stage dependencies...\n");
 
   // TODO: Implement dependency correction
   // For each stage dependency that crosses pipeline boundaries:
@@ -477,7 +508,7 @@ void StageCoarseningPass::CorrectStageDependencies(
   //   2. Create nested pipeline if needed
   //   3. Move stages to correct pipeline level
 
-  llvm::outs() << "  (Implementation pending)\n";
+  LLVM_DEBUG(llvm::dbgs() << "  (Implementation pending)\n");
 }
 
 //===----------------------------------------------------------------------===//
@@ -486,7 +517,7 @@ void StageCoarseningPass::CorrectStageDependencies(
 
 void StageCoarseningPass::GenerateTransformedIR(TransformCandidate& candidate,
                                                 PipelineTree& tree) {
-  llvm::outs() << "\n--- Step 3: Generate Transformed IR ---\n";
+  LLVM_DEBUG(llvm::dbgs() << "\n--- Step 3: Generate Transformed IR ---\n");
 
   // Clear any previous materialization tracking
   node_to_materialized_op_.clear();
@@ -508,7 +539,7 @@ void StageCoarseningPass::GenerateTransformedIR(TransformCandidate& candidate,
   // Erase the original pipeline operation
   candidate.pipeline_.erase();
 
-  llvm::outs() << "  IR generation complete.\n";
+  LLVM_DEBUG(llvm::dbgs() << "  IR generation complete.\n");
 }
 
 void StageCoarseningPass::materializeTreeNode(PipelineTreeNode* node,
@@ -516,11 +547,13 @@ void StageCoarseningPass::materializeTreeNode(PipelineTreeNode* node,
                                               mlir::IRMapping& value_map) {
   if (!node) return;
 
-  if (node->isMaterialized())
-    llvm::outs() << "  Re-Materializing ";
-  else
-    llvm::outs() << "  Materializing ";
-  llvm::outs() << node->getNodeName() << "\n";
+  LLVM_DEBUG({
+    if (node->isMaterialized())
+      llvm::dbgs() << "  Re-Materializing ";
+    else
+      llvm::dbgs() << "  Materializing ";
+    llvm::dbgs() << node->getNodeName() << "\n";
+  });
 
   // Handle different node types
   if (node->isLoopNode()) {
@@ -542,7 +575,8 @@ void StageCoarseningPass::materializeTreeNode(PipelineTreeNode* node,
     mlir::Operation* orig_private_op = private_node->getOperation();
     assert(orig_private_op && "Private node must have an operation");
 
-    llvm::outs() << "    Cloning private clause into parent pipeline\n";
+    LLVM_DEBUG(llvm::dbgs()
+               << "    Cloning private clause into parent pipeline\n");
     mlir::Operation* cloned_private =
         builder.clone(*orig_private_op, value_map);
 
@@ -596,7 +630,7 @@ mlir::scf::ForOp StageCoarseningPass::materializeLoopNode(
   // Restore insertion point after the loop
   builder.setInsertionPointAfter(new_loop);
 
-  llvm::outs() << "    Created loop with IV mapped\n";
+  LLVM_DEBUG(llvm::dbgs() << "    Created loop with IV mapped\n");
   return new_loop;
 }
 
@@ -636,7 +670,7 @@ mlir::ktdf::StageOp StageCoarseningPass::materializeStageNode(
 
   if (first_child) {
     // Stage has children (loops), materialize them first
-    llvm::outs() << "    Stage has children, materializing them\n";
+    LLVM_DEBUG(llvm::dbgs() << "    Stage has children, materializing them\n");
     OperationTreeNode* child = first_child;
     while (child) {
       materializeTreeNode(static_cast<PipelineTreeNode*>(child), builder,
@@ -646,7 +680,8 @@ mlir::ktdf::StageOp StageCoarseningPass::materializeStageNode(
 
     // Now clone the stage body into the innermost loop
     if (orig_stage) {
-      llvm::outs() << "    Cloning stage body into innermost loop\n";
+      LLVM_DEBUG(llvm::dbgs()
+                 << "    Cloning stage body into innermost loop\n");
 
       // Find the innermost loop node using helper function
       PipelineTreeNode* first_loop =
@@ -671,7 +706,7 @@ mlir::ktdf::StageOp StageCoarseningPass::materializeStageNode(
     }
   } else if (orig_stage) {
     // Stage has no children, clone the original stage body directly
-    llvm::outs() << "    Cloning original stage body\n";
+    LLVM_DEBUG(llvm::dbgs() << "    Cloning original stage body\n");
     mlir::Block* orig_body = &orig_stage.getBody().front();
     for (mlir::Operation& op : orig_body->without_terminator()) {
       builder.clone(op, value_map);
@@ -683,7 +718,8 @@ mlir::ktdf::StageOp StageCoarseningPass::materializeStageNode(
   // Restore insertion point after the stage
   builder.setInsertionPointAfter(new_stage);
 
-  llvm::outs() << "    Created stage " << stage_node->getStageId() << "\n";
+  LLVM_DEBUG(llvm::dbgs() << "    Created stage " << stage_node->getStageId()
+                          << "\n");
   return new_stage;
 }
 
@@ -721,7 +757,7 @@ mlir::ktdf::PipelineOp StageCoarseningPass::materializePipelineNode(
   // Restore insertion point after the pipeline
   builder.setInsertionPointAfter(new_pipeline);
 
-  llvm::outs() << "    Created pipeline\n";
+  LLVM_DEBUG(llvm::dbgs() << "    Created pipeline\n");
   return new_pipeline;
 }
 

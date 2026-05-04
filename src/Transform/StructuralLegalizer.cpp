@@ -20,10 +20,13 @@
 
 #include "StructuralLegalizer.hpp"
 
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "src/Analysis/PipelineTree.hpp"
 
 namespace scheduler {
+
+#define DEBUG_TYPE "structural-legalizer"
 namespace structural_legality {
 
 //===----------------------------------------------------------------------===//
@@ -57,8 +60,8 @@ bool PipelineChildrenRule::fixViolation(PipelineTreeNode* violating_node,
 
   assert(violating_node->isPipelineNode() && "Expected pipeline node");
 
-  llvm::outs() << "      Wrapping illegal children of pipeline "
-               << violating_node->getNodeName() << "\n";
+  LLVM_DEBUG(llvm::dbgs() << "      Wrapping illegal children of pipeline "
+                          << violating_node->getNodeName() << "\n");
 
   // Group consecutive illegal children
   llvm::SmallVector<llvm::SmallVector<PipelineTreeNode*>> illegal_groups;
@@ -89,8 +92,9 @@ bool PipelineChildrenRule::fixViolation(PipelineTreeNode* violating_node,
 
   // Wrap each group in a new stage
   for (const auto& group : illegal_groups) {
-    llvm::outs() << "        Creating coarsened stage wrapper for "
-                 << group.size() << " consecutive illegal child(ren)\n";
+    LLVM_DEBUG(llvm::dbgs()
+               << "        Creating coarsened stage wrapper for "
+               << group.size() << " consecutive illegal child(ren)\n");
 
     // Create a new coarsened stage
     StageNode* new_stage = tree.createStageNode(nullptr, next_stage_id++);
@@ -108,8 +112,8 @@ bool PipelineChildrenRule::fixViolation(PipelineTreeNode* violating_node,
     // child)
     violating_node->insertChildNode(new_stage, insert_before);
 
-    llvm::outs() << "        Created coarsened stage " << (next_stage_id - 1)
-                 << "\n";
+    LLVM_DEBUG(llvm::dbgs() << "        Created coarsened stage "
+                            << (next_stage_id - 1) << "\n");
   }
 
   return true;
@@ -138,8 +142,8 @@ bool StageParentRule::isViolated(PipelineTreeNode* node,
 bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
                                    PipelineTree& tree,
                                    int& next_coarsened_stage_id) {
-  llvm::outs() << "      Creating nested pipeline for stage "
-               << violating_node->getNodeName() << "\n";
+  LLVM_DEBUG(llvm::dbgs() << "      Creating nested pipeline for stage "
+                          << violating_node->getNodeName() << "\n");
 
   assert(violating_node->isStageNode() && "Expected stage node");
 
@@ -166,13 +170,13 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
         assert(ancestor_pipeline->getTemplateOp());
         nested_pipeline->setTemplateOp(ancestor_pipeline->getTemplateOp());
       }
-      llvm::outs() << "      Set template from ancestor pipeline\n";
+      LLVM_DEBUG(llvm::dbgs() << "      Set template from ancestor pipeline\n");
       break;
     }
     ancestor = ancestor->getParentNode();
   }
 
-  llvm::outs() << "      Created nested pipeline node\n";
+  LLVM_DEBUG(llvm::dbgs() << "      Created nested pipeline node\n");
 
   // Collect all stage siblings that should move to the nested pipeline
   // (all stages that are children of the same non-pipeline parent)
@@ -186,8 +190,8 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
     child = child->getNextSibling();
   }
 
-  llvm::outs() << "      Moving " << stages_to_move.size()
-               << " stage(s) to nested pipeline\n";
+  LLVM_DEBUG(llvm::dbgs() << "      Moving " << stages_to_move.size()
+                          << " stage(s) to nested pipeline\n");
 
   // Insert the nested pipeline as a child of the parent
   // Get the position before the first stage
@@ -217,9 +221,12 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
   // 2. Create token operations for the nested pipeline
   // 3. Update stage operations to use new tokens
 
-  llvm::outs() << "      Nested pipeline created successfully\n";
-  llvm::outs() << "      TODO: Buffer privatization and token creation not yet "
-                  "implemented\n";
+  LLVM_DEBUG({
+    llvm::dbgs() << "      Nested pipeline created successfully\n";
+    llvm::dbgs()
+        << "      TODO: Buffer privatization and token creation not yet "
+           "implemented\n";
+  });
 
   return true;
 }
@@ -246,7 +253,7 @@ int Legalizer::findAndFixViolations(PipelineTree& tree) {
   collectViolations(tree);
 
   if (violations_.empty()) {
-    llvm::outs() << "  No structure violations found.\n";
+    LLVM_DEBUG(llvm::dbgs() << "  No structure violations found.\n");
     return 0;
   }
 
@@ -254,27 +261,33 @@ int Legalizer::findAndFixViolations(PipelineTree& tree) {
   while (!violations_.empty()) {
     ++iteration;
 
-    llvm::outs() << "  Iteration " << iteration << ": Found "
-                 << violations_.size() << " violation(s)\n";
+    LLVM_DEBUG({
+      llvm::dbgs() << "  Iteration " << iteration << ": Found "
+                   << violations_.size() << " violation(s)\n";
 
-    // Print all violations found in this iteration
-    for (const Violation& violation : violations_) {
-      llvm::outs() << "    - ";
-      violation.print(llvm::outs());
-      llvm::outs() << "\n";
-    }
+      // Print all violations found in this iteration
+      for (const Violation& violation : violations_) {
+        llvm::dbgs() << "    - ";
+        violation.print(llvm::dbgs());
+        llvm::dbgs() << "\n";
+      }
+    });
 
     // Fix the first violation
     Violation& violation = violations_.front();
-    llvm::outs() << "  Correcting: ";
-    violation.print(llvm::outs());
-    llvm::outs() << "\n";
+    LLVM_DEBUG({
+      llvm::dbgs() << "  Correcting: ";
+      violation.print(llvm::dbgs());
+      llvm::dbgs() << "\n";
+    });
 
     violation.rule->fixViolation(violation.violating_node, tree,
                                  next_coarsened_stage_id_);
 
-    llvm::outs() << "tree after fixing violation:\n";
-    tree.print(llvm::outs());
+    LLVM_DEBUG({
+      llvm::dbgs() << "tree after fixing violation:\n";
+      tree.print(llvm::dbgs());
+    });
 
     // Re-collect violations after the fix
     // (fixing one violation may resolve or create others)
@@ -282,8 +295,8 @@ int Legalizer::findAndFixViolations(PipelineTree& tree) {
     collectViolations(tree);
   }
 
-  llvm::outs() << "  All violations resolved after " << iteration
-               << " iteration(s)\n";
+  LLVM_DEBUG(llvm::dbgs() << "  All violations resolved after " << iteration
+                          << " iteration(s)\n");
 
   return iteration;
 }
