@@ -17,7 +17,16 @@ def ConstructThreeStagePipelinePass : Pass<"construct-three-stage-pipeline", "ml
     This pass constructs a three-stage pipeline.
   }];
   let constructor = "::ktdf::createConstructThreeStagePipelinePass()";
-  let dependentDialects = ["mlir::ktdf::KTDFDialect"];
+  let dependentDialects = [
+    "mlir::ktdf::KTDFDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::bufferization::BufferizationDialect",
+    "mlir::func::FuncDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::tensor::TensorDialect"
+  ];
 }
 
 def TileSCFForLoopsPass : Pass<"tile-scf-for-loops", "mlir::ModuleOp"> {
