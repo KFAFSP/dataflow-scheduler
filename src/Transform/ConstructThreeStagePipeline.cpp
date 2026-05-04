@@ -93,6 +93,9 @@ struct ConstructThreeStagePipelinePass
 
   // Transform linalg operations to loops
   void lowerLinalgToLoops(ModuleOp module);
+
+  // Create ktdf.pipeline with ktdf.private and ktdf.stage operations
+  void createPipeline(scf::ForOp innermost_loop);
 };
 
 LogicalResult ConstructThreeStagePipelinePass::bufferizeModule(
@@ -193,46 +196,112 @@ SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
 void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
   LLVM_DEBUG(llvm::dbgs() << "Lowering linalg operations to loops\n");
 
-  SmallVector<linalg::LinalgOp> linalgOps;
-  module.walk([&](linalg::LinalgOp op) { linalgOps.push_back(op); });
+  SmallVector<linalg::LinalgOp> linalg_ops;
+  module.walk([&](linalg::LinalgOp op) { linalg_ops.push_back(op); });
 
   IRRewriter rewriter(&getContext());
-  for (auto linalgOp : linalgOps) {
-    if (!linalgOp->getBlock()) continue;
+  for (auto linalg_op : linalg_ops) {
+    if (!linalg_op->getBlock()) continue;
 
-    LLVM_DEBUG(llvm::dbgs() << "  Lowering: " << linalgOp->getName() << "\n");
+    LLVM_DEBUG(llvm::dbgs() << "  Lowering: " << linalg_op->getName() << "\n");
 
-    rewriter.setInsertionPoint(linalgOp);
+    rewriter.setInsertionPoint(linalg_op);
 
     // Determine tile sizes from output operand shape
-    SmallVector<int64_t> tileSizes = determineTileSizes(linalgOp);
+    SmallVector<int64_t> tile_sizes = determineTileSizes(linalg_op);
 
-    if (tileSizes.empty()) {
-      linalgOp.emitError("Could not determine tile sizes");
+    if (tile_sizes.empty()) {
+      linalg_op.emitError("Could not determine tile sizes");
       signalPassFailure();
       return;
     }
     llvm::dbgs() << "Tilesizes ";
-    for (auto i : tileSizes) llvm::dbgs() << i << ", ";
+    for (auto i : tile_sizes) llvm::dbgs() << i << ", ";
     llvm::dbgs() << "\n";
     // Configure tiling options
     linalg::LinalgTilingOptions options;
-    options.setTileSizes(tileSizes);
+    options.setTileSizes(tile_sizes);
     options.setLoopType(linalg::LinalgTilingLoopType::Loops);
 
     // Apply tiling
-    FailureOr<linalg::TiledLinalgOp> tiledResult =
-        linalg::tileLinalgOp(rewriter, linalgOp, options);
+    FailureOr<linalg::TiledLinalgOp> tiled_result =
+        linalg::tileLinalgOp(rewriter, linalg_op, options);
 
-    if (failed(tiledResult)) {
-      linalgOp.emitError("Failed to tile linalg operation");
+    if (failed(tiled_result)) {
+      linalg_op.emitError("Failed to tile linalg operation");
       signalPassFailure();
       return;
     }
 
     // Replace original op with tiled version
-    rewriter.replaceOp(linalgOp, tiledResult->tensorResults);
+    rewriter.replaceOp(linalg_op, tiled_result->tensorResults);
+
+    // Find the innermost loop and create pipeline
+    if (!tiled_result->loops.empty()) {
+      auto innermost_loop = llvm::cast<scf::ForOp>(tiled_result->loops.back());
+      createPipeline(innermost_loop);
+    }
   }
+}
+
+void ConstructThreeStagePipelinePass::createPipeline(
+    scf::ForOp innermost_loop) {
+  LLVM_DEBUG(llvm::dbgs() << "Creating ktdf.pipeline with three stages\n");
+
+  OpBuilder builder(&getContext());
+
+  // Set insertion point at the beginning of the loop body
+  Block* loop_body = innermost_loop.getBody();
+  builder.setInsertionPointToStart(loop_body);
+
+  // Create ktdf.pipeline operation
+  auto pipeline_op =
+      mlir::ktdf::PipelineOp::create(builder, innermost_loop.getLoc());
+  Region& pipeline_region = pipeline_op.getRegion();
+  Block* pipeline_body = &pipeline_region.front();
+  builder.setInsertionPointToStart(pipeline_body);
+
+  // Create ktdf.private operation that yields three tokens
+  auto token_type = mlir::ktdf::TokenType::get(&getContext());
+  SmallVector<Type> private_result_types = {token_type, token_type, token_type};
+
+  auto private_op = mlir::ktdf::PrivateOp::create(
+      builder, innermost_loop.getLoc(), private_result_types);
+  Region& private_region = private_op.getRegion();
+  Block* private_body = builder.createBlock(&private_region);
+  builder.setInsertionPointToStart(private_body);
+
+  // Create three tokens inside ktdf.private
+  auto t1 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
+                                              token_type);
+  auto t2 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
+                                              token_type);
+  auto t3 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
+                                              token_type);
+
+  // Yield the three tokens
+  mlir::ktdf::PrivateYieldOp::create(
+      builder, innermost_loop.getLoc(),
+      ValueRange{t1.getResult(), t2.getResult(), t3.getResult()});
+
+  // Back to pipeline body to create stages
+  builder.setInsertionPointToEnd(pipeline_body);
+
+  // Create three stages with sequential dependencies
+  mlir::ktdf::StageOp::create(
+      builder, innermost_loop.getLoc(),
+      /*depends_in=*/ValueRange{},
+      /*depends_out=*/ValueRange{private_op.getResult(0)});
+
+  mlir::ktdf::StageOp::create(
+      builder, innermost_loop.getLoc(),
+      /*depends_in=*/ValueRange{private_op.getResult(0)},
+      /*depends_out=*/ValueRange{private_op.getResult(1)});
+
+  mlir::ktdf::StageOp::create(
+      builder, innermost_loop.getLoc(),
+      /*depends_in=*/ValueRange{private_op.getResult(1)},
+      /*depends_out=*/ValueRange{private_op.getResult(2)});
 }
 
 void ConstructThreeStagePipelinePass::runOnOperation() {
@@ -250,7 +319,7 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
     return;
   }
   llvm::dbgs() << module << "\n";
-  // Step 2: Lower linalg operations to scf.for loops
+  // Step 2: Lower linalg operations to scf.for loops and create pipeline
   lowerLinalgToLoops(module);
 }
 
