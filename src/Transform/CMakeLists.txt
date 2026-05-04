@@ -6,7 +6,6 @@ add_library(SchedulerTransforms
     ComputeGroupExtraction.cpp
     TileSCFForLoops.cpp
     StripMineSCFForLoops.cpp
-    PrintPipelineTree.cpp
     StageCoarsening.cpp
     PipelineTree/Legalizer.cpp
     PipelineTree/Materializer.cpp
