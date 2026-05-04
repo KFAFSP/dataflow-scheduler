@@ -88,15 +88,9 @@ void StageGroupingAnalysis::init(llvm::ArrayRef<mlir::ktdf::StageOp> stages) {
     groups_.push_back(group);
     group_id++;
   }
-}
-
-void StageGroupingAnalysis::analyze() {
   LLVM_DEBUG({
     llvm::dbgs() << "Stage grouping analysis complete\n";
     llvm::dbgs() << "  Total groups: " << groups_.size() << "\n";
-    llvm::dbgs() << "  Grouping based on:\n";
-    llvm::dbgs() << "    - Shared SFP register usage\n";
-    llvm::dbgs() << "    - Shared FIFO buffer access\n";
   });
 }
 

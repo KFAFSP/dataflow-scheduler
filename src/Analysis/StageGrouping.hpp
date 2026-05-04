@@ -74,9 +74,6 @@ class StageGroupingAnalysis {
   explicit StageGroupingAnalysis(mlir::ktdf::PipelineOp pipeline);
   explicit StageGroupingAnalysis(llvm::ArrayRef<mlir::ktdf::StageOp> stages);
 
-  /// Run the analysis to compute stage groups
-  void analyze();
-
   /// Get all stage groups
   const llvm::SmallVector<StageGroup>& getGroups() const { return groups_; }
 

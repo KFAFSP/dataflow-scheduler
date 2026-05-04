@@ -522,22 +522,25 @@ void StageCoarseningPass::GenerateTransformedIR(TransformCandidate& candidate,
   // Clear any previous materialization tracking
   node_to_materialized_op_.clear();
 
-  // Get the root pipeline node from the tree
-  PipelineTreeNode* root_pipeline =
+  // Get the outer pipeline node from the tree
+  PipelineTreeNode* outer_pipeline =
       tree.getNodeForOp(candidate.pipeline_.getOperation());
-  assert(root_pipeline && root_pipeline->isPipelineNode());
+  assert(outer_pipeline);
+  assert(outer_pipeline->isPipelineNode());
 
-  // Create a builder at the location of the original pipeline
-  mlir::OpBuilder builder(candidate.pipeline_);
+  // Create a builder at the location of the root (ie right before outermost
+  // loop in the original candidate loop nest)
+  Operation* root = candidate.loop_nest_.front();
+  mlir::OpBuilder builder(root);
 
   // Create an IRMapping to track value mappings during cloning
   mlir::IRMapping value_map;
 
   // Materialize the pipeline and its children
-  materializeTreeNode(root_pipeline, builder, value_map);
+  materializeTreeNode(outer_pipeline, builder, value_map);
 
-  // Erase the original pipeline operation
-  candidate.pipeline_.erase();
+  // Erase the original candidate loop nest
+  root->erase();
 
   LLVM_DEBUG(llvm::dbgs() << "  IR generation complete.\n");
 }
@@ -608,6 +611,11 @@ mlir::scf::ForOp StageCoarseningPass::materializeLoopNode(
   // Create the new loop with empty body
   auto new_loop = mlir::scf::ForOp::create(builder, template_for.getLoc(),
                                            lower_bound, upper_bound, step);
+
+  // Copy attributes from template loop to new loop
+  for (mlir::NamedAttribute attr : template_for->getAttrs()) {
+    new_loop->setAttr(attr.getName(), attr.getValue());
+  }
 
   // Map the induction variable
   value_map.map(template_for.getInductionVar(), new_loop.getInductionVar());
