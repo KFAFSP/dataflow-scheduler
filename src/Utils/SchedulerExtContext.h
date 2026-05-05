@@ -1,4 +1,4 @@
-//===----------------------------------------------------------------------===//
+//===-------------------------- SchedulerExtContext.h ---------------------===//
 //
 // IBM Confidential
 // (C) Copyright IBM Corp. 2026
@@ -11,6 +11,8 @@
 #define SCHEDULER_EXT_CONTEXT_H
 
 #include <cstdint>
+
+#include "mlir/IR/Attributes.h"
 
 namespace scheduler {
 
@@ -26,6 +28,12 @@ struct SchedulerExtContext {
 
   /// Returns the size of a stick in bytes (64 bytes for current architecture)
   uint64_t getStickSize() const;
+
+  /// Returns the memory space attribute for data transfers
+  /// @param component The component type
+  /// @return StringAttr with the memory space name (e.g., "SFP_REG")
+  mlir::StringAttr getTransferMemSpace(mlir::MLIRContext* context,
+                                       const char* component) const;
 };
 
 /// @brief Construct a DummySchedulerExtContext. In general prefer

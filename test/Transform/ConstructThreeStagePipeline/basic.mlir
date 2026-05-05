@@ -78,13 +78,13 @@ module {
         } : memref<96x64xf16>
         
         // Construct an access tile from the memory view of A
-        %A_access_tile = ktdp.construct_access_tile %A_view[%start_row, %c0] {
+        %A_access_tile = ktdp.construct_access_tile %A_view[%start_row+%i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = affine_map<(d0, d1) -> (d0, d1)>
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
 
         // Construct an access tile from the memory view of B
-        %B_access_tile = ktdp.construct_access_tile %B_view[%start_row, %c0] {
+        %B_access_tile = ktdp.construct_access_tile %B_view[%start_row+%i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = affine_map<(d0, d1) -> (d0, d1)>
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
@@ -101,7 +101,7 @@ module {
                     outs(%C_data_tile: tensor<1x64xf16>) -> tensor<1x64xf16>
 
         // Construct an access tile from the memory view of C
-        %C_access_tile = ktdp.construct_access_tile %C_view[%start_row, %c0] {
+        %C_access_tile = ktdp.construct_access_tile %C_view[%start_row+%i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = affine_map<(d0, d1) -> (d0, d1)>
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
