@@ -98,13 +98,6 @@ class PipelineTreeNode : public OperationTreeNode {
   Operation *getOperationOrTemplate() const {
     return isMaterialized() ? getOperation() : getTemplateOp();
   }
-
-  /// Mark this node as materialized with the given operation
-  void materialize(Operation *op) {
-    assert(op && "expect a valid operation for materialization");
-    operation_op_ = op;
-    materialized_ = true;
-  }
   
   virtual void print(raw_ostream &os) const override {
     printNodeHeader(os);
@@ -114,15 +107,15 @@ class PipelineTreeNode : public OperationTreeNode {
 
   /// Find the outermost loop visited as you traverse up the tree until the stop function returns true.
   /// Returns nullptr if no loop was visited during the traversal.
-  static PipelineTreeNode* findOutermostLoop(
-      PipelineTreeNode* start_node,
+  static const PipelineTreeNode* findOutermostLoop(
+      const PipelineTreeNode* start_node,
       std::function<bool(const PipelineTreeNode*)> stop);
 
   /// Find the innermost loop in a loop nest by walking down the first child chain.
   /// Stops when hitting a non-loop node or when there are no more children.
-  /// Returns nullptr if the input node is nullptr or not a loop. 
+  /// Returns nullptr if the input node is nullptr or not a loop.
   /// Otherwise returns \p start_node if no other inner loop is found.
-  static PipelineTreeNode* findInnermostLoop(PipelineTreeNode* start_node);
+  static const PipelineTreeNode* findInnermostLoop(const PipelineTreeNode* start_node);
 
  protected:
   /// Helper method to print common node information (indentation, name, materialization status, location)

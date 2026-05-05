@@ -190,33 +190,33 @@ void PipelineTree::compute(Operation& unit) {
 // PipelineTreeNode Helper Methods
 //===----------------------------------------------------------------------===//
 
-PipelineTreeNode* PipelineTreeNode::findOutermostLoop(
-    PipelineTreeNode* start_node,
+const PipelineTreeNode* PipelineTreeNode::findOutermostLoop(
+    const PipelineTreeNode* start_node,
     std::function<bool(const PipelineTreeNode*)> stop) {
   if (!start_node) return nullptr;
 
-  PipelineTreeNode* outermost_loop = nullptr;
-  PipelineTreeNode* current = start_node;
+  const PipelineTreeNode* outermost_loop = nullptr;
+  const PipelineTreeNode* current = start_node;
 
   while (current && !stop(current)) {
     if (current->isLoopNode()) {
       outermost_loop = current;
     }
-    current = static_cast<PipelineTreeNode*>(current->getParentNode());
+    current = static_cast<const PipelineTreeNode*>(current->getParentNode());
   }
 
   return outermost_loop;
 }
 
-PipelineTreeNode* PipelineTreeNode::findInnermostLoop(
-    PipelineTreeNode* start_node) {
+const PipelineTreeNode* PipelineTreeNode::findInnermostLoop(
+    const PipelineTreeNode* start_node) {
   if (!start_node || !start_node->isLoopNode()) return nullptr;
 
-  PipelineTreeNode* innermost_loop = start_node;
+  const PipelineTreeNode* innermost_loop = start_node;
 
   while (true) {
-    PipelineTreeNode* child =
-        static_cast<PipelineTreeNode*>(innermost_loop->getFirstChild());
+    const PipelineTreeNode* child =
+        static_cast<const PipelineTreeNode*>(innermost_loop->getFirstChild());
     if (!child || !child->isLoopNode()) break;
 
     innermost_loop = child;

@@ -29,7 +29,7 @@
 namespace scheduler {
 
 mlir::Operation* PipelineTreeMaterializer::materialize(
-    PipelineTreeNode& root_node, mlir::OpBuilder& builder,
+    const PipelineTreeNode& root_node, mlir::OpBuilder& builder,
     mlir::IRMapping& value_map) {
   // Clear any previous materialization state
   node_to_materialized_op_.clear();
@@ -42,23 +42,23 @@ mlir::Operation* PipelineTreeMaterializer::materialize(
 }
 
 mlir::Operation* PipelineTreeMaterializer::getMaterializedOp(
-    PipelineTreeNode& node) const {
+    const PipelineTreeNode& node) const {
   auto it = node_to_materialized_op_.find(&node);
   return it != node_to_materialized_op_.end() ? it->second : nullptr;
 }
 
-void PipelineTreeMaterializer::materializeTreeNode(PipelineTreeNode& node,
+void PipelineTreeMaterializer::materializeTreeNode(const PipelineTreeNode& node,
                                                    mlir::OpBuilder& builder,
                                                    mlir::IRMapping& value_map) {
   // Handle different node types
   if (node.isLoopNode()) {
-    auto& loop_node = static_cast<LoopNode&>(node);
+    const auto& loop_node = static_cast<const LoopNode&>(node);
     materializeLoopNode(loop_node, builder, value_map);
   } else if (node.isStageNode()) {
-    auto& stage_node = static_cast<StageNode&>(node);
+    const auto& stage_node = static_cast<const StageNode&>(node);
     materializeStageNode(stage_node, builder, value_map);
   } else if (node.isPipelineNode()) {
-    auto& pipeline_node = static_cast<PipelineNode&>(node);
+    const auto& pipeline_node = static_cast<const PipelineNode&>(node);
     materializePipelineNode(pipeline_node, builder, value_map);
   } else if (node.isPrivateNode()) {
     // FIXME: For now, we clone the entire private clause into the parent
@@ -66,7 +66,7 @@ void PipelineTreeMaterializer::materializeTreeNode(PipelineTreeNode& node,
     // all stages. In the future, we should properly handle buffer privatization
     // for nested pipelines by moving relevant allocations to the nested
     // pipeline's private clause.
-    auto& private_node = static_cast<PrivateNode&>(node);
+    const auto& private_node = static_cast<const PrivateNode&>(node);
     mlir::Operation* orig_private_op = private_node.getOperation();
     assert(orig_private_op && "Private node must have an operation");
 
@@ -83,11 +83,11 @@ void PipelineTreeMaterializer::materializeTreeNode(PipelineTreeNode& node,
 }
 
 void PipelineTreeMaterializer::materializeChildren(
-    PipelineTreeNode& parent_node, mlir::OpBuilder& builder,
+    const PipelineTreeNode& parent_node, mlir::OpBuilder& builder,
     mlir::IRMapping& value_map) {
   OperationTreeNode* child = parent_node.getFirstChild();
   while (child) {
-    materializeTreeNode(static_cast<PipelineTreeNode&>(*child), builder,
+    materializeTreeNode(static_cast<const PipelineTreeNode&>(*child), builder,
                         value_map);
     child = child->getNextSibling();
   }
@@ -103,7 +103,8 @@ void PipelineTreeMaterializer::cloneStageBody(mlir::ktdf::StageOp orig_stage,
 }
 
 mlir::scf::ForOp PipelineTreeMaterializer::materializeLoopNode(
-    LoopNode& loop_node, mlir::OpBuilder& builder, mlir::IRMapping& value_map) {
+    const LoopNode& loop_node, mlir::OpBuilder& builder,
+    mlir::IRMapping& value_map) {
   // Get the template operation to copy loop bounds from
   mlir::Operation* template_op = loop_node.getOperationOrTemplate();
 
@@ -142,7 +143,7 @@ mlir::scf::ForOp PipelineTreeMaterializer::materializeLoopNode(
 }
 
 mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
-    StageNode& stage_node, mlir::OpBuilder& builder,
+    const StageNode& stage_node, mlir::OpBuilder& builder,
     mlir::IRMapping& value_map) {
   // Get the original stage operation (or template for unmaterialized stages)
   mlir::Operation* orig_stage_op = stage_node.getOperationOrTemplate();
@@ -183,10 +184,10 @@ mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
                  << "    Cloning stage body into innermost loop\n");
 
       // Find the innermost loop node
-      PipelineTreeNode* first_loop =
-          static_cast<PipelineTreeNode*>(first_child);
+      const PipelineTreeNode* first_loop =
+          static_cast<const PipelineTreeNode*>(first_child);
       assert(first_loop->isLoopNode() && "First child should be a loop");
-      PipelineTreeNode* innermost_loop_node =
+      const PipelineTreeNode* innermost_loop_node =
           PipelineTreeNode::findInnermostLoop(first_loop);
       assert(innermost_loop_node);
 
@@ -217,7 +218,7 @@ mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
 }
 
 mlir::ktdf::PipelineOp PipelineTreeMaterializer::materializePipelineNode(
-    PipelineNode& pipeline_node, mlir::OpBuilder& builder,
+    const PipelineNode& pipeline_node, mlir::OpBuilder& builder,
     mlir::IRMapping& value_map) {
   // Get the original or template pipeline operation
   mlir::Operation* template_op = pipeline_node.getOperationOrTemplate();

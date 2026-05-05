@@ -419,19 +419,23 @@ void StageCoarseningPass::SinkIntoSingleStage(
            "Stage's parent should be a loop node now");
 
     // Find the outermost loop in the nest by walking up to the pipeline
-    PipelineTreeNode* outermost_loop = PipelineTreeNode::findOutermostLoop(
-        innermost_loop_pipeline,
-        [](const PipelineTreeNode* node) { return node->isPipelineNode(); });
+    const PipelineTreeNode* outermost_loop =
+        PipelineTreeNode::findOutermostLoop(innermost_loop_pipeline,
+                                            [](const PipelineTreeNode* node) {
+                                              return node->isPipelineNode();
+                                            });
     assert(outermost_loop && "Expected to find an outermost loop");
 
     LLVM_DEBUG(llvm::dbgs() << "    Sinking loop nest into stage\n");
 
     // Sink the loop nest into the stage:
-    assert(outermost_loop->getParentNode() == pipeline_node);
-    OperationTreeNode* insert = outermost_loop->getPrevSibling();
-    outermost_loop->unlink();
+    PipelineTreeNode* mutable_outermost =
+        const_cast<PipelineTreeNode*>(outermost_loop);
+    assert(mutable_outermost->getParentNode() == pipeline_node);
+    OperationTreeNode* insert = mutable_outermost->getPrevSibling();
+    mutable_outermost->unlink();
     stage_node->unlink();
-    stage_node->insertChildNode(outermost_loop);
+    stage_node->insertChildNode(mutable_outermost);
     pipeline_node->insertChildNode(stage_node, insert);
 
     LLVM_DEBUG(llvm::dbgs() << "    Successfully sank loop nest into stage\n");

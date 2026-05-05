@@ -41,37 +41,37 @@ class PipelineTreeMaterializer {
 
   /// Materialize the entire tree starting from the given node
   /// Returns the root operation created
-  mlir::Operation* materialize(PipelineTreeNode& root_node,
+  mlir::Operation* materialize(const PipelineTreeNode& root_node,
                                mlir::OpBuilder& builder,
                                mlir::IRMapping& value_map);
 
   /// Get the materialized operation for a given tree node
   /// Returns nullptr if the node hasn't been materialized yet
-  mlir::Operation* getMaterializedOp(PipelineTreeNode& node) const;
+  mlir::Operation* getMaterializedOp(const PipelineTreeNode& node) const;
 
  private:
   /// Materialize a loop node by creating an scf.for operation
-  mlir::scf::ForOp materializeLoopNode(LoopNode& loop_node,
+  mlir::scf::ForOp materializeLoopNode(const LoopNode& loop_node,
                                        mlir::OpBuilder& builder,
                                        mlir::IRMapping& value_map);
 
   /// Materialize a stage node by creating a ktdf.stage operation
-  mlir::ktdf::StageOp materializeStageNode(StageNode& stage_node,
+  mlir::ktdf::StageOp materializeStageNode(const StageNode& stage_node,
                                            mlir::OpBuilder& builder,
                                            mlir::IRMapping& value_map);
 
   /// Materialize a pipeline node by creating a ktdf.pipeline operation
-  mlir::ktdf::PipelineOp materializePipelineNode(PipelineNode& pipeline_node,
+  mlir::ktdf::PipelineOp materializePipelineNode(const PipelineNode& pipeline_node,
                                                  mlir::OpBuilder& builder,
                                                  mlir::IRMapping& value_map);
 
   /// Recursively materialize a tree node and its children
-  void materializeTreeNode(PipelineTreeNode& node,
+  void materializeTreeNode(const PipelineTreeNode& node,
                           mlir::OpBuilder& builder,
                           mlir::IRMapping& value_map);
 
   /// Helper to materialize all children of a node
-  void materializeChildren(PipelineTreeNode& parent_node,
+  void materializeChildren(const PipelineTreeNode& parent_node,
                           mlir::OpBuilder& builder,
                           mlir::IRMapping& value_map);
 
@@ -81,7 +81,7 @@ class PipelineTreeMaterializer {
                      mlir::IRMapping& value_map);
 
   /// Tracking map from tree nodes to their materialized operations
-  llvm::DenseMap<PipelineTreeNode*, mlir::Operation*> node_to_materialized_op_;
+  llvm::DenseMap<const PipelineTreeNode*, mlir::Operation*> node_to_materialized_op_;
 };
 
 }  // namespace scheduler
