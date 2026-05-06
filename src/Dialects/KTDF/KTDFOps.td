@@ -140,6 +140,57 @@ def KTDF_FifoAllocateOp : KTDF_Op<"fifo.allocate", [Pure]> {
   }];
 }
 
+def KTDF_ReadFromFifoOp : KTDF_Op<"read_from_fifo", [Pure]> {
+  let summary = "Read data from a FIFO slot into a tensor";
+  let description = [{
+    The `ktdf.read_from_fifo` operation reads data from a FIFO slot and returns
+    it as a tensor. This operation is used to consume data that has been written
+    to a FIFO slot by a previous stage in the dataflow pipeline.
+
+    The operation takes a FIFO slot as input and produces a tensor with the same
+    element type as the FIFO slot. The shape of the resulting tensor is determined
+    by the number of elements in the FIFO slot.
+
+    Example:
+    ```mlir
+    // Read from a FIFO slot with 64 f16 elements
+    %slot = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+    %data = ktdf.read_from_fifo %slot : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16> -> tensor<64xf16>
+    
+    // Read from a FIFO slot with dynamic size
+    %size = arith.constant 8 : index
+    %dyn_slot = ktdf.fifo.allocate(%size) -> !ktdf.fifo.slot<"sfp-to-lxsu", ?xf16>
+    %dyn_data = ktdf.read_from_fifo %dyn_slot : !ktdf.fifo.slot<"sfp-to-lxsu", ?xf16> -> tensor<?xf16>
+    ```
+  }];
+
+  let arguments = (ins
+    KTDF_FifoSlotType:$fifo_slot
+  );
+
+  let results = (outs
+    AnyTensor:$result
+  );
+
+  let assemblyFormat = [{
+    $fifo_slot attr-dict `:` type($fifo_slot) `->` type($result)
+  }];
+
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    /// Returns the element type of the FIFO slot
+    Type getFifoElementType() {
+      return llvm::cast<FifoSlotType>(getFifoSlot().getType()).getElementType();
+    }
+    
+    /// Returns the number of elements in the FIFO slot
+    int64_t getFifoNumElements() {
+      return llvm::cast<FifoSlotType>(getFifoSlot().getType()).getNumElements();
+    }
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Token Operations
 //===----------------------------------------------------------------------===//
