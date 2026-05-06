@@ -309,7 +309,7 @@ void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
   LLVM_DEBUG(
       llvm::dbgs() << "Lowering linalg.generic operations to SCF loops\n");
 
-  // Collect ktdp load/store operations BEFORE any transformations
+  // Collect ktdp load/store operations before any transformations
   module.walk([&](Operation* op) {
     if (auto load_op = dyn_cast<ktdp::LoadOp>(op)) {
       load_ops_.push_back(load_op);
@@ -336,7 +336,7 @@ void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
 
     rewriter.setInsertionPoint(linalg_op);
 
-    // Determine tile sizes from output operand shape (needed for pipeline
+    // Determine tile sizes from output operand shape (needed for loop
     // creation)
     SmallVector<int64_t> tile_sizes = determineTileSizes(linalg_op);
 
@@ -365,8 +365,8 @@ void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
       return;
     }
 
-    // Erase the original linalg operation (it has no results since we're
-    // bufferized)
+    // Erase the original linalg operation. It has been replaced by a loop nest
+    // containing vectorized linalg operation.
     rewriter.eraseOp(linalg_op);
 
     LLVM_DEBUG(llvm::dbgs() << "  Successfully tiled linalg operation\n");
@@ -382,7 +382,7 @@ void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
 
   LLVM_DEBUG(llvm::dbgs() << "After pipeline created: \n" << module << "\n\n");
 
-  // Replace access tiles with reinterpret_cast AFTER pipeline creation
+  // Replace access tiles with reinterpret_cast after pipeline creation
   replaceAccessTilesWithReinterpretCast(module);
 
   // Cleanup operations (removes original load/store/compute ops)
@@ -482,9 +482,9 @@ void ConstructThreeStagePipelinePass::createPipeline(
   }
 
   // Last 3 results are tokens for the 3 stages
-  private_result_types.push_back(token_type);  // Stage 1 token
-  private_result_types.push_back(token_type);  // Stage 2 token
-  private_result_types.push_back(token_type);  // Stage 3 token
+  private_result_types.push_back(token_type);
+  private_result_types.push_back(token_type);
+  private_result_types.push_back(token_type);
 
   auto private_op = mlir::ktdf::PrivateOp::create(
       builder, innermost_loop.getLoc(), private_result_types);
@@ -492,7 +492,7 @@ void ConstructThreeStagePipelinePass::createPipeline(
   Block* private_body = builder.createBlock(&private_region);
   builder.setInsertionPointToStart(private_body);
 
-  // Create memref.alloc for each load and store operation FIRST
+  // Create memref.alloc for each load and store operation first
   SmallVector<Value> alloc_results;
   for (auto memref_type : alloc_types) {
     auto alloc_op =
@@ -500,7 +500,7 @@ void ConstructThreeStagePipelinePass::createPipeline(
     alloc_results.push_back(alloc_op.getResult());
   }
 
-  // Create three tokens inside ktdf.private AFTER allocs
+  // Create three tokens inside ktdf.private after allocs
   auto t1 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
                                               token_type);
   auto t2 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
@@ -513,17 +513,13 @@ void ConstructThreeStagePipelinePass::createPipeline(
   alloc_results.push_back(t2.getResult());
   alloc_results.push_back(t3.getResult());
 
-  // Yield allocated memrefs and then the three tokens
   mlir::ktdf::PrivateYieldOp::create(builder, innermost_loop.getLoc(),
                                      alloc_results);
-
-  // Back to pipeline body to create stages
-  builder.setInsertionPointToEnd(pipeline_body);
-
   // Tokens are at the end: memref_count + 0, memref_count + 1, memref_count + 2
   size_t memref_count = load_ops_.size() + store_ops_.size();
 
   // Create three stages with sequential dependencies
+  builder.setInsertionPointToEnd(pipeline_body);
   auto stage1 = mlir::ktdf::StageOp::create(
       builder, innermost_loop.getLoc(),
       /*depends_in=*/ValueRange{},
@@ -537,9 +533,7 @@ void ConstructThreeStagePipelinePass::createPipeline(
                       memref_shape,
                       /*is_load=*/true, /*private_result_offset=*/0);
 
-  // Back to pipeline body for stage 2
   builder.setInsertionPointToEnd(pipeline_body);
-
   auto stage2 = mlir::ktdf::StageOp::create(
       builder, innermost_loop.getLoc(),
       /*depends_in=*/ValueRange{private_op.getResult(memref_count + 0)},
@@ -551,9 +545,7 @@ void ConstructThreeStagePipelinePass::createPipeline(
   builder.setInsertionPointToStart(stage2_body);
   createComputeOps(builder, innermost_loop.getLoc(), private_op);
 
-  // Back to pipeline body for stage 3
   builder.setInsertionPointToEnd(pipeline_body);
-
   auto stage3 = mlir::ktdf::StageOp::create(
       builder, innermost_loop.getLoc(),
       /*depends_in=*/ValueRange{private_op.getResult(memref_count + 1)},
@@ -578,7 +570,6 @@ void ConstructThreeStagePipelinePass::deleteOpAndUnusedAncestors(
   // Check each operand's defining op
   for (auto operand : operands) {
     if (auto* def_op = operand.getDefiningOp()) {
-      // Check if this operation has no uses
       bool has_uses = false;
       for (auto result : def_op->getResults()) {
         if (!result.use_empty()) {
@@ -586,12 +577,7 @@ void ConstructThreeStagePipelinePass::deleteOpAndUnusedAncestors(
           break;
         }
       }
-
-      if (def_op->use_empty()) {
-        LLVM_DEBUG(llvm::dbgs() << "  Deleting unused ancestor: "
-                                << def_op->getName() << "\n");
-        deleteOpAndUnusedAncestors(def_op);
-      }
+      if (def_op->use_empty()) deleteOpAndUnusedAncestors(def_op);
     }
   }
 }
@@ -628,7 +614,6 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
                  << " data transfers with " << loop_ivs.size() << " loop IVs\n";
   });
 
-  // Create constant 0 for private memref index (reuse from function start)
   auto c0 = arith::ConstantIndexOp::create(*const_builder_, loc, 0);
 
   // Get the appropriate operation list
@@ -637,8 +622,6 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
   // Create data_transfer for each operation
   for (size_t i = 0; i < op_count; ++i) {
     // Get the access_tile value (operand of load/store op)
-    // Note: This may be either an AccessTileType or a MemRefType depending on
-    // whether replaceAccessTilesWithReinterpretCast has been called
     Value access_tile_value;
 
     if (is_load) {
@@ -764,9 +747,6 @@ void ConstructThreeStagePipelinePass::createComputeOps(
       if (auto to_memref = dyn_cast<bufferization::ToBufferOp>(user)) {
         value_map[to_memref.getResult()] = private_op.getResult(i);
         found = true;
-        LLVM_DEBUG(llvm::dbgs()
-                   << "  Mapped load " << i << " to private#" << i << "\n");
-        break;
       }
     }
     assert(found &&

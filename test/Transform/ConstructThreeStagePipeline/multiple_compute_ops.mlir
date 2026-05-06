@@ -128,7 +128,7 @@ module {
                     outs(%C_data_tile: tensor<1x64xf16>) -> tensor<1x64xf16>
 
         %result_2 = linalg.add ins(%D_data_tile, %result : tensor<1x64xf16>, tensor<1x64xf16>)
-                    outs(%D_data_tile: tensor<1x64xf16>) -> tensor<1x64xf16>
+                    outs(%E_data_tile: tensor<1x64xf16>) -> tensor<1x64xf16>
 
         // Construct an access tile from the memory view of E
         %E_access_tile = ktdp.construct_access_tile %E_view[%start_row+%i, %c0] {
