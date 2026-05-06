@@ -182,16 +182,21 @@ LogicalResult ConstructThreeStagePipelinePass::generalizeLinalgOps(
 LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(ModuleOp module) {
   LLVM_DEBUG(llvm::dbgs() << "Fusing consecutive linalg.generic operations\n");
 
-  SmallVector<linalg::GenericOp> generic_ops;
+  // Use a worklist to process operations
+  SmallVector<linalg::GenericOp> worklist;
   module.walk(
-      [&](linalg::GenericOp generic_op) { generic_ops.push_back(generic_op); });
+      [&](linalg::GenericOp generic_op) { worklist.push_back(generic_op); });
 
-  LLVM_DEBUG(llvm::dbgs() << "Found " << generic_ops.size()
+  LLVM_DEBUG(llvm::dbgs() << "Found " << worklist.size()
                           << " linalg.generic operations\n");
 
   IRRewriter rewriter(&getContext());
-  for (auto consumer : generic_ops) {
+
+  while (!worklist.empty()) {
+    auto consumer = worklist.pop_back_val();
+
     // Try to fuse producers into this consumer
+    bool fused = false;
     for (auto* operand : consumer.getDpsInputOperands()) {
       Value input = operand->get();
       auto producer = input.getDefiningOp<linalg::GenericOp>();
@@ -199,11 +204,30 @@ LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(ModuleOp module) {
       if (!producer) continue;
 
       rewriter.setInsertionPoint(consumer);
-      FailureOr<linalg::FusionInfo> fusion_result =
-          linalg::fuseProducerOfTensor(rewriter, *operand);
+      FailureOr<linalg::ElementwiseOpFusionResult> fusion_result =
+          linalg::fuseElementwiseOps(rewriter, operand);
 
       if (succeeded(fusion_result)) {
         LLVM_DEBUG(llvm::dbgs() << "  Successfully fused operations\n");
+
+        // Get the fused operation
+        auto fused_op = cast<linalg::GenericOp>(fusion_result->fusedOp);
+
+        // Replace uses of consumer with the fused operation (this also erases
+        // consumer)
+        rewriter.replaceOp(consumer, fused_op->getResults());
+
+        // Erase the original producer operation
+        rewriter.eraseOp(producer);
+
+        // Remove producer from worklist if present
+        llvm::erase(worklist, producer);
+
+        // Add the fused operation to the worklist for further fusion
+        worklist.push_back(fused_op);
+
+        fused = true;
+        break;  // Process the fused op in the next iteration
       }
     }
   }
