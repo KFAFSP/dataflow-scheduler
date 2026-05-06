@@ -99,6 +99,11 @@ struct StageCoarseningPass
                                      PipelineTree& tree,
                                      const StageGroupingAnalysis& grouping);
 
+  /// Perform buffer expansion analysis and record expansion information
+  void PerformBufferExpansion(TransformCandidate& candidate,
+                             PipelineTree& tree,
+                             const StageGroupingAnalysis& grouping);
+
   //===--------------------------------------------------------------------===//
   // Sink into Stage Groups Containing a Single Stage
   //===--------------------------------------------------------------------===//
@@ -370,7 +375,30 @@ void StageCoarseningPass::DistributeAndSinkIntoPipeline(
     tree.deleteNode(loop_node);
   }
 
+  PerformBufferExpansion(candidate, tree, grouping);
+
   LLVM_DEBUG(llvm::dbgs() << "\n  Loop distribution complete.\n");
+}
+
+void StageCoarseningPass::PerformBufferExpansion(
+    TransformCandidate& candidate, PipelineTree& tree,
+    const StageGroupingAnalysis& grouping) {
+  // Expand buffers to make loop distribution legal.
+  // Identify which buffers are candidate for expansion as follows:
+  // 1. Use the result of the stage grouping analysis and look for common memrefs across groups of stages. Consider a memref as candidate for expansion if it is ever written to in any of the stages under this pipeline.
+  // 2. Further check to see if the candidate is allocated in the private region of the parent pipeline, otherwise ignore it.
+  // 3. Collect the loop variables on which the candidate memref has dependency...only collect loops that are in the nest of candidates being distributed.
+  // Determine how to expand the buffers (ie what dimensions to add, what sizes, etc) and record relevant information
+  // 1. Expand the memref only in dimensions corresponding to the loop's collected (ie do not expand in dimensions that are loop invariant)... also check if the memref already contains those dims assert/skip them.  
+  // 2: Expand the memref in dims to the left of its current buffer and in the same order as the candidate loop nest.
+  // Use the information recorded above to realize the changes in IR. This could be done in several ways:
+  // a. One way may be to apply these changes as we clone IRs in GenerateTransformedIR()
+  // b. record the relevant information in the PipelineTree and use that in the Materializer when materializing into IR
+  // c. perform the materialization as we do today, but keep track of which new (cloned) operands/memrefs correspond to the recorded memrefs and do a post processing to replace them post-materialization.
+
+    LLVM_DEBUG(llvm::dbgs()
+               << "    TODO: Buffer expansion not yet implemented\n");
+
 }
 
 void StageCoarseningPass::SinkIntoSingleStage(
@@ -439,16 +467,6 @@ void StageCoarseningPass::SinkIntoSingleStage(
     pipeline_node->insertChildNode(stage_node, insert);
 
     LLVM_DEBUG(llvm::dbgs() << "    Successfully sank loop nest into stage\n");
-
-    // TODO: Expand LX buffers from 1D to tile-sized
-    // This requires:
-    // 1. Identifying which buffers in the private region are used by this
-    // stage
-    // 2. Determining the tile size from the loop bounds
-    // 3. Marking these buffers as "expanded" in the PrivateNode
-    // 4. Recording which data transfers and operations need to be updated
-    LLVM_DEBUG(llvm::dbgs()
-               << "    TODO: Buffer expansion not yet implemented\n");
   }
 
   LLVM_DEBUG(llvm::dbgs() << "  Sinking into single-stage groups complete.\n");
@@ -503,8 +521,9 @@ void StageCoarseningPass::GenerateTransformedIR(TransformCandidate& candidate,
   mlir::IRMapping value_map;
 
   // Use the materializer to generate IR from the tree
-  scheduler::PipelineTreeMaterializer materializer;
-  materializer.materialize(*outer_pipeline, builder, value_map);
+  // TODO: Pass buffer handler when buffer expansion is implemented
+  scheduler::PipelineTreeMaterializer materializer(builder, value_map, nullptr);
+  materializer.materialize(*outer_pipeline);
 
   // Erase the original candidate loop nest
   root->erase();
