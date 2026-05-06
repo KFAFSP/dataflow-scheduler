@@ -567,6 +567,54 @@ LogicalResult ReadFromFifoOp::verify() {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// WriteToFifoOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult WriteToFifoOp::verify() {
+  auto fifo_slot_type = llvm::cast<FifoSlotType>(getFifoSlot().getType());
+  auto data_type = llvm::dyn_cast<RankedTensorType>(getData().getType());
+
+  if (!data_type) {
+    return emitOpError("data operand must be a ranked tensor type");
+  }
+
+  // Verify element types match
+  if (fifo_slot_type.getElementType() != data_type.getElementType()) {
+    return emitOpError("data tensor element type (")
+           << data_type.getElementType()
+           << ") must match FIFO slot element type ("
+           << fifo_slot_type.getElementType() << ")";
+  }
+
+  // Verify rank is 1 (FIFO slots are 1D)
+  if (data_type.getRank() != 1) {
+    return emitOpError("data tensor must be rank 1, got rank ")
+           << data_type.getRank();
+  }
+
+  // Verify shape matches FIFO slot size
+  int64_t fifo_num_elements = fifo_slot_type.getNumElements();
+  int64_t tensor_dim = data_type.getDimSize(0);
+
+  // Both must be dynamic or both must be static with matching values
+  bool fifo_dynamic = ShapedType::isDynamic(fifo_num_elements);
+  bool tensor_dynamic = ShapedType::isDynamic(tensor_dim);
+
+  if (fifo_dynamic != tensor_dynamic) {
+    return emitOpError(
+        "FIFO slot and data tensor must both be dynamic or both be static");
+  }
+
+  if (!fifo_dynamic && fifo_num_elements != tensor_dim) {
+    return emitOpError("data tensor dimension (")
+           << tensor_dim << ") must match FIFO slot size (" << fifo_num_elements
+           << ")";
+  }
+
+  return success();
+}
+
 // Build with mixed static/dynamic sizes (OpFoldResult can be either Attribute
 // or Value)
 void DataTransferOp::build(OpBuilder& builder, OperationState& result,

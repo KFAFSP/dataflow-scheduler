@@ -191,6 +191,55 @@ def KTDF_ReadFromFifoOp : KTDF_Op<"read_from_fifo", [Pure]> {
   }];
 }
 
+def KTDF_WriteToFifoOp : KTDF_Op<"write_to_fifo"> {
+  let summary = "Write data from a tensor to a FIFO slot";
+  let description = [{
+    The `ktdf.write_to_fifo` operation writes data from a tensor to a FIFO slot.
+    This operation is used to produce data that will be consumed by a subsequent
+    stage in the dataflow pipeline.
+
+    The operation takes a tensor and a FIFO slot as inputs. The tensor's element
+    type and shape must match the FIFO slot's element type and capacity.
+
+    Example:
+    ```mlir
+    // Write to a FIFO slot with 64 f16 elements
+    %data = arith.constant dense<1.0> : tensor<64xf16>
+    %slot = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+    ktdf.write_to_fifo %data, %slot : tensor<64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+    
+    // Write to a FIFO slot with dynamic size
+    %size = arith.constant 8 : index
+    %dyn_data = tensor.empty(%size) : tensor<?xf16>
+    %dyn_slot = ktdf.fifo.allocate(%size) -> !ktdf.fifo.slot<"sfp-to-lxsu", ?xf16>
+    ktdf.write_to_fifo %dyn_data, %dyn_slot : tensor<?xf16>, !ktdf.fifo.slot<"sfp-to-lxsu", ?xf16>
+    ```
+  }];
+
+  let arguments = (ins
+    AnyTensor:$data,
+    KTDF_FifoSlotType:$fifo_slot
+  );
+
+  let assemblyFormat = [{
+    $data `,` $fifo_slot attr-dict `:` type($data) `,` type($fifo_slot)
+  }];
+
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    /// Returns the element type of the FIFO slot
+    Type getFifoElementType() {
+      return llvm::cast<FifoSlotType>(getFifoSlot().getType()).getElementType();
+    }
+    
+    /// Returns the number of elements in the FIFO slot
+    int64_t getFifoNumElements() {
+      return llvm::cast<FifoSlotType>(getFifoSlot().getType()).getNumElements();
+    }
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Token Operations
 //===----------------------------------------------------------------------===//
