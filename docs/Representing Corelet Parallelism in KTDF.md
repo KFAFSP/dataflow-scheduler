@@ -236,9 +236,11 @@ module {
 
 Each of Stage 0, Stage 5, and Stage 4 carries its own `(m, n)` parallel loop nest. Stage 5's nest wraps the nested pipeline that runs Stages 1–3. Every one of these nests is a candidate for corelet parallelization, but the IR as written says nothing about how iterations are distributed — it would execute sequentially on a single corelet as written.
 
-### 7.2 After: the same IR with `ktdf.parallel` applied
+### 7.2 After: `ktdf.parallel` applied to Stage 5 only
 
-The parallelization pass walks each stage, finds the parallel loop nest inside, and rewrites it as a `ktdf.parallel` with `num_instances = 2` and a `block_size` chosen to balance. Here the `m` dimension has 32 iterations and `n` has 1, so the total iteration space has 32 iterations — evenly divisible by 2 with `block_size = 16`. Corelet 0 runs iterations `m ∈ [0, 16)`, corelet 1 runs `m ∈ [16, 32)`. The nested pipeline inside Stage 5 is not itself parallelized (its stages are sequential within one corelet); the parallelism lives in the `m` loop that wraps it.
+The parallelization pass applies `ktdf.parallel` selectively. Stage 5 — the coarsened compute stage — is the one stage whose work naturally replicates across corelets: each corelet has its own LXLU, SFP, and LXSU, and its own SFP_REG file, so splitting the compute iteration space between the two corelets directly exercises hardware that would otherwise sit idle. Stage 0 and Stage 4 are different in character. They drive HBM-facing memory engines (conceptually one set shared by the two corelets of a core) and they produce or consume LX buffers that Stage 5 reads or writes as a whole. Replicating Stage 0 or Stage 4 across corelets would either duplicate HBM traffic or partition the LX staging in ways the outer pipeline's token flow isn't set up to coordinate. For this kernel we want those two stages to run once per tile iteration on a single-instance schedule, and only Stage 5 to fan out to both corelets.
+
+So the pass leaves Stage 0 and Stage 4 as they were — plain parallel loop nests with `loop_type = parallel_loop` — and rewrites only Stage 5's nest as a `ktdf.parallel`. With `m ∈ [0, 32)` and `n ∈ [0, 1)` as the parallel dimensions inside Stage 5, the total iteration space is 32, evenly divisible by 2, so `block_size = 16` gives corelet 0 iterations `m ∈ [0, 16)` and corelet 1 iterations `m ∈ [16, 32)`.
 
 ```mlir
 module {
@@ -253,19 +255,20 @@ module {
       %res_lx_A, %res_lx_B, %res_lx_C,
       %res_t1, %res_t5, %res_t6 = ktdf.private -> ( ... ) { ... }
 
-      // Stage 0 — HBM -> LX, distributed across 2 corelets
+      // Stage 0 — HBM -> LX (unchanged; single-instance schedule)
       ktdf.stage depends_in(none) depends_out(%res_t1 : !ktdf.token) {
-        ktdf.parallel (%m, %n) = (%c0, %c0) to (%c32, %c64) step (%c1, %c64)
-                                 distribute(num_instances = 2, block_size = 16) {
-          ktdf.data_transfer from %A[%m, %n] size [1, 64]
-                             to %res_lx_A[%c0] size [64]
-            : memref<32x64xf16, ..., #ktdf.memory_space<HBM>>,
-              memref<64xf16,   #ktdf.memory_space<LX>>
-          ktdf.data_transfer from %B[%m, %n] size [1, 64]
-                             to %res_lx_B[%c0] size [64]
-            : memref<32x64xf16, ..., #ktdf.memory_space<HBM>>,
-              memref<64xf16,   #ktdf.memory_space<LX>>
-        }
+        scf.for %m = %c0 to %c32 step %c1 {
+          scf.for %n = %c0 to %c64 step %c64 {
+            ktdf.data_transfer from %A[%m, %n] size [1, 64]
+                               to %res_lx_A[%c0] size [64]
+              : memref<32x64xf16, ..., #ktdf.memory_space<HBM>>,
+                memref<64xf16,   #ktdf.memory_space<LX>>
+            ktdf.data_transfer from %B[%m, %n] size [1, 64]
+                               to %res_lx_B[%c0] size [64]
+              : memref<32x64xf16, ..., #ktdf.memory_space<HBM>>,
+                memref<64xf16,   #ktdf.memory_space<LX>>
+          } {loop_type = #ktdf.loop_type<parallel_loop>}
+        } {loop_type = #ktdf.loop_type<parallel_loop>}
       }
 
       // Stage 5 — coarsened compute, distributed across 2 corelets
@@ -309,15 +312,16 @@ module {
         }
       }
 
-      // Stage 4 — LX -> HBM, distributed across 2 corelets
+      // Stage 4 — LX -> HBM (unchanged; single-instance schedule)
       ktdf.stage depends_in(%res_t5 : !ktdf.token) depends_out(none) {
-        ktdf.parallel (%m, %n) = (%c0, %c0) to (%c32, %c64) step (%c1, %c64)
-                                 distribute(num_instances = 2, block_size = 16) {
-          ktdf.data_transfer from %res_lx_C[%c0] size [64]
-                             to %C[%m, %n] size [1, 64]
-            : memref<64xf16, #ktdf.memory_space<LX>>,
-              memref<32x64xf16, ..., #ktdf.memory_space<HBM>>
-        }
+        scf.for %m = %c0 to %c32 step %c1 {
+          scf.for %n = %c0 to %c64 step %c64 {
+            ktdf.data_transfer from %res_lx_C[%c0] size [64]
+                               to %C[%m, %n] size [1, 64]
+              : memref<64xf16, #ktdf.memory_space<LX>>,
+                memref<32x64xf16, ..., #ktdf.memory_space<HBM>>
+          } {loop_type = #ktdf.loop_type<parallel_loop>}
+        } {loop_type = #ktdf.loop_type<parallel_loop>}
       }
     } // outer ktdf.pipeline
     return
@@ -325,11 +329,9 @@ module {
 }
 ```
 
-Each stage's parallel nest has been replaced by one `ktdf.parallel` op whose induction variables `%m` and `%n` are still in scope inside the body — the data-transfer and compute operations read identically to the before-IR. What changes is that each `ktdf.parallel` declares the iteration space as a whole, and its `distribute(num_instances = 2, block_size = 16)` attributes specify that the 32-iteration lex enumeration is split as the first 16 to corelet 0 and the last 16 to corelet 1.
+Three things to notice. First, only Stage 5's body changed. Stage 0 and Stage 4 retain their nested `scf.for` nests with the `parallel_loop` attributes they had coming out of stage coarsening; those attributes continue to carry "these iterations are reorderable" information without committing to any cross-corelet distribution. Second, the outer pipeline's token flow — `%res_t1` produced by Stage 0, consumed by Stage 5; `%res_t5` produced by Stage 5, consumed by Stage 4 — is unchanged. Both corelets' work in Stage 5 begins only after Stage 0's `%res_t1` is produced, and Stage 4 begins only after both corelets' Stage 5 work has joined at the `ktdf.parallel` op's implicit barrier and produced `%res_t5`. The pipeline-level synchronization is preserved exactly. Third, the nested pipeline inside Stage 5 — the LXLU→SFP→LXSU trio with its SFP_REG private region — is untouched; corelet replication happens at the `m` loop level, so each corelet enters the nested pipeline with its own SFP_REG allocations and its own iteration range, which is what the per-corelet compute units physically require.
 
-Two things to notice. First, the outer pipeline's token flow (`%res_t1` produced by Stage 0, consumed by Stage 5; `%res_t5` produced by Stage 5, consumed by Stage 4) is unchanged — tokens still express pipeline-level ordering and the parallelization happens entirely inside each stage. Second, the nested pipeline inside Stage 5 is untouched: Stages 1–3 and their SFP_REG private region remain as they were, because the corelet replication is expressed at the `m` loop level, not below. Each corelet enters the nested pipeline with its own private SFP_REG allocations and its own iteration range over `m`.
-
-The shared LX buffers (`%res_lx_A`, `%res_lx_B`, `%res_lx_C`) are visible to both corelets. Because the two corelets own disjoint `m` iterations and Stage 5's nested pipeline allocates fresh SFP_REG buffers per instance, the LX traffic does not race at the op level — corelet 0's Stage 1 reads LX data that corelet 0's Stage 0 already wrote for `m ∈ [0, 16)`, and similarly for corelet 1. Formalizing the LX sharing discipline is a concern for lowering, but the KTDF IR here is enough to express the intended per-corelet iteration ownership cleanly.
+The shared LX buffers (`%res_lx_A`, `%res_lx_B`, `%res_lx_C`) are visible to both corelets. Because Stage 0 runs once and writes all 32 tile rows before either corelet's Stage 5 begins, and because Stage 4 runs once after both corelets' Stage 5 work completes, the LX traffic does not race at the op level — the outer pipeline's tokens make the producer/consumer ordering explicit and the single-instance Stage 0 and Stage 4 serialize the HBM-facing transfers. Formalizing the LX sharing discipline downstream (for example, the `dataflow.sync_send`/`sync_recv` pairs that materialize at the DFIR layer when two corelets touch the same LX region) is a concern for lowering, but the KTDF IR here is enough to express the intended per-corelet iteration ownership cleanly.
 
 ## 8. Placement in the Scheduler Pipeline
 
