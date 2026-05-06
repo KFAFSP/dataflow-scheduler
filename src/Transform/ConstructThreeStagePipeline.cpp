@@ -5,16 +5,16 @@
 //
 // =============================================================================
 //
-/// This pass constructs a three-stage pipeline.
-///
-/// Transforms linalg operations on tensors into nested scf.for loops
-/// operating on memref buffers.
+// This pass constructs a three-stage pipeline.
+//
+// First it transforms compute operations on tensors into nested scf.for loops
+// operating on memref buffers. Then it constructs a three-stage pipeline (load
+// stage, compute stage, store stage).
+//
 //
 //===----------------------------------------------------------------------===//
 
-#include "Ktdp/KtdpDialect.hpp"
 #include "Ktdp/KtdpOps.hpp"
-#include "Ktdp/KtdpTypes.hpp"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
@@ -97,8 +97,14 @@ struct ConstructThreeStagePipelinePass
   // Operations to delete after pipeline creation
   SmallVector<Operation*> ops_to_delete_;
 
-  // Builder for constants at function start (initialized in runOnOperation)
+  // Builder for constants at function start
   std::optional<OpBuilder> const_builder_;
+
+  // Generalize named linalg operations to linalg.generic
+  LogicalResult generalizeLinalgOps(ModuleOp module);
+
+  // Fuse consecutive linalg.generic operations
+  LogicalResult fuseLinalgOps(ModuleOp module);
 
   // Run one-shot bufferization on the module
   LogicalResult bufferizeModule(ModuleOp module);
@@ -109,7 +115,8 @@ struct ConstructThreeStagePipelinePass
   // Transform linalg operations to loops
   void lowerLinalgToLoops(ModuleOp module);
 
-  // Create ktdf.pipeline with ktdf.private and ktdf.stage operations
+  // Create a 3-stage pipeline inside innermost_loop, with one stage for loads,
+  // computes, stores.
   void createPipeline(scf::ForOp innermost_loop, ArrayRef<int64_t> tile_sizes);
 
   // Create linalg compute operations in stage 2
@@ -119,20 +126,91 @@ struct ConstructThreeStagePipelinePass
   // Create data transfer operations for loads or stores
   // is_load=true: transfer from access_tile to private memref
   // is_load=false: transfer from private memref to access_tile
+  // private_result_offset: index into private_op results where memrefs for this
+  //   transfer start. For loads, offset=0 (load memrefs come first). For
+  //   stores, offset=load_ops_.size() (store memrefs come after load memrefs).
   void createDataTransfers(OpBuilder& builder, Location loc,
                            mlir::ktdf::PrivateOp private_op,
                            ArrayRef<int64_t> memref_shape, bool is_load,
                            size_t private_result_offset);
 
-  // Delete operation and recursively delete unused ancestors
+  // Delete op and recursively delete unused ancestors
   void deleteOpAndUnusedAncestors(Operation* op);
 
   // Replace construct_access_tile with memref.reinterpret_cast
   void replaceAccessTilesWithReinterpretCast(ModuleOp module);
 
-  // Cleanup operations after pipeline creation
+  // Clean up operations after pipeline creation
   void cleanupOperations();
 };
+
+LogicalResult ConstructThreeStagePipelinePass::generalizeLinalgOps(
+    ModuleOp module) {
+  LLVM_DEBUG(llvm::dbgs()
+             << "Generalizing named linalg operations to linalg.generic\n");
+
+  SmallVector<linalg::LinalgOp> linalg_ops;
+  module.walk([&](linalg::LinalgOp linalg_op) {
+    // Skip if already generic
+    if (!isa<linalg::GenericOp>(linalg_op.getOperation())) {
+      linalg_ops.push_back(linalg_op);
+    }
+  });
+
+  IRRewriter rewriter(&getContext());
+  for (auto linalg_op : linalg_ops) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "  Generalizing: " << linalg_op->getName() << "\n");
+    rewriter.setInsertionPoint(linalg_op);
+
+    FailureOr<linalg::GenericOp> generic_result =
+        linalg::generalizeNamedOp(rewriter, linalg_op);
+
+    if (failed(generic_result)) {
+      linalg_op.emitError("Failed to generalize linalg operation");
+      return failure();
+    }
+
+    LLVM_DEBUG(llvm::dbgs()
+               << "  Successfully generalized to linalg.generic\n");
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "After generalization:\n" << module << "\n\n");
+  return success();
+}
+
+LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(ModuleOp module) {
+  LLVM_DEBUG(llvm::dbgs() << "Fusing consecutive linalg.generic operations\n");
+
+  SmallVector<linalg::GenericOp> generic_ops;
+  module.walk(
+      [&](linalg::GenericOp generic_op) { generic_ops.push_back(generic_op); });
+
+  LLVM_DEBUG(llvm::dbgs() << "Found " << generic_ops.size()
+                          << " linalg.generic operations\n");
+
+  IRRewriter rewriter(&getContext());
+  for (auto consumer : generic_ops) {
+    // Try to fuse producers into this consumer
+    for (auto* operand : consumer.getDpsInputOperands()) {
+      Value input = operand->get();
+      auto producer = input.getDefiningOp<linalg::GenericOp>();
+
+      if (!producer) continue;
+
+      rewriter.setInsertionPoint(consumer);
+      FailureOr<linalg::FusionInfo> fusion_result =
+          linalg::fuseProducerOfTensor(rewriter, *operand);
+
+      if (succeeded(fusion_result)) {
+        LLVM_DEBUG(llvm::dbgs() << "  Successfully fused operations\n");
+      }
+    }
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "After fusion:\n" << module << "\n\n");
+  return success();
+}
 
 LogicalResult ConstructThreeStagePipelinePass::bufferizeModule(
     ModuleOp module) {
@@ -147,68 +225,66 @@ LogicalResult ConstructThreeStagePipelinePass::bufferizeModule(
     return failure();
   }
 
+  LLVM_DEBUG(llvm::dbgs() << "After bufferization:\n" << module << "\n\n");
   return success();
 }
 
 SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
-    linalg::LinalgOp linalgOp) {
+    linalg::LinalgOp linalg_op) {
   const int64_t stick_size = schedulerExtContext().getStickSize();
-  SmallVector<int64_t> tileSizes;
+  SmallVector<int64_t> tile_sizes;
 
-  // Get shape from output operand (after bufferization, linalg ops have no
-  // results)
-  ShapedType shapedType;
-  if (linalgOp->getNumResults() > 0) {
-    // Tensor-based (before bufferization)
-    shapedType = llvm::dyn_cast<ShapedType>(linalgOp->getResult(0).getType());
-  } else if (linalgOp.getNumDpsInits() > 0) {
-    // Memref-based (after bufferization) - get from output operand
-    shapedType = llvm::dyn_cast<ShapedType>(
-        linalgOp.getDpsInitOperand(0)->get().getType());
+  // After bufferization, linalg ops have no results - get shape from output
+  // operand
+  assert(linalg_op->getNumResults() == 0 &&
+         "determineTileSizes should only be called after bufferization");
+  assert(linalg_op.getNumDpsInits() > 0 &&
+         "linalg op must have at least one output operand");
+
+  ShapedType shaped_type = llvm::dyn_cast<ShapedType>(
+      linalg_op.getDpsInitOperand(0)->get().getType());
+
+  if (!shaped_type || !shaped_type.hasRank()) {
+    return tile_sizes;
   }
 
-  if (!shapedType || !shapedType.hasRank()) {
-    return tileSizes;
-  }
-
-  ArrayRef<int64_t> shape = shapedType.getShape();
+  ArrayRef<int64_t> shape = shaped_type.getShape();
   int64_t rank = shape.size();
 
   // Start from rightmost dimension and multiply until we reach stick_size
   int64_t product = 1;
-  int64_t coveredDims = 0;
+  int64_t covered_dims = 0;
 
   for (int64_t i = rank - 1; i >= 0; --i) {
     product *= shape[i];
-    coveredDims++;
+    covered_dims++;
     if (product >= stick_size) {
       break;
     }
   }
 
   // Build tile sizes: 1 for uncovered dims, partial/full for covered dims
-  tileSizes.resize(rank);
-  for (int64_t i = 0; i < rank - coveredDims; ++i) {
-    tileSizes[i] = 1;
+  tile_sizes.resize(rank);
+  for (int64_t i = 0; i < rank - covered_dims; ++i) {
+    tile_sizes[i] = 1;
   }
 
   // For covered dimensions, compute tile sizes that divide evenly
-  int64_t remainingProduct = stick_size;
-  for (int64_t i = rank - 1; i >= rank - coveredDims; --i) {
-    int64_t dimSize = shape[i];
-    int64_t tileSize = std::min(dimSize, remainingProduct);
+  int64_t remaining_product = stick_size;
+  for (int64_t i = rank - 1; i >= rank - covered_dims; --i) {
+    int64_t dim_size = shape[i];
 
-    // Find largest divisor of dimSize that fits in remainingProduct
-    while (tileSize > 0 &&
-           (dimSize % tileSize != 0 || remainingProduct % tileSize != 0)) {
-      tileSize--;
-    }
-    if (tileSize == 0) tileSize = 1;
+    // Use GCD to find largest value that divides both dim_size and
+    // remaining_product
+    int64_t tile_size = std::gcd(dim_size, remaining_product);
 
-    tileSizes[i] = tileSize;
-    remainingProduct /= tileSize;
-    if (remainingProduct <= 1) {
-      remainingProduct = 1;
+    // Clamp to dimension size
+    tile_size = std::min(tile_size, dim_size);
+
+    tile_sizes[i] = tile_size;
+    remaining_product /= tile_size;
+    if (remaining_product <= 1) {
+      remaining_product = 1;
     }
   }
 
@@ -220,24 +296,22 @@ SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
     }
     llvm::dbgs() << "]\n    Tile sizes: [";
     for (int64_t i = 0; i < rank; ++i) {
-      llvm::dbgs() << tileSizes[i];
+      llvm::dbgs() << tile_sizes[i];
       if (i < rank - 1) llvm::dbgs() << ", ";
     }
     llvm::dbgs() << "]\n";
   });
 
-  return tileSizes;
+  return tile_sizes;
 }
 
 void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
-  LLVM_DEBUG(llvm::dbgs() << "Lowering linalg operations to loops\n");
+  LLVM_DEBUG(
+      llvm::dbgs() << "Lowering linalg.generic operations to SCF loops\n");
 
-  SmallVector<linalg::LinalgOp> linalg_ops;
-
+  // Collect ktdp load/store operations BEFORE any transformations
   module.walk([&](Operation* op) {
-    if (auto linalg_op = dyn_cast<linalg::LinalgOp>(op)) {
-      linalg_ops.push_back(linalg_op);
-    } else if (auto load_op = dyn_cast<ktdp::LoadOp>(op)) {
+    if (auto load_op = dyn_cast<ktdp::LoadOp>(op)) {
       load_ops_.push_back(load_op);
       ops_to_delete_.push_back(op);
     } else if (auto store_op = dyn_cast<ktdp::StoreOp>(op)) {
@@ -251,15 +325,19 @@ void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
   LLVM_DEBUG(llvm::dbgs() << "  Found " << store_ops_.size()
                           << " ktdp.store operations\n");
 
+  // Collect linalg operations (should be linalg.generic after generalization)
+  SmallVector<linalg::LinalgOp> linalg_ops;
+  module.walk(
+      [&](linalg::LinalgOp linalg_op) { linalg_ops.push_back(linalg_op); });
+
   IRRewriter rewriter(&getContext());
   for (auto linalg_op : linalg_ops) {
-    if (!linalg_op->getBlock()) continue;
-
     LLVM_DEBUG(llvm::dbgs() << "  Lowering: " << linalg_op->getName() << "\n");
 
     rewriter.setInsertionPoint(linalg_op);
 
-    // Determine tile sizes from output operand shape
+    // Determine tile sizes from output operand shape (needed for pipeline
+    // creation)
     SmallVector<int64_t> tile_sizes = determineTileSizes(linalg_op);
 
     if (tile_sizes.empty()) {
@@ -267,17 +345,19 @@ void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
       signalPassFailure();
       return;
     }
-    llvm::dbgs() << "Tilesizes ";
-    for (auto i : tile_sizes) llvm::dbgs() << i << ", ";
-    llvm::dbgs() << "\n";
-    // Configure tiling options
-    linalg::LinalgTilingOptions options;
-    options.setTileSizes(tile_sizes);
-    options.setLoopType(linalg::LinalgTilingLoopType::Loops);
+    LLVM_DEBUG({
+      llvm::dbgs() << "  Tile sizes: ";
+      for (auto i : tile_sizes) llvm::dbgs() << i << ", ";
+      llvm::dbgs() << "\n";
+    });
 
-    // Apply tiling
+    // Tile the linalg.generic operation with the computed tile sizes
+    linalg::LinalgTilingOptions tiling_options;
+    tiling_options.setTileSizes(tile_sizes);
+    tiling_options.setLoopType(linalg::LinalgTilingLoopType::Loops);
+
     FailureOr<linalg::TiledLinalgOp> tiled_result =
-        linalg::tileLinalgOp(rewriter, linalg_op, options);
+        linalg::tileLinalgOp(rewriter, linalg_op, tiling_options);
 
     if (failed(tiled_result)) {
       linalg_op.emitError("Failed to tile linalg operation");
@@ -285,10 +365,13 @@ void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
       return;
     }
 
-    // Replace original op with tiled version
-    rewriter.replaceOp(linalg_op, tiled_result->tensorResults);
+    // Erase the original linalg operation (it has no results since we're
+    // bufferized)
+    rewriter.eraseOp(linalg_op);
 
-    // Store tiled loops and create pipeline
+    LLVM_DEBUG(llvm::dbgs() << "  Successfully tiled linalg operation\n");
+
+    // Store the tiled loops for pipeline creation
     if (!tiled_result->loops.empty()) {
       tiled_loops_.assign(tiled_result->loops.begin(),
                           tiled_result->loops.end());
@@ -297,7 +380,9 @@ void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
     }
   }
 
-  // Replace access tiles with reinterpret_cast
+  LLVM_DEBUG(llvm::dbgs() << "After pipeline created: \n" << module << "\n\n");
+
+  // Replace access tiles with reinterpret_cast AFTER pipeline creation
   replaceAccessTilesWithReinterpretCast(module);
 
   // Cleanup operations (removes original load/store/compute ops)
@@ -334,7 +419,8 @@ void ConstructThreeStagePipelinePass::createPipeline(
   auto token_type = mlir::ktdf::TokenType::get(&getContext());
   SmallVector<Type> private_result_types;
 
-  // Compute memref shape from tile sizes (drop leading 1s)
+  // Compute memref shape from tile sizes (drop leading 1s to get actual working
+  // set)
   SmallVector<int64_t> memref_shape;
   for (int64_t tile_size : tile_sizes) {
     if (tile_size != 1 || !memref_shape.empty()) {
@@ -406,21 +492,21 @@ void ConstructThreeStagePipelinePass::createPipeline(
   Block* private_body = builder.createBlock(&private_region);
   builder.setInsertionPointToStart(private_body);
 
-  // Create three tokens inside ktdf.private
-  auto t1 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
-                                              token_type);
-  auto t2 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
-                                              token_type);
-  auto t3 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
-                                              token_type);
-
-  // Create memref.alloc for each load and store operation
+  // Create memref.alloc for each load and store operation FIRST
   SmallVector<Value> alloc_results;
   for (auto memref_type : alloc_types) {
     auto alloc_op =
         memref::AllocOp::create(builder, innermost_loop.getLoc(), memref_type);
     alloc_results.push_back(alloc_op.getResult());
   }
+
+  // Create three tokens inside ktdf.private AFTER allocs
+  auto t1 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
+                                              token_type);
+  auto t2 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
+                                              token_type);
+  auto t3 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
+                                              token_type);
 
   // Add the three tokens at the end
   alloc_results.push_back(t1.getResult());
@@ -480,8 +566,6 @@ void ConstructThreeStagePipelinePass::createPipeline(
   createDataTransfers(
       builder, innermost_loop.getLoc(), private_op, memref_shape,
       /*is_load=*/false, /*private_result_offset=*/load_ops_.size());
-  // Cleanup operations (remove original linalg ops and ktdp load/store ops)
-  // cleanupOperations();
 }
 
 void ConstructThreeStagePipelinePass::deleteOpAndUnusedAncestors(
@@ -517,11 +601,6 @@ void ConstructThreeStagePipelinePass::cleanupOperations() {
 
   for (auto* op : ops_to_delete_) {
     if (!op || !op->use_empty()) continue;
-    // Get the name before deleting to avoid use-after-free
-    LLVM_DEBUG({
-      auto op_name = op->getName();
-      llvm::dbgs() << "  Deleting: " << op_name << "\n";
-    });
     deleteOpAndUnusedAncestors(op);
   }
 }
@@ -557,17 +636,21 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
 
   // Create data_transfer for each operation
   for (size_t i = 0; i < op_count; ++i) {
-    // Get the access_tile value (result of construct_access_tile)
-    // This will later be replaced with reinterpret_cast result via
-    // replaceAllUsesWith
+    // Get the access_tile value (operand of load/store op)
+    // Note: This may be either an AccessTileType or a MemRefType depending on
+    // whether replaceAccessTilesWithReinterpretCast has been called
     Value access_tile_value;
 
     if (is_load) {
       auto load_op = load_ops_[i];
-      access_tile_value = load_op.getAccessTile();
+      // Get the operand directly - load has one operand (access_tile)
+      access_tile_value = load_op.getOperand();
     } else {
       auto store_op = store_ops_[i];
-      access_tile_value = store_op.getAccessTile();
+      // Get the access tile operand - store has two operands (data_tile,
+      // access_tile) Use getOperation()->getOperand(1) to get the second
+      // operand
+      access_tile_value = store_op.getOperation()->getOperand(1);
     }
 
     // Get the allocated memref from private results
@@ -582,17 +665,23 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
     SmallVector<int64_t> access_tile_sizes(loop_bounds.begin(),
                                            loop_bounds.end());
 
+    // Create private memref indices - need one c0 for each dimension
+    SmallVector<Value> private_indices;
+    for (size_t dim = 0; dim < memref_shape.size(); ++dim) {
+      private_indices.push_back(c0);
+    }
+
     // Create data_transfer with direction based on is_load
     // Use access_tile_value which will be replaced with reinterpret_cast later
     if (is_load) {
       // Load: from access_tile to private
       mlir::ktdf::DataTransferOp::create(
           builder, loc, access_tile_value, access_tile_indices,
-          access_tile_sizes, private_memref, ValueRange{c0}, private_sizes);
+          access_tile_sizes, private_memref, private_indices, private_sizes);
     } else {
       // Store: from private to access_tile
       mlir::ktdf::DataTransferOp::create(
-          builder, loc, private_memref, ValueRange{c0}, private_sizes,
+          builder, loc, private_memref, private_indices, private_sizes,
           access_tile_value, access_tile_indices, access_tile_sizes);
     }
   }
@@ -617,14 +706,29 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
     return WalkResult::advance();
   });
 
-  // Step 1: Bufferize the module (convert tensors to memrefs)
+  // Step 1: Generalize named linalg operations to linalg.generic
+  if (failed(generalizeLinalgOps(module))) {
+    module.emitError("Failed to generalize linalg operations");
+    signalPassFailure();
+    return;
+  }
+
+  // Step 2: Fuse consecutive linalg.generic operations
+  if (failed(fuseLinalgOps(module))) {
+    module.emitError("Failed to fuse linalg operations");
+    signalPassFailure();
+    return;
+  }
+
+  // Step 3: Bufferize the module (convert tensors to memrefs)
   if (failed(bufferizeModule(module))) {
     module.emitError("Failed to bufferize module");
     signalPassFailure();
     return;
   }
 
-  // Step 2: Lower linalg operations to scf.for loops and create pipeline
+  // Step 4: Lower linalg.generic operations to scf.for loops and create
+  // pipeline
   lowerLinalgToLoops(module);
 }
 
@@ -720,10 +824,53 @@ void ConstructThreeStagePipelinePass::createComputeOps(
       LLVM_DEBUG(llvm::dbgs() << "    Remapped subview to private memref\n");
     }
 
-    // Clone the operation with new operands and regions
+    // Clone the operation with new operands and adjusted attributes
     OperationState state(loc, compute_op->getName());
     state.addOperands(new_operands);
-    state.addAttributes(compute_op->getAttrs());
+
+    // Get the rank of the new operands (private memrefs)
+    auto new_rank = cast<MemRefType>(new_operands[0].getType()).getRank();
+
+    // For linalg.generic, adjust indexing maps and iterator types
+    if (auto generic_op =
+            dyn_cast<linalg::GenericOp>(compute_op.getOperation())) {
+      auto old_maps = generic_op.getIndexingMapsArray();
+      if (!old_maps.empty() && old_maps[0].getNumDims() != new_rank) {
+        // Create new identity maps for the new rank
+        SmallVector<AffineMap> new_maps;
+        auto identity_map =
+            AffineMap::getMultiDimIdentityMap(new_rank, builder.getContext());
+        for (size_t i = 0; i < old_maps.size(); ++i) {
+          new_maps.push_back(identity_map);
+        }
+        state.addAttribute("indexing_maps",
+                           builder.getAffineMapArrayAttr(new_maps));
+
+        // Create new iterator types (all parallel) using IteratorTypeAttr
+        SmallVector<Attribute> new_iterator_types;
+        for (size_t i = 0; i < new_rank; ++i) {
+          new_iterator_types.push_back(mlir::linalg::IteratorTypeAttr::get(
+              builder.getContext(), mlir::utils::IteratorType::parallel));
+        }
+        state.addAttribute("iterator_types",
+                           builder.getArrayAttr(new_iterator_types));
+
+        LLVM_DEBUG(llvm::dbgs()
+                   << "    Adjusted indexing maps and iterator types from "
+                   << old_maps[0].getNumDims() << "D to " << new_rank << "D\n");
+
+        // Add other attributes
+        state.addAttribute("operandSegmentSizes",
+                           generic_op->getAttr("operandSegmentSizes"));
+      } else {
+        // No adjustment needed, copy all attributes
+        state.addAttributes(compute_op->getAttrs());
+      }
+    } else {
+      // Not a generic op, copy all attributes as-is
+      state.addAttributes(compute_op->getAttrs());
+    }
+
     for (auto result_type : compute_op->getResultTypes()) {
       state.addTypes(result_type);
     }
@@ -736,13 +883,13 @@ void ConstructThreeStagePipelinePass::createComputeOps(
     }
 
     builder.create(state);
-    LLVM_DEBUG(llvm::dbgs() << "    Created cloned operation with regions\n");
+    LLVM_DEBUG(llvm::dbgs()
+               << "    Created cloned operation with adjusted attributes\n");
   }
 }
 
 void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     ModuleOp module) {
-  llvm::dbgs() << "BEFORE module " << module << "\n\n";
   SmallVector<ktdp::ConstructAccessTilesOp> access_tiles;
   module.walk([&](ktdp::ConstructAccessTilesOp access_tile) {
     access_tiles.push_back(access_tile);

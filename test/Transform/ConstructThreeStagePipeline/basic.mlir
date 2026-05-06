@@ -1,47 +1,62 @@
 // RUN: scheduler --construct-three-stage-pipeline %s | FileCheck %s
 
-// This script is intended to make adding checks to a test case quick and easy.
-// It is *not* authoritative about what constitutes a good test. After using the
-// script, be sure to review and refine the generated checks. For example,
-// CHECK lines should be minimized and named to reflect the test’s intent.
-// For comprehensive guidelines, see:
-//   * https://mlir.llvm.org/getting_started/TestingGuide/
-
-
-
-// CHECK: #[[$ATTR_0:.+]] = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK: #[[$ATTR_0:.+]] = affine_map<(d0) -> (d0)>
 // CHECK: #[[$ATTR_1:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>
-// CHECK: #[[$ATTR_2:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK-LABEL:   func.func @local_schedule_1(
 // CHECK-SAME:      %[[ARG0:.*]]: index) {
-// CHECK-NEXT:     %[[CONSTANT_0:.*]] = arith.constant 0 : index
-// CHECK-NEXT:     %[[CONSTANT_1:.*]] = arith.constant 3 : index
-// CHECK-NEXT:     %[[CONSTANT_2:.*]] = arith.constant 1024 : index
-// CHECK-NEXT:     %[[CONSTANT_3:.*]] = arith.constant 12288 : index
-// CHECK-NEXT:     %[[CONSTANT_4:.*]] = arith.constant 18432 : index
+// CHECK-NEXT:     %[[CONSTANT_0:.*]] = arith.constant 1 : index
+// CHECK-NEXT:     %[[CONSTANT_1:.*]] = arith.constant 64 : index
+// CHECK-NEXT:     %[[CONSTANT_2:.*]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[CONSTANT_3:.*]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[CONSTANT_4:.*]] = arith.constant 3 : index
+// CHECK-NEXT:     %[[CONSTANT_5:.*]] = arith.constant 1024 : index
+// CHECK-NEXT:     %[[CONSTANT_6:.*]] = arith.constant 12288 : index
+// CHECK-NEXT:     %[[CONSTANT_7:.*]] = arith.constant 18432 : index
 // CHECK-NEXT:     %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
-// CHECK-NEXT:     %[[MULI_0:.*]] = arith.muli %[[GET_COMPUTE_TILE_ID_0]], %[[CONSTANT_1]] : index
-// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_2]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_2:.*]] = ktdp.construct_memory_view %[[CONSTANT_4]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-NEXT:     %[[CONSTRUCT_ACCESS_TILE_0:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_0]]{{\[}}%[[MULI_0]], %[[CONSTANT_0]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
-// CHECK-NEXT:     %[[CONSTRUCT_ACCESS_TILE_1:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_1]]{{\[}}%[[MULI_0]], %[[CONSTANT_0]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
-// CHECK-NEXT:     %[[LOAD_0:.*]] = ktdp.load %[[CONSTRUCT_ACCESS_TILE_0]] : <1x64xindex> -> tensor<1x64xf16>
-// CHECK-NEXT:     %[[LOAD_1:.*]] = ktdp.load %[[CONSTRUCT_ACCESS_TILE_1]] : <1x64xindex> -> tensor<1x64xf16>
-// CHECK-NEXT:     %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x64xf16>
-// CHECK-NEXT:     %[[ADD_0:.*]] = linalg.add ins(%[[LOAD_0]], %[[LOAD_1]] : tensor<1x64xf16>, tensor<1x64xf16>) outs(%[[EMPTY_0]] : tensor<1x64xf16>) -> tensor<1x64xf16>
-// CHECK-NEXT:     %[[CONSTRUCT_ACCESS_TILE_2:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_2]]{{\[}}%[[MULI_0]], %[[CONSTANT_0]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
-// CHECK-NEXT:     ktdp.store %[[EMPTY_0]], %[[CONSTRUCT_ACCESS_TILE_2]] : tensor<1x64xf16>, <1x64xindex>
+// CHECK-NEXT:     %[[MULI_0:.*]] = arith.muli %[[GET_COMPUTE_TILE_ID_0]], %[[CONSTANT_4]] : index
+// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_5]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_6]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_2:.*]] = ktdp.construct_memory_view %[[CONSTANT_7]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK-NEXT:     %[[REINTERPRET_CAST_0:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_2]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
+// CHECK-NEXT:     %[[REINTERPRET_CAST_1:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_1]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
+// CHECK-NEXT:     %[[REINTERPRET_CAST_2:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_0]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
+// CHECK-NEXT:     %[[CONSTANT_8:.*]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[CONSTANT_9:.*]] = arith.constant 1 : index
+// CHECK-NEXT:     %[[CONSTANT_10:.*]] = arith.constant 1 : index
+// CHECK-NEXT:     %[[CONSTANT_11:.*]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[CONSTANT_12:.*]] = arith.constant 64 : index
+// CHECK-NEXT:     %[[CONSTANT_13:.*]] = arith.constant 64 : index
+// CHECK-NEXT:     scf.for %[[VAL_0:.*]] = %[[CONSTANT_8]] to %[[CONSTANT_9]] step %[[CONSTANT_10]] {
+// CHECK-NEXT:       scf.for %[[VAL_1:.*]] = %[[CONSTANT_11]] to %[[CONSTANT_12]] step %[[CONSTANT_13]] {
+// CHECK-NEXT:         ktdf.pipeline {
+// CHECK-NEXT:           %[[PRIVATE_0:.*]]:6 = ktdf.private -> (memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">, !ktdf.token, !ktdf.token, !ktdf.token) {
+// CHECK-NEXT:             %[[ALLOC_0:.*]] = memref.alloc() : memref<64xf16, "SFP_REG">
+// CHECK-NEXT:             %[[ALLOC_1:.*]] = memref.alloc() : memref<64xf16, "SFP_REG">
+// CHECK-NEXT:             %[[ALLOC_2:.*]] = memref.alloc() : memref<64xf16, "SFP_REG">
+// CHECK-NEXT:             %[[CREATE_TOKEN_0:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:             %[[CREATE_TOKEN_1:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:             %[[CREATE_TOKEN_2:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:             ktdf.private_yield %[[ALLOC_0]], %[[ALLOC_1]], %[[ALLOC_2]], %[[CREATE_TOKEN_0]], %[[CREATE_TOKEN_1]], %[[CREATE_TOKEN_2]] : memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">, !ktdf.token, !ktdf.token, !ktdf.token
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[VAL_2:.*]]#3 : !ktdf.token) {
+// CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_2]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[VAL_2]]#0{{\[}}%[[CONSTANT_2]]] size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, memref<64xf16, "SFP_REG">
+// CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_1]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[VAL_2]]#1{{\[}}%[[CONSTANT_2]]] size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, memref<64xf16, "SFP_REG">
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(%[[VAL_3:.*]]#3 : !ktdf.token) depends_out(%[[VAL_3]]#4 : !ktdf.token) {
+// CHECK-NEXT:             linalg.generic {indexing_maps = [#[[$ATTR_0]], #[[$ATTR_0]], #[[$ATTR_0]]], iterator_types = ["parallel"]} ins(%[[VAL_3]]#0, %[[VAL_3]]#1 : memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">) outs(%[[VAL_3]]#2 : memref<64xf16, "SFP_REG">) {
+// CHECK-NEXT:             ^bb0(%[[VAL_4:.*]]: f16, %[[VAL_5:.*]]: f16, %[[VAL_6:.*]]: f16):
+// CHECK-NEXT:               %[[ADDF_0:.*]] = arith.addf %[[VAL_4]], %[[VAL_5]] : f16
+// CHECK-NEXT:               linalg.yield %[[ADDF_0]] : f16
+// CHECK-NEXT:             }
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(%[[VAL_7:.*]]#4 : !ktdf.token) depends_out(%[[VAL_7]]#5 : !ktdf.token) {
+// CHECK-NEXT:             ktdf.data_transfer from %[[VAL_7]]#2{{\[}}%[[CONSTANT_3]]] size [64] to %[[REINTERPRET_CAST_0]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] : memref<64xf16, "SFP_REG">, memref<1x64xf16, strided<[64, 1], offset: ?>>
+// CHECK-NEXT:           }
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }
+// CHECK-NEXT:     }
 // CHECK-NEXT:     return
 // CHECK-NEXT:   }
-
-
-
-// This script is intended to make adding checks to a test case quick and easy.
-// It is *not* authoritative about what constitutes a good test. After using the
-// script, be sure to review and refine the generated checks. For example,
-// For comprehensive guidelines, see:
-//   * https://mlir.llvm.org/getting_started/TestingGuide/
 
 
 
