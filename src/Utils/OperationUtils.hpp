@@ -8,6 +8,7 @@
 #define SRC_UTILS_OPERATIONUTILS_HPP
 
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/Value.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace scheduler {
@@ -17,6 +18,13 @@ namespace utils {
 /// If the operation has a FileLineColLoc, prints "@line_number".
 /// Otherwise, prints "@operation_pointer".
 void printLocation(llvm::raw_ostream& OS, mlir::Operation* op);
+
+/// Check if a memref value is written to within the given operation's region.
+/// Returns true if any data transfer operation writes to the memref as a destination.
+/// \param memref The memref value to check
+/// \param root_op The root operation to search within
+/// \return true if the memref is written to, false otherwise
+bool isMemrefWrittenTo(mlir::Value memref, mlir::Operation* root_op);
 
 } // namespace utils
 } // namespace scheduler

@@ -46,7 +46,8 @@ mlir::Operation* PipelineTreeMaterializer::getMaterializedOp(
   return it != node_to_materialized_op_.end() ? it->second : nullptr;
 }
 
-void PipelineTreeMaterializer::materializeTreeNode(const PipelineTreeNode& node) {
+void PipelineTreeMaterializer::materializeTreeNode(
+    const PipelineTreeNode& node) {
   // Handle different node types
   if (node.isLoopNode()) {
     const auto& loop_node = static_cast<const LoopNode&>(node);
@@ -58,22 +59,8 @@ void PipelineTreeMaterializer::materializeTreeNode(const PipelineTreeNode& node)
     const auto& pipeline_node = static_cast<const PipelineNode&>(node);
     materializePipelineNode(pipeline_node);
   } else if (node.isPrivateNode()) {
-    // FIXME: For now, we clone the entire private clause into the parent
-    // pipeline. This makes all SSA values from the private clause accessible to
-    // all stages. In the future, we should properly handle buffer privatization
-    // for nested pipelines by moving relevant allocations to the nested
-    // pipeline's private clause.
     const auto& private_node = static_cast<const PrivateNode&>(node);
-    mlir::Operation* orig_private_op = private_node.getOperation();
-    assert(orig_private_op && "Private node must have an operation");
-
-    LLVM_DEBUG(llvm::dbgs()
-               << "    Cloning private clause into parent pipeline\n");
-    mlir::Operation* cloned_private =
-        builder_.clone(*orig_private_op, value_map_);
-
-    // Track the materialized operation
-    node_to_materialized_op_[&private_node] = cloned_private;
+    materializePrivateNode(private_node);
   } else {
     llvm_unreachable("unimplemented node type");
   }
@@ -90,7 +77,21 @@ void PipelineTreeMaterializer::materializeChildren(
 
 void PipelineTreeMaterializer::cloneStageBody(mlir::ktdf::StageOp orig_stage) {
   mlir::Block* orig_body = &orig_stage.getBody().front();
-  for (mlir::Operation& op : orig_body->without_terminator()) {
+  for (mlir::Operation& op : *orig_body) {
+    if (op.hasTrait<mlir::OpTrait::IsTerminator>()) continue;
+    // Check if this is a DataTransferOp and we have a handler
+    if (auto transfer_op = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(&op)) {
+      if (buffer_handler_) {
+        mlir::Operation* new_op = buffer_handler_->handleDataTransfer(
+            transfer_op, builder_, value_map_);
+        if (new_op) {
+          // Handler created a replacement operation, skip default cloning
+          continue;
+        }
+      }
+    }
+
+    // Default: clone the operation
     builder_.clone(op, value_map_);
   }
 }
@@ -231,6 +232,90 @@ mlir::ktdf::PipelineOp PipelineTreeMaterializer::materializePipelineNode(
 
   LLVM_DEBUG(llvm::dbgs() << "    Created pipeline\n");
   return new_pipeline;
+}
+
+void PipelineTreeMaterializer::materializePrivateNode(
+    const PrivateNode& private_node) {
+  // FIXME: For now, we clone the entire private clause into the parent
+  // pipeline. This makes all SSA values from the private clause accessible to
+  // all stages. In the future, we should properly handle buffer privatization
+  // for nested pipelines by moving relevant allocations to the nested
+  // pipeline's private clause.
+  mlir::Operation* orig_private_op = private_node.getOperation();
+  assert(orig_private_op && "Private node must have an operation");
+
+  LLVM_DEBUG(llvm::dbgs() << "    Materializing private clause\n");
+
+  auto orig_private = mlir::cast<mlir::ktdf::PrivateOp>(orig_private_op);
+  mlir::Block& orig_body = orig_private.getBody().front();
+
+  // Save the current insertion point (inside the new pipeline body)
+  auto saved_insertion_point = builder_.saveInsertionPoint();
+
+  // Create a temporary block to hold operations before splicing into private op
+  mlir::Block tmp_block;
+  builder_.setInsertionPointToStart(&tmp_block);
+
+  for (mlir::Operation& op : orig_body.without_terminator()) {
+    if (auto alloc_op = mlir::dyn_cast<mlir::memref::AllocOp>(&op)) {
+      if (buffer_handler_) {
+        mlir::Operation* new_op =
+            buffer_handler_->handleAllocOp(alloc_op, builder_, value_map_);
+        if (new_op) {
+          // Handler created a replacement operation
+          continue;
+        }
+      }
+    }
+
+    // Default: clone the operation
+    builder_.clone(op, value_map_);
+  }
+
+  // Get the yield operation and determine result types from mapped operands
+  auto orig_yield =
+      mlir::cast<mlir::ktdf::PrivateYieldOp>(orig_body.getTerminator());
+
+  llvm::SmallVector<mlir::Type> result_types;
+  llvm::SmallVector<mlir::Value> new_yield_operands;
+  for (mlir::Value yielded_val : orig_yield.getOperands()) {
+    mlir::Value mapped_val = value_map_.lookupOrDefault(
+        yielded_val);  // this is wrong...the value_map doesn't hold the
+                       // replaced allocations.. should handleAllocOp update it?
+    new_yield_operands.push_back(mapped_val);
+    result_types.push_back(mapped_val.getType());
+  }
+
+  // Restore insertion point to create the private operation in the right place
+  builder_.restoreInsertionPoint(saved_insertion_point);
+
+  // Now create the private operation with correct result types
+  auto new_private = mlir::ktdf::PrivateOp::create(
+      builder_, orig_private.getLoc(), result_types);
+
+  // Get the empty block that was created with the private op
+  mlir::Block& private_body = new_private.getBody().front();
+
+  // Splice all operations from tmp_block into the private_body
+  private_body.getOperations().splice(private_body.end(),
+                                      tmp_block.getOperations());
+
+  // Create yield in the private body
+  builder_.setInsertionPointToEnd(&private_body);
+  mlir::ktdf::PrivateYieldOp::create(builder_, orig_yield.getLoc(),
+                                     new_yield_operands);
+
+  // Map original private results to new private results
+  for (auto [orig_result, new_result] :
+       llvm::zip(orig_private.getResults(), new_private.getResults())) {
+    value_map_.map(orig_result, new_result);
+  }
+
+  // Restore insertion point
+  builder_.setInsertionPointAfter(new_private);
+
+  // Track the materialized operation
+  node_to_materialized_op_[&private_node] = new_private.getOperation();
 }
 
 }  // namespace scheduler

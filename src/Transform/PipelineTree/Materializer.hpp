@@ -29,6 +29,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/OpDefinition.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "src/Analysis/PipelineTree.hpp"
@@ -108,6 +109,9 @@ class PipelineTreeMaterializer {
 
   /// Materialize a pipeline node by creating a ktdf.pipeline operation
   mlir::ktdf::PipelineOp materializePipelineNode(const PipelineNode& pipeline_node);
+
+  /// Materialize a private node by cloning its operations
+  void materializePrivateNode(const PrivateNode& private_node);
 
   /// Recursively materialize a tree node and its children
   void materializeTreeNode(const PipelineTreeNode& node);

@@ -682,6 +682,11 @@ def KTDF_PrivateOp : KTDF_Op<"private", [
     OpBuilder<(ins), [{
       Region* bodyRegion = $_state.addRegion();
       bodyRegion->emplaceBlock();
+    }]>,
+    OpBuilder<(ins "::mlir::TypeRange":$results), [{
+     Region* bodyRegion = $_state.addRegion();
+     bodyRegion->emplaceBlock();
+     $_state.addTypes(results);
     }]>
   ];
 
