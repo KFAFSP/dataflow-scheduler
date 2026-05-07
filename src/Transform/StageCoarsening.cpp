@@ -67,6 +67,8 @@ namespace {
 struct BufferExpansionInfo {
   mlir::Value buffer;
   llvm::SmallVector<mlir::Value> loop_ivs;  // Ordered by loop nest
+  llvm::SmallVector<mlir::Value> loop_lower_bounds;  // Lower bounds for each loop
+  llvm::SmallVector<mlir::Value> loop_steps;  // Step values for each loop
   llvm::SmallVector<mlir::OpFoldResult>
       sizes;  // Expansion sizes (constant or dynamic)
 };
@@ -329,12 +331,31 @@ class StageCoarseningBufferHandler : public scheduler::BufferHandler {
 
     if (src_info) {
       // Prepend loop IV values for expanded dimensions
-      for (mlir::Value loop_iv : src_info->loop_ivs) {
-        mlir::Value mapped_iv = loop_iv;
+      // Need to compute normalized index: (iv - lower_bound) / step
+      for (size_t i = 0; i < src_info->loop_ivs.size(); ++i) {
+        mlir::Value loop_iv = src_info->loop_ivs[i];
+        mlir::Value lower_bound = src_info->loop_lower_bounds[i];
+        mlir::Value step = src_info->loop_steps[i];
+        
+        // Map values if they've been cloned
         if (value_map.contains(loop_iv)) {
-          mapped_iv = value_map.lookup(loop_iv);
+          loop_iv = value_map.lookup(loop_iv);
         }
-        new_src_indices.push_back(mapped_iv);
+        if (value_map.contains(lower_bound)) {
+          lower_bound = value_map.lookup(lower_bound);
+        }
+        if (value_map.contains(step)) {
+          step = value_map.lookup(step);
+        }
+        
+        // Compute normalized index: (iv - lower_bound) / step
+        mlir::Location loc = transfer_op.getLoc();
+        mlir::Value offset = mlir::arith::SubIOp::create(
+            builder, loc, loop_iv, lower_bound).getResult();
+        mlir::Value normalized_idx = mlir::arith::DivSIOp::create(
+            builder, loc, offset, step).getResult();
+        
+        new_src_indices.push_back(normalized_idx);
       }
     }
 
@@ -349,12 +370,31 @@ class StageCoarseningBufferHandler : public scheduler::BufferHandler {
 
     if (dst_info) {
       // Prepend loop IV values for expanded dimensions
-      for (mlir::Value loop_iv : dst_info->loop_ivs) {
-        mlir::Value mapped_iv = loop_iv;
+      // Need to compute normalized index: (iv - lower_bound) / step
+      for (size_t i = 0; i < dst_info->loop_ivs.size(); ++i) {
+        mlir::Value loop_iv = dst_info->loop_ivs[i];
+        mlir::Value lower_bound = dst_info->loop_lower_bounds[i];
+        mlir::Value step = dst_info->loop_steps[i];
+        
+        // Map values if they've been cloned
         if (value_map.contains(loop_iv)) {
-          mapped_iv = value_map.lookup(loop_iv);
+          loop_iv = value_map.lookup(loop_iv);
         }
-        new_dst_indices.push_back(mapped_iv);
+        if (value_map.contains(lower_bound)) {
+          lower_bound = value_map.lookup(lower_bound);
+        }
+        if (value_map.contains(step)) {
+          step = value_map.lookup(step);
+        }
+        
+        // Compute normalized index: (iv - lower_bound) / step
+        mlir::Location loc = transfer_op.getLoc();
+        mlir::Value offset = mlir::arith::SubIOp::create(
+            builder, loc, loop_iv, lower_bound).getResult();
+        mlir::Value normalized_idx = mlir::arith::DivSIOp::create(
+            builder, loc, offset, step).getResult();
+        
+        new_dst_indices.push_back(normalized_idx);
       }
     }
 
@@ -804,6 +844,10 @@ void StageCoarseningPass::PerformBufferExpansion(
       mlir::Value lower = loop.getLowerBound();
       mlir::Value upper = loop.getUpperBound();
       mlir::Value step = loop.getStep();
+      
+      // Store loop bounds and step for later index computation
+      info.loop_lower_bounds.push_back(lower);
+      info.loop_steps.push_back(step);
 
       // Try to compute constant size if possible
       std::optional<int64_t> lower_const, upper_const, step_const;
