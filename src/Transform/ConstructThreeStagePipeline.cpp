@@ -136,6 +136,10 @@ struct ConstructThreeStagePipelinePass
                            ArrayRef<int64_t> memref_shape, bool is_load,
                            size_t private_result_offset);
 
+  // Annotate loops with loop_type attributes based on linalg iterator types
+  void annotateLoopsWithIteratorTypes(ArrayRef<Operation*> loops,
+                                      linalg::GenericOp generic_op);
+
   // Delete op and recursively delete unused ancestors
   void deleteOpAndUnusedAncestors(Operation* op);
 
@@ -326,6 +330,44 @@ SmallVector<int64_t> ConstructThreeStagePipelinePass::determineMemrefShape(
   return memref_shape;
 }
 
+void ConstructThreeStagePipelinePass::annotateLoopsWithIteratorTypes(
+    ArrayRef<Operation*> loops, linalg::GenericOp generic_op) {
+  assert(generic_op);
+
+  // Copy to avoid dangling reference
+  SmallVector<utils::IteratorType> iterator_types =
+      llvm::to_vector(generic_op.getIteratorTypesArray());
+
+  // Annotate each loop with its corresponding iterator type
+  for (size_t i = 0; i < loops.size() && i < iterator_types.size(); ++i) {
+    auto for_op = dyn_cast<scf::ForOp>(loops[i]);
+    assert(for_op);
+
+    // Determine loop type based on iterator type
+    mlir::ktdf::LoopType loop_type;
+    if (iterator_types[i] == utils::IteratorType::parallel) {
+      loop_type = mlir::ktdf::LoopType::ParallelLoop;
+    } else if (iterator_types[i] == utils::IteratorType::reduction) {
+      loop_type = mlir::ktdf::LoopType::ReductionLoop;
+    } else {
+      for_op->emitError("Unsupported iterator type");
+      signalPassFailure();
+      return;
+    }
+
+    // Create and set the loop_type attribute
+    auto loop_type_attr =
+        mlir::ktdf::LoopTypeAttr::get(&getContext(), loop_type);
+    for_op->setAttr("loop_type", loop_type_attr);
+
+    LLVM_DEBUG(llvm::dbgs() << "  Annotated loop " << i << " with loop_type: "
+                            << (loop_type == mlir::ktdf::LoopType::ParallelLoop
+                                    ? "parallel"
+                                    : "reduction")
+                            << "\n");
+  }
+}
+
 void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
   LLVM_DEBUG(
       llvm::dbgs() << "Lowering linalg.generic operations to SCF loops\n");
@@ -399,6 +441,14 @@ void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
     rewriter.eraseOp(linalg_op);
 
     LLVM_DEBUG(llvm::dbgs() << "  Successfully tiled linalg operation\n");
+
+    // Annotate loops with loop_type attributes based on iterator types
+    if (!tiled_result->loops.empty()) {
+      auto generic_op =
+          dyn_cast<linalg::GenericOp>(tiled_result->op.getOperation());
+      annotateLoopsWithIteratorTypes(tiled_result->loops, generic_op);
+    }
+
     LLVM_DEBUG(llvm::dbgs() << "After loops created: \n" << module << "\n\n");
 
     // Store the tiled loops for pipeline creation
