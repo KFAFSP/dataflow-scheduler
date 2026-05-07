@@ -431,6 +431,26 @@ void ConstructThreeStagePipelinePass::createPipeline(
   LLVM_DEBUG(llvm::dbgs() << "  Found " << compute_ops_.size()
                           << " linalg compute operations\n");
 
+  // Save original scf.yield operands to ops_to_delete_ before changing the
+  // yield This ensures tensor.insert_slice and linalg.generic get cleaned up
+  // later
+  auto yield_op = cast<scf::YieldOp>(innermost_loop.getBody()->getTerminator());
+  for (auto operand : yield_op.getOperands()) {
+    if (auto* def_op = operand.getDefiningOp()) {
+      ops_to_delete_.push_back(def_op);
+    }
+  }
+
+  // Fix scf.yield to yield iter_args instead of linalg results
+  // This prevents issues when we delete the old linalg.generic operations
+  OpBuilder yield_builder(yield_op);
+  SmallVector<Value> new_yield_operands;
+  for (auto iter_arg : innermost_loop.getRegionIterArgs()) {
+    new_yield_operands.push_back(iter_arg);
+  }
+  scf::YieldOp::create(yield_builder, yield_op.getLoc(), new_yield_operands);
+  yield_op.erase();
+
   OpBuilder builder(&getContext());
 
   // Set insertion point at the beginning of the loop body
@@ -444,14 +464,14 @@ void ConstructThreeStagePipelinePass::createPipeline(
   Block* pipeline_body = &pipeline_region.front();
   builder.setInsertionPointToStart(pipeline_body);
 
-  // Create ktdf.private operation that yields memref allocs + three tokens
+  // Create ktdf.private operation that yields FIFO slots + three tokens
   auto token_type = mlir::ktdf::TokenType::get(&getContext());
   SmallVector<Type> private_result_types;
 
   SmallVector<int64_t> memref_shape = determineMemrefShape(tile_sizes);
 
-  // Add memref types for each load operation
-  SmallVector<MemRefType> alloc_types;
+  // Add FIFO slot types for each load operation
+  SmallVector<mlir::ktdf::FifoSlotType> fifo_slot_types;
   for (auto load_op : load_ops_) {
     // Get element type from load result
     auto tensor_type =
@@ -463,14 +483,21 @@ void ConstructThreeStagePipelinePass::createPipeline(
     }
     auto element_type = tensor_type.getElementType();
 
-    auto memref_type = MemRefType::get(
-        memref_shape, element_type, MemRefLayoutAttrInterface{},
-        schedulerExtContext().getTransferMemSpace(&getContext(), "SFP"));
-    alloc_types.push_back(memref_type);
-    private_result_types.push_back(memref_type);
+    // Calculate total number of elements in the tensor
+    int64_t num_elements = 1;
+    for (auto dim : tensor_type.getShape()) {
+      num_elements *= dim;
+    }
+
+    // Create FIFO slot type: lxlu-to-sfp for loads
+    auto fifo_slot_type = mlir::ktdf::FifoSlotType::get(
+        &getContext(), mlir::ktdf::FifoType::LxluToSfp, num_elements,
+        element_type);
+    fifo_slot_types.push_back(fifo_slot_type);
+    private_result_types.push_back(fifo_slot_type);
   }
 
-  // Add memref types for each store operation
+  // Add FIFO slot types for each store operation
   for (auto store_op : store_ops_) {
     // Get element type from store data operand
     auto tensor_type =
@@ -483,11 +510,18 @@ void ConstructThreeStagePipelinePass::createPipeline(
     }
     auto element_type = tensor_type.getElementType();
 
-    auto memref_type = MemRefType::get(
-        memref_shape, element_type, MemRefLayoutAttrInterface{},
-        schedulerExtContext().getTransferMemSpace(&getContext(), "SFP"));
-    alloc_types.push_back(memref_type);
-    private_result_types.push_back(memref_type);
+    // Calculate total number of elements in the tensor
+    int64_t num_elements = 1;
+    for (auto dim : tensor_type.getShape()) {
+      num_elements *= dim;
+    }
+
+    // Create FIFO slot type: sfp-to-lxsu for stores
+    auto fifo_slot_type = mlir::ktdf::FifoSlotType::get(
+        &getContext(), mlir::ktdf::FifoType::SfpToLxsu, num_elements,
+        element_type);
+    fifo_slot_types.push_back(fifo_slot_type);
+    private_result_types.push_back(fifo_slot_type);
   }
 
   // Last 3 results are tokens for the 3 stages
@@ -501,15 +535,18 @@ void ConstructThreeStagePipelinePass::createPipeline(
   Block* private_body = builder.createBlock(&private_region);
   builder.setInsertionPointToStart(private_body);
 
-  // Create memref.alloc for each load and store operation first
-  SmallVector<Value> alloc_results;
-  for (auto memref_type : alloc_types) {
-    auto alloc_op =
-        memref::AllocOp::create(builder, innermost_loop.getLoc(), memref_type);
-    alloc_results.push_back(alloc_op.getResult());
+  // Create ktdf.fifo.allocate for each load and store operation
+  SmallVector<Value> fifo_results;
+  for (auto fifo_slot_type : fifo_slot_types) {
+    // FifoAllocateOp takes: builder, location, result types, operands (dynamic
+    // sizes) Since we're using static sizes, operands is empty
+    auto fifo_alloc_op = mlir::ktdf::FifoAllocateOp::create(
+        builder, innermost_loop.getLoc(), TypeRange{fifo_slot_type},
+        ValueRange{});
+    fifo_results.push_back(fifo_alloc_op.getResult(0));
   }
 
-  // Create three tokens inside ktdf.private after allocs
+  // Create three tokens inside ktdf.private after FIFO allocations
   auto t1 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
                                               token_type);
   auto t2 = mlir::ktdf::CreateTokenOp::create(builder, innermost_loop.getLoc(),
@@ -518,21 +555,21 @@ void ConstructThreeStagePipelinePass::createPipeline(
                                               token_type);
 
   // Add the three tokens at the end
-  alloc_results.push_back(t1.getResult());
-  alloc_results.push_back(t2.getResult());
-  alloc_results.push_back(t3.getResult());
+  fifo_results.push_back(t1.getResult());
+  fifo_results.push_back(t2.getResult());
+  fifo_results.push_back(t3.getResult());
 
   mlir::ktdf::PrivateYieldOp::create(builder, innermost_loop.getLoc(),
-                                     alloc_results);
-  // Tokens are at the end: memref_count + 0, memref_count + 1, memref_count + 2
-  size_t memref_count = load_ops_.size() + store_ops_.size();
+                                     fifo_results);
+  // Tokens are at the end: fifo_count + 0, fifo_count + 1, fifo_count + 2
+  size_t fifo_count = load_ops_.size() + store_ops_.size();
 
   // Create three stages with sequential dependencies
   builder.setInsertionPointToEnd(pipeline_body);
   auto stage1 = mlir::ktdf::StageOp::create(
       builder, innermost_loop.getLoc(),
       /*depends_in=*/ValueRange{},
-      /*depends_out=*/ValueRange{private_op.getResult(memref_count + 0)});
+      /*depends_out=*/ValueRange{private_op.getResult(fifo_count + 0)});
 
   // Add data transfer operations in stage1 for loads
   Region& stage1_region = stage1.getRegion();
@@ -545,8 +582,8 @@ void ConstructThreeStagePipelinePass::createPipeline(
   builder.setInsertionPointToEnd(pipeline_body);
   auto stage2 = mlir::ktdf::StageOp::create(
       builder, innermost_loop.getLoc(),
-      /*depends_in=*/ValueRange{private_op.getResult(memref_count + 0)},
-      /*depends_out=*/ValueRange{private_op.getResult(memref_count + 1)});
+      /*depends_in=*/ValueRange{private_op.getResult(fifo_count + 0)},
+      /*depends_out=*/ValueRange{private_op.getResult(fifo_count + 1)});
 
   // Create linalg compute operations in stage 2
   Region& stage2_region = stage2.getRegion();
@@ -557,8 +594,8 @@ void ConstructThreeStagePipelinePass::createPipeline(
   builder.setInsertionPointToEnd(pipeline_body);
   auto stage3 = mlir::ktdf::StageOp::create(
       builder, innermost_loop.getLoc(),
-      /*depends_in=*/ValueRange{private_op.getResult(memref_count + 1)},
-      /*depends_out=*/ValueRange{private_op.getResult(memref_count + 2)});
+      /*depends_in=*/ValueRange{private_op.getResult(fifo_count + 1)},
+      /*depends_out=*/ValueRange{private_op.getResult(fifo_count + 2)});
 
   // Add data transfer operations in stage3 for stores
   Region& stage3_region = stage3.getRegion();
@@ -624,10 +661,10 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
                  << " data transfers with " << loop_ivs.size() << " loop IVs\n";
   });
 
-  auto c0 = arith::ConstantIndexOp::create(*const_builder_, loc, 0);
-
   // Get the appropriate operation list
   size_t op_count = is_load ? load_ops_.size() : store_ops_.size();
+
+  const int64_t stick_size = schedulerExtContext().getStickSize();
 
   // Create data_transfer for each operation
   for (size_t i = 0; i < op_count; ++i) {
@@ -646,36 +683,29 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
       access_tile_value = store_op.getOperation()->getOperand(1);
     }
 
-    // Get the allocated memref from private results
-    Value private_memref = private_op.getResult(private_result_offset + i);
+    // Get the FIFO slot from private results
+    Value fifo_slot = private_op.getResult(private_result_offset + i);
 
-    // Prepare indices and sizes
+    // Prepare indices and sizes for access_tile
     SmallVector<Value> access_tile_indices(loop_ivs.begin(), loop_ivs.end());
-    SmallVector<int64_t> private_sizes(memref_shape.begin(),
-                                       memref_shape.end());
-
-    // Access tile sizes are the loop bounds (e.g., [1, 64])
     SmallVector<int64_t> access_tile_sizes(loop_bounds.begin(),
                                            loop_bounds.end());
 
-    // Create private memref indices - need one c0 for each dimension
-    SmallVector<Value> private_indices;
-    for (size_t dim = 0; dim < memref_shape.size(); ++dim) {
-      private_indices.push_back(c0);
-    }
+    // FIFO slot size is stick_size
+    SmallVector<int64_t> fifo_sizes = {stick_size};
 
     // Create data_transfer with direction based on is_load
     // Use access_tile_value which will be replaced with reinterpret_cast later
     if (is_load) {
-      // Load: from access_tile to private
-      mlir::ktdf::DataTransferOp::create(
-          builder, loc, access_tile_value, access_tile_indices,
-          access_tile_sizes, private_memref, private_indices, private_sizes);
+      // Load: from access_tile to FIFO slot
+      mlir::ktdf::DataTransferOp::create(builder, loc, access_tile_value,
+                                         access_tile_indices, access_tile_sizes,
+                                         fifo_slot, ValueRange{}, fifo_sizes);
     } else {
-      // Store: from private to access_tile
+      // Store: from FIFO slot to access_tile
       mlir::ktdf::DataTransferOp::create(
-          builder, loc, private_memref, private_indices, private_sizes,
-          access_tile_value, access_tile_indices, access_tile_sizes);
+          builder, loc, fifo_slot, ValueRange{}, fifo_sizes, access_tile_value,
+          access_tile_indices, access_tile_sizes);
     }
   }
 }
@@ -738,51 +768,89 @@ void ConstructThreeStagePipelinePass::createComputeOps(
     OpBuilder& builder, Location loc, mlir::ktdf::PrivateOp private_op) {
   LLVM_DEBUG(llvm::dbgs() << "Creating compute operations in stage 2\n");
 
-  // Build a mapping from tensor values to private memref results
+  // Build a mapping from tensor values to read_from_fifo results
   DenseMap<Value, Value> value_map;
 
-  // Map load operations to private memrefs (starting at index 0)
+  // For each load operation, create ktdf.read_from_fifo and map the result
   for (size_t i = 0; i < load_ops_.size(); ++i) {
-    // For tensor-based: map the load result (tensor) directly to private memref
-    value_map[load_ops_[i].getResult()] = private_op.getResult(i);
+    auto load_op = load_ops_[i];
+    Value fifo_slot = private_op.getResult(i);
+
+    // Get the tensor type from the load result
+    auto tensor_type =
+        dyn_cast<RankedTensorType>(load_op.getResult().getType());
+    if (!tensor_type) {
+      load_op.emitError("Expected RankedTensorType result from ktdp.load");
+      signalPassFailure();
+      return;
+    }
+
+    // Create ktdf.read_from_fifo to read tensor from FIFO slot
+    auto read_fifo_op = mlir::ktdf::ReadFromFifoOp::create(
+        builder, loc, tensor_type, fifo_slot);
+
+    // Map the load result to the read_from_fifo result
+    value_map[load_op.getResult()] = read_fifo_op.getResult();
     LLVM_DEBUG(llvm::dbgs()
-               << "  Mapped load " << i << " to private#" << i << "\n");
+               << "  Created read_from_fifo for load " << i << "\n");
   }
 
-  // Map store operations to private memrefs (starting after loads)
-  for (size_t i = 0; i < store_ops_.size(); ++i) {
-    auto data_tile = store_ops_[i].getDataTile();
-    // For tensor-based: map the store's data operand (tensor) to private memref
-    value_map[data_tile] = private_op.getResult(load_ops_.size() + i);
-    LLVM_DEBUG(llvm::dbgs() << "  Mapped store " << i << " data to private#"
-                            << (load_ops_.size() + i) << "\n");
-
-    // Also need to map the tensor.empty() that initializes the output
-    // Trace back from store data through scf.for loops to find tensor.empty
-    Value init_value = data_tile;
-    while (auto for_op_result = dyn_cast<OpResult>(init_value)) {
-      if (auto for_op = dyn_cast<scf::ForOp>(for_op_result.getOwner())) {
-        // Get the corresponding init arg
-        unsigned result_index = for_op_result.getResultNumber();
-        init_value = for_op.getInitArgs()[result_index];
-      } else {
-        break;
+  // Find all tensor.extract_slice operations that use load results
+  // and map them to read_from_fifo results
+  IRMapping mapper;
+  for (auto load_op : load_ops_) {
+    for (auto user : load_op.getResult().getUsers()) {
+      if (auto extract_op = dyn_cast<tensor::ExtractSliceOp>(user)) {
+        // Map extract_slice result to read_from_fifo result
+        mapper.map(extract_op.getResult(), value_map[load_op.getResult()]);
+        LLVM_DEBUG(llvm::dbgs()
+                   << "  Mapped extract_slice to read_from_fifo\n");
       }
     }
-    // Map the init value (tensor.empty) to the same private memref
-    if (init_value != data_tile) {
-      value_map[init_value] = private_op.getResult(load_ops_.size() + i);
-      LLVM_DEBUG(llvm::dbgs()
-                 << "  Mapped init value (tensor.empty) to private#"
-                 << (load_ops_.size() + i) << "\n");
-    }
   }
 
-  for (auto compute_op : compute_ops_) {
+  // Clone compute operations into stage 2 and create write_to_fifo for each
+  // Don't delete them here - they're already in ops_to_delete_ from the yield
+  // operands
+  for (size_t i = 0; i < compute_ops_.size(); ++i) {
+    auto compute_op = compute_ops_[i];
     LLVM_DEBUG(llvm::dbgs()
-               << "  Moving compute op: " << compute_op->getName() << "\n");
-    compute_op->moveBefore(builder.getInsertionBlock(),
-                           builder.getInsertionPoint());
+               << "  Cloning compute op: " << compute_op->getName() << "\n");
+
+    // Get the output tensor type from the compute operation
+    auto output_type =
+        dyn_cast<RankedTensorType>(compute_op->getResult(0).getType());
+    if (!output_type) {
+      compute_op->emitError(
+          "Expected RankedTensorType result from linalg operation");
+      signalPassFailure();
+      return;
+    }
+
+    // Create a dummy tensor.empty for the output operand
+    auto empty_tensor = tensor::EmptyOp::create(
+        builder, loc, output_type.getShape(), output_type.getElementType());
+
+    // Map the output extract_slice to the empty tensor
+    // Find the output operand (last DPS output operand)
+    auto linalg_op = dyn_cast<linalg::LinalgOp>(compute_op.getOperation());
+    if (linalg_op && linalg_op.getNumDpsInits() > 0) {
+      Value output_operand = linalg_op.getDpsInitOperand(0)->get();
+      mapper.map(output_operand, empty_tensor.getResult());
+    }
+
+    // Clone the operation with mapped operands
+    auto* cloned = builder.clone(*compute_op, mapper);
+
+    // Create ktdf.write_to_fifo to write the cloned linalg result to FIFO slot
+    // Assuming one compute op per store op
+    if (i < store_ops_.size()) {
+      Value fifo_slot = private_op.getResult(load_ops_.size() + i);
+      mlir::ktdf::WriteToFifoOp::create(builder, loc, cloned->getResult(0),
+                                        fifo_slot);
+      LLVM_DEBUG(llvm::dbgs()
+                 << "  Created write_to_fifo for store " << i << "\n");
+    }
   }
 }
 
