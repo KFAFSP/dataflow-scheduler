@@ -36,45 +36,48 @@
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 
 namespace scheduler {
+namespace materializer {
 
 //===----------------------------------------------------------------------===//
-// Buffer Handler Interface
+// Buffer Cloner Interface
 //===----------------------------------------------------------------------===//
 
-/// Handler interface for customizing buffer allocation and data transfer
+/// Cloner interface for customizing buffer allocation and data transfer
 /// operations during materialization. This allows transformations to modify
 /// how buffers are allocated (e.g., expanding dimensions) and how data
 /// transfers access those buffers (e.g., adjusting indices).
-class BufferHandler {
+class BufferCloner {
  public:
-  virtual ~BufferHandler() = default;
+  virtual ~BufferCloner() = default;
 
   /// Called when materializing a memref.alloc operation.
-  /// The handler can return a custom allocation operation or nullptr to use
+  /// The cloner can return a custom allocation operation or nullptr to use
   /// default cloning behavior.
   ///
   /// \param orig_alloc The original allocation operation from the template
   /// \param builder The builder positioned where the new alloc should be created
   /// \param value_map The current value mapping for SSA values
   /// \return A new allocation operation, or nullptr to use default behavior
-  virtual mlir::memref::AllocOp handleAllocOp(
+  virtual mlir::memref::AllocOp cloneAllocOp(
       mlir::memref::AllocOp orig_alloc,
       mlir::OpBuilder& builder,
       mlir::IRMapping& value_map) = 0;
 
   /// Called when materializing a data transfer operation.
-  /// The handler can return a custom transfer operation or nullptr to use
+  /// The cloner can return a custom transfer operation or nullptr to use
   /// default cloning behavior.
   ///
   /// \param orig_transfer The original data transfer operation
   /// \param builder The builder positioned where the new transfer should be created
   /// \param value_map The current value mapping for SSA values
   /// \return A new data transfer operation, or nullptr to use default behavior
-  virtual mlir::ktdf::DataTransferOp handleDataTransfer(
+  virtual mlir::ktdf::DataTransferOp cloneDataTransfer(
       mlir::ktdf::DataTransferOp orig_transfer,
       mlir::OpBuilder& builder,
       mlir::IRMapping& value_map) = 0;
 };
+
+}  // namespace materializer
 
 //===----------------------------------------------------------------------===//
 // Pipeline Tree Materializer
@@ -86,11 +89,11 @@ class PipelineTreeMaterializer {
   /// Constructor
   /// \param builder The MLIR builder for creating operations
   /// \param value_map The value mapping for SSA values
-  /// \param buffer_handler Optional handler for customizing buffer operations
+  /// \param buffer_cloner Optional cloner for customizing buffer operations
   PipelineTreeMaterializer(mlir::OpBuilder& builder,
                           mlir::IRMapping& value_map,
-                          BufferHandler* buffer_handler = nullptr)
-      : builder_(builder), value_map_(value_map), buffer_handler_(buffer_handler) {}
+                          materializer::BufferCloner* buffer_cloner = nullptr)
+      : builder_(builder), value_map_(value_map), buffer_cloner_(buffer_cloner) {}
 
   /// Materialize the entire tree starting from the given node
   /// Returns the root operation created
@@ -128,8 +131,8 @@ class PipelineTreeMaterializer {
   /// Value mapping for SSA values
   mlir::IRMapping& value_map_;
   
-  /// Optional handler for customizing buffer operations
-  BufferHandler* buffer_handler_;
+  /// Optional cloner for customizing buffer operations
+  materializer::BufferCloner* buffer_cloner_;
   
   /// Tracking map from tree nodes to their materialized operations
   llvm::DenseMap<const PipelineTreeNode*, mlir::Operation*> node_to_materialized_op_;

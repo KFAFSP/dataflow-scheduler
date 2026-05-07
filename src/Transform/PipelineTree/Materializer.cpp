@@ -79,13 +79,13 @@ void PipelineTreeMaterializer::cloneStageBody(mlir::ktdf::StageOp orig_stage) {
   mlir::Block* orig_body = &orig_stage.getBody().front();
   for (mlir::Operation& op : *orig_body) {
     if (op.hasTrait<mlir::OpTrait::IsTerminator>()) continue;
-    // Check if this is a DataTransferOp and we have a handler
+    // Check if this is a DataTransferOp and we have a clone handler
     if (auto transfer_op = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(&op)) {
-      if (buffer_handler_) {
-        mlir::Operation* new_op = buffer_handler_->handleDataTransfer(
+      if (buffer_cloner_) {
+        mlir::Operation* new_op = buffer_cloner_->cloneDataTransfer(
             transfer_op, builder_, value_map_);
         if (new_op) {
-          // Handler created a replacement operation, skip default cloning
+          // Cloner created a replacement operation, skip default cloning
           continue;
         }
       }
@@ -258,11 +258,11 @@ void PipelineTreeMaterializer::materializePrivateNode(
 
   for (mlir::Operation& op : orig_body.without_terminator()) {
     if (auto alloc_op = mlir::dyn_cast<mlir::memref::AllocOp>(&op)) {
-      if (buffer_handler_) {
+      if (buffer_cloner_) {
         mlir::memref::AllocOp new_op =
-            buffer_handler_->handleAllocOp(alloc_op, builder_, value_map_);
+            buffer_cloner_->cloneAllocOp(alloc_op, builder_, value_map_);
         if (new_op) {
-          // Handler created a replacement operation.
+          // Cloner created a replacement operation.
           // Update value_map_ to map old result to new result so that when we
           // replace the yield operands of the private region we use the correct
           // allocations.

@@ -510,21 +510,21 @@ void StageCoarseningPass::GenerateTransformedIR(
   // Create an IRMapping to track value mappings during cloning
   mlir::IRMapping value_map;
 
-  // Create buffer handler if we have buffers to expand
-  scheduler::BufferHandler* buffer_handler = nullptr;
-  std::optional<scheduler::StageCoarseningBufferHandler> handler_storage;
+  // Create buffer cloner if we have buffers to expand
+  scheduler::materializer::BufferCloner* buffer_cloner = nullptr;
+  std::optional<scheduler::StageCoarseningBufferCloner> cloner_storage;
   if (!expansion_infos.empty()) {
     LLVM_DEBUG({
-      llvm::dbgs() << "  Creating buffer handler for " << expansion_infos.size()
+      llvm::dbgs() << "  Creating buffer cloner for " << expansion_infos.size()
                    << " buffer(s)\n";
     });
-    handler_storage.emplace(expansion_infos);
-    buffer_handler = &handler_storage.value();
+    cloner_storage.emplace(expansion_infos);
+    buffer_cloner = &cloner_storage.value();
   }
 
   // Use the materializer to generate IR from the tree
   scheduler::PipelineTreeMaterializer materializer(builder, value_map,
-                                                   buffer_handler);
+                                                   buffer_cloner);
   materializer.materialize(*outer_pipeline);
 
   // Erase the original candidate loop nest and all the old ops under it

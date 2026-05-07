@@ -83,10 +83,10 @@
 namespace scheduler {
 
 //===----------------------------------------------------------------------===//
-// StageCoarseningBufferHandler Implementation
+// StageCoarseningBufferCloner Implementation
 //===----------------------------------------------------------------------===//
 
-StageCoarseningBufferHandler::StageCoarseningBufferHandler(
+StageCoarseningBufferCloner::StageCoarseningBufferCloner(
     llvm::ArrayRef<const BufferExpansionInfo*> expansion_infos)
     : expansion_infos_(expansion_infos.begin(), expansion_infos.end()) {
   // Build a map from original buffer to expansion info for quick lookup
@@ -96,7 +96,7 @@ StageCoarseningBufferHandler::StageCoarseningBufferHandler(
   }
 }
 
-mlir::memref::AllocOp StageCoarseningBufferHandler::handleAllocOp(
+mlir::memref::AllocOp StageCoarseningBufferCloner::cloneAllocOp(
     mlir::memref::AllocOp alloc_op, mlir::OpBuilder& builder,
     mlir::IRMapping& value_map) {
   // Get the result of the allocation
@@ -206,7 +206,7 @@ mlir::memref::AllocOp StageCoarseningBufferHandler::handleAllocOp(
   return new_alloc;
 }
 
-mlir::ktdf::DataTransferOp StageCoarseningBufferHandler::handleDataTransfer(
+mlir::ktdf::DataTransferOp StageCoarseningBufferCloner::cloneDataTransfer(
     mlir::ktdf::DataTransferOp transfer_op, mlir::OpBuilder& builder,
     mlir::IRMapping& value_map) {
   // Get source and destination buffers

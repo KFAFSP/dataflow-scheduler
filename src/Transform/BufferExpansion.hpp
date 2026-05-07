@@ -58,25 +58,25 @@ struct BufferExpansionInfo {
 };
 
 //===----------------------------------------------------------------------===//
-// StageCoarseningBufferHandler
+// StageCoarseningBufferCloner
 //===----------------------------------------------------------------------===//
 
-/// Buffer handler for stage coarsening that expands buffers with additional
+/// Buffer cloner for stage coarsening that expands buffers with additional
 /// dimensions based on loop dependencies
-class StageCoarseningBufferHandler : public scheduler::BufferHandler {
+class StageCoarseningBufferCloner : public materializer::BufferCloner {
  public:
-  /// Construct a buffer handler with expansion information
-  explicit StageCoarseningBufferHandler(
+  /// Construct a buffer cloner with expansion information
+  explicit StageCoarseningBufferCloner(
       llvm::ArrayRef<const BufferExpansionInfo*> expansion_infos);
 
-  /// Handle allocation operations - expand memref type with additional
+  /// Custom clone allocation operations to expand memref type with additional
   /// dimensions
-  mlir::memref::AllocOp handleAllocOp(mlir::memref::AllocOp alloc_op,
+  mlir::memref::AllocOp cloneAllocOp(mlir::memref::AllocOp alloc_op,
                                       mlir::OpBuilder& builder,
                                       mlir::IRMapping& value_map) override;
 
-  /// Handle data transfer operations - adjust indices for expanded dimensions
-  mlir::ktdf::DataTransferOp handleDataTransfer(
+  /// Custom clone data transfer operations to adjust indices for expanded dimensions
+  mlir::ktdf::DataTransferOp cloneDataTransfer(
       mlir::ktdf::DataTransferOp transfer_op, mlir::OpBuilder& builder,
       mlir::IRMapping& value_map) override;
 
