@@ -106,18 +106,20 @@ struct ConstructThreeStagePipelinePass
   // Fuse consecutive linalg.generic operations
   LogicalResult fuseLinalgOps(ModuleOp module);
 
-  // Run one-shot bufferization on the module
-  LogicalResult bufferizeModule(ModuleOp module);
-
   // Determine tile sizes based on stick_size from linalg operation
   SmallVector<int64_t> determineTileSizes(linalg::LinalgOp linalgOp);
+
+  // Compute memref shape from tile sizes (drop leading 1s)
+  SmallVector<int64_t> determineMemrefShape(
+      const SmallVector<int64_t>& tile_sizes);
 
   // Transform linalg operations to loops
   void lowerLinalgToLoops(ModuleOp module);
 
   // Create a 3-stage pipeline inside innermost_loop, with one stage for loads,
   // computes, stores.
-  void createPipeline(scf::ForOp innermost_loop, ArrayRef<int64_t> tile_sizes);
+  void createPipeline(scf::ForOp innermost_loop,
+                      const SmallVector<int64_t>& tile_sizes);
 
   // Create linalg compute operations in stage 2
   void createComputeOps(OpBuilder& builder, Location loc,
@@ -195,8 +197,7 @@ LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(ModuleOp module) {
   while (!worklist.empty()) {
     auto consumer = worklist.pop_back_val();
 
-    // Try to fuse producers into this consumer
-    bool fused = false;
+    // Try to fuse producer into this consumer
     for (auto* operand : consumer.getDpsInputOperands()) {
       Value input = operand->get();
       auto producer = input.getDefiningOp<linalg::GenericOp>();
@@ -226,7 +227,6 @@ LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(ModuleOp module) {
         // Add the fused operation to the worklist for further fusion
         worklist.push_back(fused_op);
 
-        fused = true;
         break;  // Process the fused op in the next iteration
       }
     }
@@ -236,42 +236,17 @@ LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(ModuleOp module) {
   return success();
 }
 
-LogicalResult ConstructThreeStagePipelinePass::bufferizeModule(
-    ModuleOp module) {
-  LLVM_DEBUG(llvm::dbgs() << "Running one-shot bufferization\n");
-
-  bufferization::OneShotBufferizationOptions options;
-  options.bufferizeFunctionBoundaries = true;
-  options.allowUnknownOps = true;  // Allow ktdp operations to pass through
-
-  bufferization::BufferizationState state;
-  if (failed(bufferization::runOneShotBufferize(module, options, state))) {
-    return failure();
-  }
-
-  LLVM_DEBUG(llvm::dbgs() << "After bufferization:\n" << module << "\n\n");
-  return success();
-}
-
 SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
     linalg::LinalgOp linalg_op) {
   const int64_t stick_size = schedulerExtContext().getStickSize();
   SmallVector<int64_t> tile_sizes;
 
-  // After bufferization, linalg ops have no results - get shape from output
-  // operand
-  assert(linalg_op->getNumResults() == 0 &&
-         "determineTileSizes should only be called after bufferization");
-  assert(linalg_op.getNumDpsInits() > 0 &&
-         "linalg op must have at least one output operand");
+  assert(linalg_op->getNumResults() > 0 &&
+         "linalg op must have tensor results");
 
-  ShapedType shaped_type = llvm::dyn_cast<ShapedType>(
-      linalg_op.getDpsInitOperand(0)->get().getType());
-
-  if (!shaped_type || !shaped_type.hasRank()) {
-    return tile_sizes;
-  }
-
+  ShapedType shaped_type =
+      llvm::dyn_cast<ShapedType>(linalg_op->getResult(0).getType());
+  assert(shaped_type && shaped_type.hasRank());
   ArrayRef<int64_t> shape = shaped_type.getShape();
   int64_t rank = shape.size();
 
@@ -307,9 +282,7 @@ SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
 
     tile_sizes[i] = tile_size;
     remaining_product /= tile_size;
-    if (remaining_product <= 1) {
-      remaining_product = 1;
-    }
+    if (remaining_product <= 1) remaining_product = 1;
   }
 
   LLVM_DEBUG({
@@ -327,6 +300,30 @@ SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
   });
 
   return tile_sizes;
+}
+
+SmallVector<int64_t> ConstructThreeStagePipelinePass::determineMemrefShape(
+    const SmallVector<int64_t>& tile_sizes) {
+  SmallVector<int64_t> memref_shape;
+  for (int64_t tile_size : tile_sizes) {
+    if (tile_size != 1 || !memref_shape.empty()) {
+      memref_shape.push_back(tile_size);
+    }
+  }
+  if (memref_shape.empty()) {
+    memref_shape.push_back(1);
+  }
+
+  LLVM_DEBUG({
+    llvm::dbgs() << "  Memref shape from tile sizes: [";
+    for (size_t i = 0; i < memref_shape.size(); ++i) {
+      llvm::dbgs() << memref_shape[i];
+      if (i < memref_shape.size() - 1) llvm::dbgs() << ", ";
+    }
+    llvm::dbgs() << "]\n";
+  });
+
+  return memref_shape;
 }
 
 void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
@@ -389,11 +386,20 @@ void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
       return;
     }
 
+    // Replace uses of original results with tiled results
+    assert(tiled_result->tensorResults.size() == linalg_op->getNumResults() &&
+           "Tiled result count must match original result count");
+    for (size_t i = 0; i < linalg_op->getNumResults(); ++i) {
+      rewriter.replaceAllUsesWith(linalg_op->getResult(i),
+                                  tiled_result->tensorResults[i]);
+    }
+
     // Erase the original linalg operation. It has been replaced by a loop nest
-    // containing vectorized linalg operation.
+    // containing the tiled linalg operation.
     rewriter.eraseOp(linalg_op);
 
     LLVM_DEBUG(llvm::dbgs() << "  Successfully tiled linalg operation\n");
+    LLVM_DEBUG(llvm::dbgs() << "After loops created: \n" << module << "\n\n");
 
     // Store the tiled loops for pipeline creation
     if (!tiled_result->loops.empty()) {
@@ -411,17 +417,16 @@ void ConstructThreeStagePipelinePass::lowerLinalgToLoops(ModuleOp module) {
 
   // Cleanup operations (removes original load/store/compute ops)
   cleanupOperations();
+  LLVM_DEBUG(llvm::dbgs() << "After cleanup: \n" << module << "\n\n");
 }
 
 void ConstructThreeStagePipelinePass::createPipeline(
-    scf::ForOp innermost_loop, ArrayRef<int64_t> tile_sizes) {
+    scf::ForOp innermost_loop, const SmallVector<int64_t>& tile_sizes) {
   LLVM_DEBUG(llvm::dbgs() << "Creating ktdf.pipeline with three stages\n");
 
   compute_ops_.clear();
-  innermost_loop.getBody()->walk([&](linalg::LinalgOp linalg_op) {
-    compute_ops_.push_back(linalg_op);
-    ops_to_delete_.push_back(linalg_op.getOperation());
-  });
+  innermost_loop.getBody()->walk(
+      [&](linalg::LinalgOp linalg_op) { compute_ops_.push_back(linalg_op); });
 
   LLVM_DEBUG(llvm::dbgs() << "  Found " << compute_ops_.size()
                           << " linalg compute operations\n");
@@ -443,27 +448,7 @@ void ConstructThreeStagePipelinePass::createPipeline(
   auto token_type = mlir::ktdf::TokenType::get(&getContext());
   SmallVector<Type> private_result_types;
 
-  // Compute memref shape from tile sizes (drop leading 1s to get actual working
-  // set)
-  SmallVector<int64_t> memref_shape;
-  for (int64_t tile_size : tile_sizes) {
-    if (tile_size != 1 || !memref_shape.empty()) {
-      memref_shape.push_back(tile_size);
-    }
-  }
-  // If all tile sizes were 1, keep at least one
-  if (memref_shape.empty()) {
-    memref_shape.push_back(1);
-  }
-
-  LLVM_DEBUG({
-    llvm::dbgs() << "  Memref shape from tile sizes: [";
-    for (size_t i = 0; i < memref_shape.size(); ++i) {
-      llvm::dbgs() << memref_shape[i];
-      if (i < memref_shape.size() - 1) llvm::dbgs() << ", ";
-    }
-    llvm::dbgs() << "]\n";
-  });
+  SmallVector<int64_t> memref_shape = determineMemrefShape(tile_sizes);
 
   // Add memref types for each load operation
   SmallVector<MemRefType> alloc_types;
@@ -594,6 +579,7 @@ void ConstructThreeStagePipelinePass::deleteOpAndUnusedAncestors(
   // Check each operand's defining op
   for (auto operand : operands) {
     if (auto* def_op = operand.getDefiningOp()) {
+      if (isa<scf::ForOp>(def_op)) continue;
       bool has_uses = false;
       for (auto result : def_op->getResults()) {
         if (!result.use_empty()) {
@@ -727,14 +713,7 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
     return;
   }
 
-  // Step 3: Bufferize the module (convert tensors to memrefs)
-  if (failed(bufferizeModule(module))) {
-    module.emitError("Failed to bufferize module");
-    signalPassFailure();
-    return;
-  }
-
-  // Step 4: Lower linalg.generic operations to scf.for loops and create
+  // Step 3: Lower linalg.generic operations to scf.for loops and create
   // pipeline
   lowerLinalgToLoops(module);
 }
@@ -759,136 +738,51 @@ void ConstructThreeStagePipelinePass::createComputeOps(
     OpBuilder& builder, Location loc, mlir::ktdf::PrivateOp private_op) {
   LLVM_DEBUG(llvm::dbgs() << "Creating compute operations in stage 2\n");
 
-  // Build a mapping from bufferization.to_memref results to private memref
-  // results
+  // Build a mapping from tensor values to private memref results
   DenseMap<Value, Value> value_map;
 
   // Map load operations to private memrefs (starting at index 0)
   for (size_t i = 0; i < load_ops_.size(); ++i) {
-    // Find the bufferization.to_memref that uses this load
-    bool found = false;
-    for (auto user : load_ops_[i].getResult().getUsers()) {
-      if (auto to_memref = dyn_cast<bufferization::ToBufferOp>(user)) {
-        value_map[to_memref.getResult()] = private_op.getResult(i);
-        found = true;
-      }
-    }
-    assert(found &&
-           "Failed to find bufferization.to_memref for load operation");
+    // For tensor-based: map the load result (tensor) directly to private memref
+    value_map[load_ops_[i].getResult()] = private_op.getResult(i);
+    LLVM_DEBUG(llvm::dbgs()
+               << "  Mapped load " << i << " to private#" << i << "\n");
   }
 
   // Map store operations to private memrefs (starting after loads)
-  // Trace: store data -> bufferization.to_tensor -> memref.alloc <- subview <-
-  // linalg output
   for (size_t i = 0; i < store_ops_.size(); ++i) {
     auto data_tile = store_ops_[i].getDataTile();
+    // For tensor-based: map the store's data operand (tensor) to private memref
+    value_map[data_tile] = private_op.getResult(load_ops_.size() + i);
+    LLVM_DEBUG(llvm::dbgs() << "  Mapped store " << i << " data to private#"
+                            << (load_ops_.size() + i) << "\n");
 
-    // data_tile should be a bufferization.to_tensor result
-    auto to_tensor = data_tile.getDefiningOp<bufferization::ToTensorOp>();
-    if (!to_tensor) {
-      store_ops_[i].emitError(
-          "Store data operand is not a bufferization.to_tensor result");
-      signalPassFailure();
-      return;
+    // Also need to map the tensor.empty() that initializes the output
+    // Trace back from store data through scf.for loops to find tensor.empty
+    Value init_value = data_tile;
+    while (auto for_op_result = dyn_cast<OpResult>(init_value)) {
+      if (auto for_op = dyn_cast<scf::ForOp>(for_op_result.getOwner())) {
+        // Get the corresponding init arg
+        unsigned result_index = for_op_result.getResultNumber();
+        init_value = for_op.getInitArgs()[result_index];
+      } else {
+        break;
+      }
     }
-
-    // Get the memref operand of to_tensor (this is the memref.alloc)
-    Value alloc_memref = to_tensor.getOperand();
-
-    // Map this alloc to the private memref
-    value_map[alloc_memref] = private_op.getResult(load_ops_.size() + i);
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Mapped store " << i << " (alloc memref) to private#"
-               << (load_ops_.size() + i) << "\n");
+    // Map the init value (tensor.empty) to the same private memref
+    if (init_value != data_tile) {
+      value_map[init_value] = private_op.getResult(load_ops_.size() + i);
+      LLVM_DEBUG(llvm::dbgs()
+                 << "  Mapped init value (tensor.empty) to private#"
+                 << (load_ops_.size() + i) << "\n");
+    }
   }
 
-  // Clone each linalg operation with remapped operands
   for (auto compute_op : compute_ops_) {
     LLVM_DEBUG(llvm::dbgs()
-               << "  Cloning compute op: " << compute_op->getName() << "\n");
-
-    SmallVector<Value> new_operands;
-
-    for (size_t i = 0; i < compute_op->getNumOperands(); ++i) {
-      auto operand = compute_op->getOperand(i);
-
-      // Check if operand is a subview
-      auto subview = operand.getDefiningOp<memref::SubViewOp>();
-      assert(subview && "Expected all linalg operands to be subviews");
-
-      // Get the source of the subview
-      Value source = subview.getSource();
-
-      // Must find source in value map
-      auto it = value_map.find(source);
-      assert(it != value_map.end() &&
-             "Failed to map subview source to private memref");
-
-      new_operands.push_back(it->second);
-      LLVM_DEBUG(llvm::dbgs() << "    Remapped subview to private memref\n");
-    }
-
-    // Clone the operation with new operands and adjusted attributes
-    OperationState state(loc, compute_op->getName());
-    state.addOperands(new_operands);
-
-    // Get the rank of the new operands (private memrefs)
-    auto new_rank = cast<MemRefType>(new_operands[0].getType()).getRank();
-
-    // For linalg.generic, adjust indexing maps and iterator types
-    if (auto generic_op =
-            dyn_cast<linalg::GenericOp>(compute_op.getOperation())) {
-      auto old_maps = generic_op.getIndexingMapsArray();
-      if (!old_maps.empty() && old_maps[0].getNumDims() != new_rank) {
-        // Create new identity maps for the new rank
-        SmallVector<AffineMap> new_maps;
-        auto identity_map =
-            AffineMap::getMultiDimIdentityMap(new_rank, builder.getContext());
-        for (size_t i = 0; i < old_maps.size(); ++i) {
-          new_maps.push_back(identity_map);
-        }
-        state.addAttribute("indexing_maps",
-                           builder.getAffineMapArrayAttr(new_maps));
-
-        // Create new iterator types (all parallel) using IteratorTypeAttr
-        SmallVector<Attribute> new_iterator_types;
-        for (size_t i = 0; i < new_rank; ++i) {
-          new_iterator_types.push_back(mlir::linalg::IteratorTypeAttr::get(
-              builder.getContext(), mlir::utils::IteratorType::parallel));
-        }
-        state.addAttribute("iterator_types",
-                           builder.getArrayAttr(new_iterator_types));
-
-        LLVM_DEBUG(llvm::dbgs()
-                   << "    Adjusted indexing maps and iterator types from "
-                   << old_maps[0].getNumDims() << "D to " << new_rank << "D\n");
-
-        // Add other attributes
-        state.addAttribute("operandSegmentSizes",
-                           generic_op->getAttr("operandSegmentSizes"));
-      } else {
-        // No adjustment needed, copy all attributes
-        state.addAttributes(compute_op->getAttrs());
-      }
-    } else {
-      // Not a generic op, copy all attributes as-is
-      state.addAttributes(compute_op->getAttrs());
-    }
-
-    for (auto result_type : compute_op->getResultTypes()) {
-      state.addTypes(result_type);
-    }
-
-    // Add regions from the original operation
-    for (Region& region : compute_op->getRegions()) {
-      Region* new_region = state.addRegion();
-      IRMapping mapping;
-      region.cloneInto(new_region, mapping);
-    }
-
-    builder.create(state);
-    LLVM_DEBUG(llvm::dbgs()
-               << "    Created cloned operation with adjusted attributes\n");
+               << "  Moving compute op: " << compute_op->getName() << "\n");
+    compute_op->moveBefore(builder.getInsertionBlock(),
+                           builder.getInsertionPoint());
   }
 }
 
