@@ -67,7 +67,8 @@ namespace {
 struct BufferExpansionInfo {
   mlir::Value buffer;
   llvm::SmallVector<mlir::Value> loop_ivs;  // Ordered by loop nest
-  llvm::SmallVector<mlir::Value> loop_lower_bounds;  // Lower bounds for each loop
+  llvm::SmallVector<mlir::Value>
+      loop_lower_bounds;                      // Lower bounds for each loop
   llvm::SmallVector<mlir::Value> loop_steps;  // Step values for each loop
   llvm::SmallVector<mlir::OpFoldResult>
       sizes;  // Expansion sizes (constant or dynamic)
@@ -112,13 +113,13 @@ struct StageCoarseningPass
   void DistributeAndSinkIntoPipeline(
       TransformCandidate& candidate, PipelineTree& tree,
       const StageGroupingAnalysis& grouping,
-      llvm::SmallVectorImpl<BufferExpansionInfo>& expansion_infos);
+      llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos);
 
   /// Perform buffer expansion analysis and record expansion information
   void PerformBufferExpansion(
       TransformCandidate& candidate, PipelineTree& tree,
       const StageGroupingAnalysis& grouping,
-      llvm::SmallVectorImpl<BufferExpansionInfo>& expansion_infos);
+      llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos);
 
   //===--------------------------------------------------------------------===//
   // Sink into Stage Groups Containing a Single Stage
@@ -148,7 +149,7 @@ struct StageCoarseningPass
   /// Generate the transformed IR from the manipulated PipelineTree
   void GenerateTransformedIR(
       TransformCandidate& candidate, PipelineTree& tree,
-      llvm::ArrayRef<BufferExpansionInfo> expansion_infos);
+      llvm::ArrayRef<const BufferExpansionInfo*> expansion_infos);
 };
 
 //===----------------------------------------------------------------------===//
@@ -162,11 +163,12 @@ static bool isValueDependentOn(mlir::Value value, mlir::Value target);
 class StageCoarseningBufferHandler : public scheduler::BufferHandler {
  public:
   explicit StageCoarseningBufferHandler(
-      llvm::ArrayRef<BufferExpansionInfo> expansion_infos)
+      llvm::ArrayRef<const BufferExpansionInfo*> expansion_infos)
       : expansion_infos_(expansion_infos.begin(), expansion_infos.end()) {
     // Build a map from original buffer to expansion info for quick lookup
-    for (const BufferExpansionInfo& info : expansion_infos_) {
-      buffer_to_info_[info.buffer] = &info;
+    for (const BufferExpansionInfo* info : expansion_infos_) {
+      assert(info);
+      buffer_to_info_[info->buffer] = info;
     }
   }
 
@@ -302,16 +304,16 @@ class StageCoarseningBufferHandler : public scheduler::BufferHandler {
     const BufferExpansionInfo* src_info = nullptr;
     const BufferExpansionInfo* dst_info = nullptr;
 
-    for (const BufferExpansionInfo& info : expansion_infos_) {
-      mlir::Value mapped_buffer = info.buffer;
+    for (const BufferExpansionInfo* info : expansion_infos_) {
+      mlir::Value mapped_buffer = info->buffer;
       if (value_map.contains(mapped_buffer)) {
         mapped_buffer = value_map.lookup(mapped_buffer);
       }
       if (mapped_buffer == src) {
-        src_info = &info;
+        src_info = info;
       }
       if (mapped_buffer == dst) {
-        dst_info = &info;
+        dst_info = info;
       }
     }
 
@@ -329,14 +331,18 @@ class StageCoarseningBufferHandler : public scheduler::BufferHandler {
     llvm::SmallVector<mlir::Value> new_src_indices;
     llvm::SmallVector<mlir::Value> new_dst_indices;
 
-    if (src_info) {
+    // Lambda to compute normalized indices for expanded dimensions
+    auto computeExpandedIndices = [&](const BufferExpansionInfo* info,
+                                      llvm::SmallVector<mlir::Value>& indices) {
+      if (!info) return;
+
       // Prepend loop IV values for expanded dimensions
       // Need to compute normalized index: (iv - lower_bound) / step
-      for (size_t i = 0; i < src_info->loop_ivs.size(); ++i) {
-        mlir::Value loop_iv = src_info->loop_ivs[i];
-        mlir::Value lower_bound = src_info->loop_lower_bounds[i];
-        mlir::Value step = src_info->loop_steps[i];
-        
+      for (size_t i = 0; i < info->loop_ivs.size(); ++i) {
+        mlir::Value loop_iv = info->loop_ivs[i];
+        mlir::Value lower_bound = info->loop_lower_bounds[i];
+        mlir::Value step = info->loop_steps[i];
+
         // Map values if they've been cloned
         if (value_map.contains(loop_iv)) {
           loop_iv = value_map.lookup(loop_iv);
@@ -347,17 +353,22 @@ class StageCoarseningBufferHandler : public scheduler::BufferHandler {
         if (value_map.contains(step)) {
           step = value_map.lookup(step);
         }
-        
+
         // Compute normalized index: (iv - lower_bound) / step
         mlir::Location loc = transfer_op.getLoc();
-        mlir::Value offset = mlir::arith::SubIOp::create(
-            builder, loc, loop_iv, lower_bound).getResult();
-        mlir::Value normalized_idx = mlir::arith::DivSIOp::create(
-            builder, loc, offset, step).getResult();
-        
-        new_src_indices.push_back(normalized_idx);
+        mlir::Value offset =
+            mlir::arith::SubIOp::create(builder, loc, loop_iv, lower_bound)
+                .getResult();
+        mlir::Value normalized_idx =
+            mlir::arith::DivSIOp::create(builder, loc, offset, step)
+                .getResult();
+
+        indices.push_back(normalized_idx);
       }
-    }
+    };
+
+    // Compute expanded indices for source
+    computeExpandedIndices(src_info, new_src_indices);
 
     // Add original source indices
     for (mlir::Value idx : transfer_op.getSourceIndices()) {
@@ -368,35 +379,8 @@ class StageCoarseningBufferHandler : public scheduler::BufferHandler {
       new_src_indices.push_back(mapped_idx);
     }
 
-    if (dst_info) {
-      // Prepend loop IV values for expanded dimensions
-      // Need to compute normalized index: (iv - lower_bound) / step
-      for (size_t i = 0; i < dst_info->loop_ivs.size(); ++i) {
-        mlir::Value loop_iv = dst_info->loop_ivs[i];
-        mlir::Value lower_bound = dst_info->loop_lower_bounds[i];
-        mlir::Value step = dst_info->loop_steps[i];
-        
-        // Map values if they've been cloned
-        if (value_map.contains(loop_iv)) {
-          loop_iv = value_map.lookup(loop_iv);
-        }
-        if (value_map.contains(lower_bound)) {
-          lower_bound = value_map.lookup(lower_bound);
-        }
-        if (value_map.contains(step)) {
-          step = value_map.lookup(step);
-        }
-        
-        // Compute normalized index: (iv - lower_bound) / step
-        mlir::Location loc = transfer_op.getLoc();
-        mlir::Value offset = mlir::arith::SubIOp::create(
-            builder, loc, loop_iv, lower_bound).getResult();
-        mlir::Value normalized_idx = mlir::arith::DivSIOp::create(
-            builder, loc, offset, step).getResult();
-        
-        new_dst_indices.push_back(normalized_idx);
-      }
-    }
+    // Compute expanded indices for destination
+    computeExpandedIndices(dst_info, new_dst_indices);
 
     // Add original destination indices
     for (mlir::Value idx : transfer_op.getDestIndices()) {
@@ -422,7 +406,7 @@ class StageCoarseningBufferHandler : public scheduler::BufferHandler {
   }
 
  private:
-  llvm::SmallVector<BufferExpansionInfo> expansion_infos_;
+  llvm::SmallVector<const BufferExpansionInfo*> expansion_infos_;
   llvm::DenseMap<mlir::Value, const BufferExpansionInfo*> buffer_to_info_;
 };
 
@@ -540,7 +524,7 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
   // Step 2a: Distribute and sink loops into pipeline
   LLVM_DEBUG(
       llvm::dbgs() << "\n--- Step 2a: Distribute and Sink into Pipeline ---\n");
-  llvm::SmallVector<BufferExpansionInfo> buffer_expansion_infos;
+  llvm::SmallVector<BufferExpansionInfo*> buffer_expansion_infos;
   DistributeAndSinkIntoPipeline(candidate, tree, grouping,
                                 buffer_expansion_infos);
   LLVM_DEBUG({
@@ -581,12 +565,17 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
 
   // Step 3: Generate transformed IR from the manipulated tree
   GenerateTransformedIR(candidate, tree, buffer_expansion_infos);
+
+  // Clean up allocated expansion infos
+  for (BufferExpansionInfo* info : buffer_expansion_infos) {
+    delete info;
+  }
 }
 
 void StageCoarseningPass::DistributeAndSinkIntoPipeline(
     TransformCandidate& candidate, PipelineTree& tree,
     const StageGroupingAnalysis& grouping,
-    llvm::SmallVectorImpl<BufferExpansionInfo>& expansion_infos) {
+    llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos) {
   LLVM_DEBUG(llvm::dbgs() << "Distributing loops into pipeline...\n");
 
   // Validate candidate
@@ -679,7 +668,7 @@ void StageCoarseningPass::DistributeAndSinkIntoPipeline(
 void StageCoarseningPass::PerformBufferExpansion(
     TransformCandidate& candidate, PipelineTree& tree,
     const StageGroupingAnalysis& grouping,
-    llvm::SmallVectorImpl<BufferExpansionInfo>& expansion_infos) {
+    llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos) {
   LLVM_DEBUG(llvm::dbgs() << "  Performing buffer expansion analysis...\n");
 
   // Step 1: Identify common memrefs across stage groups
@@ -830,24 +819,24 @@ void StageCoarseningPass::PerformBufferExpansion(
     mlir::Value buffer = entry.first;
     const llvm::SmallVector<mlir::Value>& dependent_ivs = entry.second;
 
-    BufferExpansionInfo info;
-    info.buffer = buffer;
+    BufferExpansionInfo* info = new BufferExpansionInfo();
+    info->buffer = buffer;
 
     // Order the dependent IVs according to the loop nest order
     for (mlir::scf::ForOp loop : candidate.loop_nest_) {
       mlir::Value loop_iv = loop.getInductionVar();
       if (llvm::find(dependent_ivs, loop_iv) == dependent_ivs.end()) continue;
-      info.loop_ivs.push_back(loop_iv);
+      info->loop_ivs.push_back(loop_iv);
 
       // Calculate the size for this dimension
       // Size = (upper_bound - lower_bound + step - 1) / step
       mlir::Value lower = loop.getLowerBound();
       mlir::Value upper = loop.getUpperBound();
       mlir::Value step = loop.getStep();
-      
+
       // Store loop bounds and step for later index computation
-      info.loop_lower_bounds.push_back(lower);
-      info.loop_steps.push_back(step);
+      info->loop_lower_bounds.push_back(lower);
+      info->loop_steps.push_back(step);
 
       // Try to compute constant size if possible
       std::optional<int64_t> lower_const, upper_const, step_const;
@@ -867,7 +856,7 @@ void StageCoarseningPass::PerformBufferExpansion(
             (*upper_const - *lower_const + *step_const - 1) / *step_const;
         mlir::OpBuilder builder(loop);
         mlir::IntegerAttr size_attr = builder.getI64IntegerAttr(trip_count);
-        info.sizes.push_back(mlir::OpFoldResult(size_attr));
+        info->sizes.push_back(mlir::OpFoldResult(size_attr));
         LLVM_DEBUG({
           llvm::dbgs() << "      Dimension size (constant): " << trip_count
                        << "\n";
@@ -884,17 +873,18 @@ void StageCoarseningPass::PerformBufferExpansion(
       mlir::Value size_val =
           mlir::arith::CeilDivSIOp::create(builder, loc, diff, step)
               .getResult();
-      info.sizes.push_back(mlir::OpFoldResult(size_val));
+      info->sizes.push_back(mlir::OpFoldResult(size_val));
       LLVM_DEBUG({ llvm::dbgs() << "      Dimension size (dynamic)\n"; });
     }
 
-    if (!info.loop_ivs.empty()) {
-      expansion_infos.push_back(std::move(info));
-
+    if (!info->loop_ivs.empty()) {
       LLVM_DEBUG({
-        llvm::dbgs() << "    Buffer expansion: " << info.loop_ivs.size()
+        llvm::dbgs() << "    Buffer expansion: " << info->loop_ivs.size()
                      << " new dimension(s)\n";
       });
+      expansion_infos.push_back(info);
+    } else {
+      delete info;
     }
   }
 
@@ -1033,7 +1023,7 @@ void StageCoarseningPass::CorrectStageDependencies(
 
 void StageCoarseningPass::GenerateTransformedIR(
     TransformCandidate& candidate, PipelineTree& tree,
-    llvm::ArrayRef<BufferExpansionInfo> expansion_infos) {
+    llvm::ArrayRef<const BufferExpansionInfo*> expansion_infos) {
   LLVM_DEBUG(llvm::dbgs() << "\n--- Step 3: Generate Transformed IR ---\n");
 
   // Get the outer pipeline node from the tree
