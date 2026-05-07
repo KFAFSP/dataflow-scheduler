@@ -259,10 +259,14 @@ void PipelineTreeMaterializer::materializePrivateNode(
   for (mlir::Operation& op : orig_body.without_terminator()) {
     if (auto alloc_op = mlir::dyn_cast<mlir::memref::AllocOp>(&op)) {
       if (buffer_handler_) {
-        mlir::Operation* new_op =
+        mlir::memref::AllocOp new_op =
             buffer_handler_->handleAllocOp(alloc_op, builder_, value_map_);
         if (new_op) {
-          // Handler created a replacement operation
+          // Handler created a replacement operation.
+          // Update value_map_ to map old result to new result so that when we
+          // replace the yield operands of the private region we use the correct
+          // allocations.
+          value_map_.map(alloc_op.getResult(), new_op.getResult());
           continue;
         }
       }
@@ -279,9 +283,7 @@ void PipelineTreeMaterializer::materializePrivateNode(
   llvm::SmallVector<mlir::Type> result_types;
   llvm::SmallVector<mlir::Value> new_yield_operands;
   for (mlir::Value yielded_val : orig_yield.getOperands()) {
-    mlir::Value mapped_val = value_map_.lookupOrDefault(
-        yielded_val);  // this is wrong...the value_map doesn't hold the
-                       // replaced allocations.. should handleAllocOp update it?
+    mlir::Value mapped_val = value_map_.lookupOrDefault(yielded_val);
     new_yield_operands.push_back(mapped_val);
     result_types.push_back(mapped_val.getType());
   }
@@ -313,6 +315,8 @@ void PipelineTreeMaterializer::materializePrivateNode(
 
   // Restore insertion point
   builder_.setInsertionPointAfter(new_private);
+
+  //  new_private.dump();
 
   // Track the materialized operation
   node_to_materialized_op_[&private_node] = new_private.getOperation();

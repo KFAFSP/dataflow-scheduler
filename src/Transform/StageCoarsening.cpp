@@ -167,18 +167,12 @@ class StageCoarseningBufferHandler : public scheduler::BufferHandler {
       buffer_to_info_[info.buffer] = &info;
     }
   }
-  /*
-  virtual ~StageCoarseningBufferHandler() override {
-    for (Operation *op : to_be_deleted_)
-      op->erase();
-  }
-  */
 
   /// Handle allocation operations - expand memref type with additional
   /// dimensions
-  mlir::Operation* handleAllocOp(mlir::memref::AllocOp alloc_op,
-                                 mlir::OpBuilder& builder,
-                                 mlir::IRMapping& value_map) override {
+  mlir::memref::AllocOp handleAllocOp(mlir::memref::AllocOp alloc_op,
+                                      mlir::OpBuilder& builder,
+                                      mlir::IRMapping& value_map) override {
     // Get the result of the allocation
     mlir::Value original_result = alloc_op.getResult();
 
@@ -283,14 +277,13 @@ class StageCoarseningBufferHandler : public scheduler::BufferHandler {
       llvm::dbgs() << "    Expanded type: " << new_type << "\n";
     });
 
-    to_be_deleted_.push_back(alloc_op);
     return new_alloc;
   }
 
   /// Handle data transfer operations - adjust indices for expanded dimensions
-  mlir::Operation* handleDataTransfer(mlir::ktdf::DataTransferOp transfer_op,
-                                      mlir::OpBuilder& builder,
-                                      mlir::IRMapping& value_map) override {
+  mlir::ktdf::DataTransferOp handleDataTransfer(
+      mlir::ktdf::DataTransferOp transfer_op, mlir::OpBuilder& builder,
+      mlir::IRMapping& value_map) override {
     // Get source and destination buffers
     mlir::Value src = transfer_op.getSource();
     mlir::Value dst = transfer_op.getDestination();
@@ -385,14 +378,12 @@ class StageCoarseningBufferHandler : public scheduler::BufferHandler {
         builder, transfer_op.getLoc(), src, new_src_indices, src_sizes, dst,
         new_dst_indices, dst_sizes);
 
-    to_be_deleted_.push_back(transfer_op);
     return new_transfer;
   }
 
  private:
   llvm::SmallVector<BufferExpansionInfo> expansion_infos_;
   llvm::DenseMap<mlir::Value, const BufferExpansionInfo*> buffer_to_info_;
-  llvm::SmallVector<Operation*> to_be_deleted_;  // todo: remove if not needed
 };
 
 //===----------------------------------------------------------------------===//

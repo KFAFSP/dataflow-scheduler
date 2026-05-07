@@ -57,7 +57,7 @@ class BufferHandler {
   /// \param builder The builder positioned where the new alloc should be created
   /// \param value_map The current value mapping for SSA values
   /// \return A new allocation operation, or nullptr to use default behavior
-  virtual mlir::Operation* handleAllocOp(
+  virtual mlir::memref::AllocOp handleAllocOp(
       mlir::memref::AllocOp orig_alloc,
       mlir::OpBuilder& builder,
       mlir::IRMapping& value_map) = 0;
@@ -70,7 +70,7 @@ class BufferHandler {
   /// \param builder The builder positioned where the new transfer should be created
   /// \param value_map The current value mapping for SSA values
   /// \return A new data transfer operation, or nullptr to use default behavior
-  virtual mlir::Operation* handleDataTransfer(
+  virtual mlir::ktdf::DataTransferOp handleDataTransfer(
       mlir::ktdf::DataTransferOp orig_transfer,
       mlir::OpBuilder& builder,
       mlir::IRMapping& value_map) = 0;
