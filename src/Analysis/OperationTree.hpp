@@ -160,6 +160,9 @@ class OperationTreeNode {
   /// Derived classes can override to add domain-specific information.
   virtual void print(raw_ostream &OS) const;
 
+  /// Dump the tree structure for debugging.
+  void dump() const;
+
   /// Unlinks the subtree rooted at this node, but does not free any storage.
   void unlink() {
     OperationTreeNode *prev_sibling = getPrevSibling();
@@ -187,6 +190,11 @@ class OperationTreeNode {
   /// position is given, then it will be added at the end (ie as the last
   /// child).
   void insertChildNode(OperationTreeNode *child, OperationTreeNode *pos = nullptr);
+
+  /// Inserts a child node as the first child of this node.
+  /// Note: When this node is a leaf (has no children), this method behaves
+  /// identically to insertChildNode(child, nullptr).
+  void insertAsFirstChild(OperationTreeNode *child);
 
   /// Walk up the parent chain and find the first parent that matches the predicate.
   /// Returns nullptr if no matching parent is found.

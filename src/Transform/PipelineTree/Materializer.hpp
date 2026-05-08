@@ -125,6 +125,24 @@ class PipelineTreeMaterializer {
   /// Helper to clone stage body operations
   void cloneStageBody(mlir::ktdf::StageOp orig_stage);
 
+  /// Helper to create a private node from scratch with only tokens
+  void materializePrivateNodeFromScratch(
+      const llvm::SmallVector<StageNode*>& stages_with_deps,
+      llvm::SmallVector<mlir::Value>& new_tokens);
+
+  /// Helper to materialize a private node from an existing template
+  void materializePrivateNodeFromTemplate(
+      mlir::ktdf::PrivateOp orig_private,
+      const llvm::SmallVector<StageNode*>& stages_with_deps,
+      llvm::SmallVector<mlir::Value>& new_tokens,
+      const PrivateNode& private_node);
+
+  /// Helper to build stage-to-token mapping
+  void buildStageToTokenMapping(
+      const llvm::SmallVector<StageNode*>& stages_with_deps,
+      mlir::ktdf::PrivateOp new_private,
+      size_t non_token_result_count);
+
   /// MLIR builder for creating operations
   mlir::OpBuilder& builder_;
   
@@ -136,6 +154,10 @@ class PipelineTreeMaterializer {
   
   /// Tracking map from tree nodes to their materialized operations
   llvm::DenseMap<const PipelineTreeNode*, mlir::Operation*> node_to_materialized_op_;
+  
+  /// Mapping from stages to their corresponding token values (results of ktdf.private op)
+  /// This is used to fill in depends_in/depends_out when materializing stages
+  llvm::DenseMap<StageNode*, mlir::Value> stage_to_token_map_;
 };
 
 }  // namespace scheduler

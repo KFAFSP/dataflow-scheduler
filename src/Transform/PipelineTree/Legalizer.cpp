@@ -235,6 +235,55 @@ void StageParentRule::print(llvm::raw_ostream& os) const {
   os << "Stage must have pipeline as immediate parent";
 }
 
+bool PrivateMustExistRule::isViolated(PipelineTreeNode* node,
+                                      PipelineTree& tree) const {
+  // Check if this is a pipeline node
+  if (!node->isPipelineNode()) return false;
+
+  // Check if the first child is a private node
+  OperationTreeNode* first_child = node->getFirstChild();
+  if (first_child &&
+      static_cast<PipelineTreeNode*>(first_child)->isPrivateNode())
+    return false;
+
+  // Check if any immediate child stages have non-empty dependencies
+  OperationTreeNode* child = first_child;
+  while (child) {
+    PipelineTreeNode* child_pnode = static_cast<PipelineTreeNode*>(child);
+    if (!child_pnode->isStageNode()) continue;
+    StageNode* stage = static_cast<StageNode*>(child_pnode);
+    if (!stage->getDependencies().empty()) {
+      return true;
+    }
+    child = child->getNextSibling();
+  }
+  return false;
+}
+
+bool PrivateMustExistRule::fixViolation(PipelineTreeNode* violating_node,
+                                        PipelineTree& tree,
+                                        int& next_coarsened_stage_id) {
+  assert(violating_node->isPipelineNode() && "Expected pipeline node");
+
+  LLVM_DEBUG(
+      llvm::dbgs() << "      Creating private node as first child of pipeline "
+                   << violating_node->getNodeName() << "\n");
+
+  // Create a new private node (unmaterialized)
+  PrivateNode* new_private = tree.createPrivateNode(nullptr);
+
+  // Insert the private node as the first child of the pipeline
+  violating_node->insertAsFirstChild(new_private);
+
+  LLVM_DEBUG(llvm::dbgs() << "      Created private node as first child\n");
+  return true;
+}
+
+void PrivateMustExistRule::print(llvm::raw_ostream& os) const {
+  os << "Pipeline with stages that have dependencies must have private node as "
+        "first child";
+}
+
 //===----------------------------------------------------------------------===//
 // Legalizer Implementation
 //===----------------------------------------------------------------------===//
@@ -243,6 +292,7 @@ Legalizer::Legalizer() : next_coarsened_stage_id_(1000) {
   // Initialize all rules
   rules_.push_back(std::make_unique<PipelineChildrenRule>());
   rules_.push_back(std::make_unique<StageParentRule>());
+  rules_.push_back(std::make_unique<PrivateMustExistRule>());
 }
 
 int Legalizer::findAndFixViolations(PipelineTree& tree) {
@@ -329,6 +379,8 @@ void Legalizer::collectViolations(PipelineTree& tree) {
               rule_copy = std::make_unique<PipelineChildrenRule>();
             } else if (llvm::isa<StageParentRule>(rule.get())) {
               rule_copy = std::make_unique<StageParentRule>();
+            } else if (llvm::isa<PrivateMustExistRule>(rule.get())) {
+              rule_copy = std::make_unique<PrivateMustExistRule>();
             }
 
             violations_.emplace_back(std::move(rule_copy), pnode);

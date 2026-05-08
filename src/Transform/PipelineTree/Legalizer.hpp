@@ -36,7 +36,8 @@ namespace pipeline_tree {
 /// Rule kind enumeration for RTTI
 enum class RuleKind {
   kPipelineChildrenMustBePrivateOrStage,
-  kStageMustHavePipelineParent
+  kStageMustHavePipelineParent,
+  kPrivateMustExistForPipelinesWithStageDeps
 };
 
 /// Base class for structure legality rules
@@ -94,6 +95,23 @@ class StageParentRule : public Rule {
   
   static bool classof(const Rule* rule) {
     return rule->getKind() == RuleKind::kStageMustHavePipelineParent;
+  }
+};
+
+/// Rule 3: A pipeline with stages that have dependencies must have a private node as first child
+class PrivateMustExistRule : public Rule {
+ public:
+  PrivateMustExistRule() : Rule(RuleKind::kPrivateMustExistForPipelinesWithStageDeps) {}
+  
+  bool isViolated(PipelineTreeNode* node, PipelineTree& tree) const override;
+  
+  bool fixViolation(PipelineTreeNode* violating_node,
+                   PipelineTree& tree, int& next_coarsened_stage_id) override;
+  
+  void print(llvm::raw_ostream& os) const override;
+  
+  static bool classof(const Rule* rule) {
+    return rule->getKind() == RuleKind::kPrivateMustExistForPipelinesWithStageDeps;
   }
 };
 

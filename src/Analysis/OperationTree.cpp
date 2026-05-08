@@ -82,6 +82,16 @@ void OperationTreeNode::insertChildNode(OperationTreeNode* child,
   child->setParentNode(this);
 }
 
+void OperationTreeNode::insertAsFirstChild(OperationTreeNode* child) {
+  assert(child && "Cannot insert null child");
+  OperationTreeNode* old_first_child = getFirstChild();
+  if (old_first_child) {
+    child->setNextSibling(old_first_child);
+  }
+  setFirstChild(child);
+  child->setParentNode(this);
+}
+
 void OperationTreeNode::print(raw_ostream& OS) const {
   preOrderWalk(const_cast<OperationTreeNode*>(this),
                [&OS](OperationTreeNode* n) {
@@ -92,6 +102,8 @@ void OperationTreeNode::print(raw_ostream& OS) const {
                  return nullptr;
                });
 }
+
+void OperationTreeNode::dump() const { print(llvm::outs()); }
 
 void OperationTreeNode::unlinkNode() {
   OperationTreeNode* parent = getParentNode();

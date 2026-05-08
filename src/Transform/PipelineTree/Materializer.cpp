@@ -148,12 +148,53 @@ mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
     loc = orig_stage.getLoc();
   }
 
-  // For now, create a simple stage without dependencies
-  // TODO: Handle token dependencies properly
+  LLVM_DEBUG(llvm::dbgs() << "    Materializing stage "
+                          << stage_node.getStageId() << "\n");
+
+  // Build depends_in and depends_out from stage dependencies
+  llvm::SmallVector<mlir::Value> depends_in;
+  llvm::SmallVector<mlir::Value> depends_out;
+
+  // For depends_out: find tokens corresponding to stages that depend on this
+  // stage
+  for (StageNode* dependent_stage : stage_node.getDependencies()) {
+    auto it = stage_to_token_map_.find(dependent_stage);
+    if (it == stage_to_token_map_.end()) continue;  // depends_out(none)
+    depends_out.push_back(it->second);
+    LLVM_DEBUG(llvm::dbgs() << "      Added depends_out token for stage "
+                            << dependent_stage->getStageId() << "\n");
+  }
+
+  // For depends_in: find stages that this stage depends on
+  // We need to look at all stages in the parent pipeline and check if this
+  // stage is in their dependencies
+  const PipelineTreeNode* parent =
+      static_cast<const PipelineTreeNode*>(stage_node.getParentNode());
+  if (parent && parent->isPipelineNode()) {
+    const PipelineNode* pipeline_parent =
+        static_cast<const PipelineNode*>(parent);
+    llvm::SmallVector<StageNode*> all_stages = pipeline_parent->getStages();
+
+    for (StageNode* other_stage : all_stages) {
+      // Check if this stage is in other_stage's dependencies
+      for (StageNode* dep : other_stage->getDependencies()) {
+        if (dep != &stage_node) continue;
+        // This stage depends on other_stage, find its token
+        auto it = stage_to_token_map_.find(other_stage);
+        assert(it != stage_to_token_map_.end() &&
+               "expected token to have been created during materialization of "
+               "private op");
+        depends_in.push_back(it->second);
+        LLVM_DEBUG(llvm::dbgs() << "      Added depends_in token from stage "
+                                << other_stage->getStageId() << "\n");
+        break;
+      }
+    }
+  }
+
+  // Create the stage with proper dependencies
   auto new_stage =
-      mlir::ktdf::StageOp::create(builder_, loc,
-                                  /*depends_in=*/mlir::ValueRange{},
-                                  /*depends_out=*/mlir::ValueRange{});
+      mlir::ktdf::StageOp::create(builder_, loc, depends_in, depends_out);
 
   // Track the materialized operation
   node_to_materialized_op_[&stage_node] = new_stage.getOperation();
@@ -241,12 +282,95 @@ void PipelineTreeMaterializer::materializePrivateNode(
   // all stages. In the future, we should properly handle buffer privatization
   // for nested pipelines by moving relevant allocations to the nested
   // pipeline's private clause.
-  mlir::Operation* orig_private_op = private_node.getOperation();
-  assert(orig_private_op && "Private node must have an operation");
 
   LLVM_DEBUG(llvm::dbgs() << "    Materializing private clause\n");
 
+  // Get the parent pipeline node to access its stages for token mapping
+  const PipelineTreeNode* parent =
+      static_cast<const PipelineTreeNode*>(private_node.getParentNode());
+  assert(parent && parent->isPipelineNode() &&
+         "Private node must have a pipeline parent");
+  const PipelineNode* pipeline_parent =
+      static_cast<const PipelineNode*>(parent);
+  llvm::SmallVector<StageNode*> stages = pipeline_parent->getStages();
+
+  // Track which tokens we need to create (only for stages with dependencies)
+  llvm::SmallVector<mlir::Value> new_tokens;
+  llvm::SmallVector<StageNode*> stages_with_deps;
+
+  // Identify stages that have dependencies (need tokens)
+  for (StageNode* stage : stages) {
+    if (stage->getDependencies().empty()) continue;
+    stages_with_deps.push_back(stage);
+  }
+
+  mlir::Operation* orig_private_op = private_node.getOperation();
+  mlir::Operation* template_op = private_node.getTemplateOp();
+
+  // Handle unmaterialized private node with no template - create from scratch
+  if (!orig_private_op && !template_op) {
+    materializePrivateNodeFromScratch(stages_with_deps, new_tokens);
+    return;
+  }
+
+  // Handle materialized or template-based private node
+  assert(orig_private_op && "Private node must have an operation or template");
   auto orig_private = mlir::cast<mlir::ktdf::PrivateOp>(orig_private_op);
+  materializePrivateNodeFromTemplate(orig_private, stages_with_deps, new_tokens,
+                                     private_node);
+}
+
+void PipelineTreeMaterializer::materializePrivateNodeFromScratch(
+    const llvm::SmallVector<StageNode*>& stages_with_deps,
+    llvm::SmallVector<mlir::Value>& new_tokens) {
+  LLVM_DEBUG(llvm::dbgs()
+             << "    Creating private node from scratch with only tokens\n");
+
+  // Create result types (only tokens - one per stage with dependencies)
+  llvm::SmallVector<mlir::Type> result_types;
+  mlir::Type token_type = mlir::ktdf::TokenType::get(builder_.getContext());
+  for (size_t i = 0; i < stages_with_deps.size(); ++i) {
+    result_types.push_back(token_type);
+  }
+
+  // Create the private operation with known result types
+  auto new_private = mlir::ktdf::PrivateOp::create(
+      builder_, builder_.getUnknownLoc(), result_types);
+
+  // Get the empty block that was created with the private op
+  mlir::Block& private_body = new_private.getBody().front();
+
+  // Insert token creation operations directly into the private body
+  builder_.setInsertionPointToStart(&private_body);
+
+  // Create tokens for stages with dependencies
+  for (StageNode* stage : stages_with_deps) {
+    mlir::Value new_token =
+        mlir::ktdf::CreateTokenOp::create(builder_, builder_.getUnknownLoc())
+            .getResult();
+    new_tokens.push_back(new_token);
+
+    LLVM_DEBUG(llvm::dbgs() << "      Created new token for stage "
+                            << stage->getStageId() << "\n");
+  }
+
+  // Create yield in the private body
+  mlir::ktdf::PrivateYieldOp::create(builder_, builder_.getUnknownLoc(),
+                                     new_tokens);
+
+  // Build the stage-to-token mapping (all results are tokens, starting at index
+  // 0)
+  buildStageToTokenMapping(stages_with_deps, new_private, 0);
+
+  // Restore insertion point
+  builder_.setInsertionPointAfter(new_private);
+}
+
+void PipelineTreeMaterializer::materializePrivateNodeFromTemplate(
+    mlir::ktdf::PrivateOp orig_private,
+    const llvm::SmallVector<StageNode*>& stages_with_deps,
+    llvm::SmallVector<mlir::Value>& new_tokens,
+    const PrivateNode& private_node) {
   mlir::Block& orig_body = orig_private.getBody().front();
 
   // Save the current insertion point (inside the new pipeline body)
@@ -257,6 +381,12 @@ void PipelineTreeMaterializer::materializePrivateNode(
   builder_.setInsertionPointToStart(&tmp_block);
 
   for (mlir::Operation& op : orig_body.without_terminator()) {
+    // Skip stale ktdf.create_token ops - we'll create new ones
+    if (mlir::isa<mlir::ktdf::CreateTokenOp>(&op)) {
+      LLVM_DEBUG(llvm::dbgs() << "      Skipping stale create_token op\n");
+      continue;
+    }
+
     if (auto alloc_op = mlir::dyn_cast<mlir::memref::AllocOp>(&op)) {
       if (buffer_cloner_) {
         mlir::memref::AllocOp new_op =
@@ -276,16 +406,42 @@ void PipelineTreeMaterializer::materializePrivateNode(
     builder_.clone(op, value_map_);
   }
 
+  // Create new ktdf.create_token ops only for stages with dependencies
+  // These tokens will be used for stage dependencies
+  for (StageNode* stage : stages_with_deps) {
+    mlir::Value new_token =
+        mlir::ktdf::CreateTokenOp::create(builder_, orig_private.getLoc())
+            .getResult();
+    new_tokens.push_back(new_token);
+
+    LLVM_DEBUG(llvm::dbgs() << "      Created new token for stage "
+                            << stage->getStageId() << "\n");
+  }
+
   // Get the yield operation and determine result types from mapped operands
   auto orig_yield =
       mlir::cast<mlir::ktdf::PrivateYieldOp>(orig_body.getTerminator());
 
   llvm::SmallVector<mlir::Type> result_types;
   llvm::SmallVector<mlir::Value> new_yield_operands;
+
+  // First, add all non-token yielded values (buffers, etc.)
+  size_t non_token_count = 0;
   for (mlir::Value yielded_val : orig_yield.getOperands()) {
+    // Skip old token values - we'll yield the new tokens instead
+    if (mlir::isa<mlir::ktdf::TokenType>(yielded_val.getType())) {
+      continue;
+    }
     mlir::Value mapped_val = value_map_.lookupOrDefault(yielded_val);
     new_yield_operands.push_back(mapped_val);
     result_types.push_back(mapped_val.getType());
+    non_token_count++;
+  }
+
+  // Now add the new tokens to the yield operands
+  for (mlir::Value new_token : new_tokens) {
+    new_yield_operands.push_back(new_token);
+    result_types.push_back(new_token.getType());
   }
 
   // Restore insertion point to create the private operation in the right place
@@ -307,19 +463,41 @@ void PipelineTreeMaterializer::materializePrivateNode(
   mlir::ktdf::PrivateYieldOp::create(builder_, orig_yield.getLoc(),
                                      new_yield_operands);
 
-  // Map original private results to new private results
-  for (auto [orig_result, new_result] :
-       llvm::zip(orig_private.getResults(), new_private.getResults())) {
-    value_map_.map(orig_result, new_result);
+  // Map original private results to new private results (non-token results
+  // only)
+  size_t non_token_result_idx = 0;
+  for (mlir::Value orig_result : orig_private.getResults()) {
+    if (!mlir::isa<mlir::ktdf::TokenType>(orig_result.getType())) {
+      // This is a non-token result (e.g., buffer), map it to the corresponding
+      // new result
+      mlir::Value new_result = new_private.getResult(non_token_result_idx);
+      value_map_.map(orig_result, new_result);
+      non_token_result_idx++;
+    }
   }
+
+  // Build the stage-to-token mapping (tokens start after non-token results)
+  buildStageToTokenMapping(stages_with_deps, new_private, non_token_count);
 
   // Restore insertion point
   builder_.setInsertionPointAfter(new_private);
 
-  //  new_private.dump();
-
   // Track the materialized operation
   node_to_materialized_op_[&private_node] = new_private.getOperation();
+}
+
+void PipelineTreeMaterializer::buildStageToTokenMapping(
+    const llvm::SmallVector<StageNode*>& stages_with_deps,
+    mlir::ktdf::PrivateOp new_private, size_t non_token_result_count) {
+  // Token results come after non-token results in the new private op
+  for (size_t i = 0; i < stages_with_deps.size(); ++i) {
+    mlir::Value token_result =
+        new_private.getResult(non_token_result_count + i);
+    stage_to_token_map_[stages_with_deps[i]] = token_result;
+    LLVM_DEBUG(llvm::dbgs()
+               << "      Mapped stage " << stages_with_deps[i]->getStageId()
+               << " to token result " << (non_token_result_count + i) << "\n");
+  }
 }
 
 }  // namespace scheduler
