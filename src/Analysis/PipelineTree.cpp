@@ -97,11 +97,6 @@ void StageNode::print(raw_ostream& os) const {
 
 void PrivateNode::print(raw_ostream& os) const {
   printNodeHeader(os);
-
-  if (!expanded_buffers_.empty()) {
-    os << " [expanded buffers: " << expanded_buffers_.size() << "]";
-  }
-
   os << "\n";
   printChildren(os);
 }

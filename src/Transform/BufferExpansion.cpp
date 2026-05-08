@@ -546,6 +546,16 @@ void PerformBufferExpansionAnalysis(
         llvm::dbgs() << "    Buffer expansion: " << info->loop_ivs.size()
                      << " new dimension(s)\n";
       });
+      
+      // Assert that all users of this buffer are data transfer operations.
+      // If other operations use a buffer that is a candidate for expansion,
+      // we would likely require custom cloners for them as well.
+      for (mlir::Operation* user : buffer.getUsers()) {
+        assert(mlir::isa<mlir::ktdf::DataTransferOp>(user) &&
+               "Expected all users of buffers marked for expansion to be "
+               "ktdf::DataTransferOp.");
+      }
+      
       expansion_infos.push_back(info);
     } else {
       delete info;

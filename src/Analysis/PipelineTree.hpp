@@ -196,26 +196,23 @@ class StageNode : public PipelineTreeNode {
 };
 
 /// Private node representing ktdf.private operations
+/// Note: we do not represent resource allocations such as memref.alloc or
+/// fifo.allocate ops as first-class nodes in this tree, because manipulating
+/// them would require tracking SSA chains which would be awkward and difficult
+/// during materialization. Therefore by design, this tree is only meant for
+/// capturing structural relationships, not def-use relations. Furthermore,
+/// stage dependencies are captured by the stages so we do not represent tokens
+/// in this tree. As a result prvaite nodes do not currently have children in
+/// this representation. The reason we have private nodes at all is for
+/// legalization (to disallow anything other than private or stage as immediate
+/// children of pipeline nodes)
 class PrivateNode : public PipelineTreeNode {
  public:
   PrivateNode(Operation *op) : PipelineTreeNode(op) {}
 
   bool isPrivateNode() const final override { return true; }
   std::string getNodeName() const override { return "private"; }
-
-  /// Track expanded buffer allocations (memref.alloc operations)
-  void addExpandedBuffer(Operation *alloc) {
-    expanded_buffers_.push_back(alloc);
-  }
-
-  const llvm::SmallVector<mlir::Operation *> &getExpandedBuffers() const {
-    return expanded_buffers_;
-  }
-
-  void print(raw_ostream &os) const override;
-
- private:
-  llvm::SmallVector<mlir::Operation *> expanded_buffers_;  // memref allocation operations
+  void print(raw_ostream& os) const override;
 };
 
 /// Pipeline tree representing the complete hierarchical structure
