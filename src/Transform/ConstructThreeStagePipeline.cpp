@@ -35,6 +35,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
+#include "src/Transform/Utils/CustomTiling.h"
 #include "src/Utils/SchedulerExtContext.h"
 
 #define PASS_NAME "construct-three-stage-pipeline"
@@ -404,12 +405,13 @@ void ConstructThreeStagePipelinePass::createLoopsFromLinalg(
     });
 
     // Tile the linalg.generic operation with the computed tile sizes
+    // Use custom tiling that doesn't create iter_args.
     linalg::LinalgTilingOptions tiling_options;
     tiling_options.setTileSizes(tile_sizes_);
     tiling_options.setLoopType(linalg::LinalgTilingLoopType::Loops);
 
     FailureOr<linalg::TiledLinalgOp> tiled_result =
-        linalg::tileLinalgOp(rewriter, linalg_op, tiling_options);
+        linalg::customTileLinalgOp(rewriter, linalg_op, tiling_options);
 
     if (failed(tiled_result)) {
       linalg_op.emitError("Failed to tile linalg operation");
@@ -619,10 +621,9 @@ void ConstructThreeStagePipelinePass::deleteOpAndUnusedAncestors(
                               op->getOperands().end());
   op->erase();
 
-  // Recursively delete unused ancestor operations, but preserve loop structures
+  // Recursively delete unused ancestor operations
   for (auto operand : operands) {
     if (auto* def_op = operand.getDefiningOp()) {
-      if (isa<scf::ForOp>(def_op)) continue;
       if (def_op->use_empty()) deleteOpAndUnusedAncestors(def_op);
     }
   }
