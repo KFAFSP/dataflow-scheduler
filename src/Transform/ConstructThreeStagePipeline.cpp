@@ -96,11 +96,17 @@ struct ConstructThreeStagePipelinePass
   // Builder for constants at function start
   std::optional<OpBuilder> const_builder_;
 
+  // Process a single function
+  void runOnFunc(func::FuncOp func_op);
+
+  // Reset state between function processing
+  void resetState();
+
   // Generalize named linalg operations to linalg.generic
-  LogicalResult generalizeLinalgOps(ModuleOp module);
+  LogicalResult generalizeLinalgOps(func::FuncOp func_op);
 
   // Fuse consecutive linalg.generic operations
-  LogicalResult fuseLinalgOps(ModuleOp module);
+  LogicalResult fuseLinalgOps(func::FuncOp func_op);
 
   // Determine tile sizes based on stick_size from linalg operation
   SmallVector<int64_t> determineTileSizes(linalg::LinalgOp linalgOp);
@@ -138,7 +144,7 @@ struct ConstructThreeStagePipelinePass
   void deleteOpAndUnusedAncestors(Operation* op);
 
   // Replace construct_access_tile with memref.reinterpret_cast
-  void replaceAccessTilesWithReinterpretCast(ModuleOp module);
+  void replaceAccessTilesWithReinterpretCast(func::FuncOp func_op);
 
   // Get strides from memref type, computing default row-major strides if needed
   SmallVector<int64_t> getStridesFromMemRefType(MemRefType memref_type);
@@ -147,13 +153,24 @@ struct ConstructThreeStagePipelinePass
   void cleanupOperations();
 };
 
+void ConstructThreeStagePipelinePass::resetState() {
+  load_ops_.clear();
+  store_ops_.clear();
+  compute_ops_.clear();
+  tiled_loops_.clear();
+  tile_sizes_.clear();
+  total_num_elements_ = 0;
+  ops_to_delete_.clear();
+  const_builder_.reset();
+}
+
 LogicalResult ConstructThreeStagePipelinePass::generalizeLinalgOps(
-    ModuleOp module) {
+    func::FuncOp func_op) {
   LLVM_DEBUG(llvm::dbgs()
              << "Generalizing named linalg operations to linalg.generic\n");
 
   SmallVector<linalg::LinalgOp> linalg_ops;
-  module.walk([&](linalg::LinalgOp linalg_op) {
+  func_op.walk([&](linalg::LinalgOp linalg_op) {
     // Skip if already generic
     if (!isa<linalg::GenericOp>(linalg_op.getOperation())) {
       linalg_ops.push_back(linalg_op);
@@ -181,11 +198,12 @@ LogicalResult ConstructThreeStagePipelinePass::generalizeLinalgOps(
   return success();
 }
 
-LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(ModuleOp module) {
+LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(
+    func::FuncOp func_op) {
   LLVM_DEBUG(llvm::dbgs() << "Fusing consecutive linalg.generic operations\n");
 
   SmallVector<linalg::GenericOp> worklist;
-  module.walk(
+  func_op.walk(
       [&](linalg::GenericOp generic_op) { worklist.push_back(generic_op); });
 
   IRRewriter rewriter(&getContext());
@@ -754,9 +772,9 @@ void ConstructThreeStagePipelinePass::createComputeOps(
 }
 
 void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
-    ModuleOp module) {
+    func::FuncOp func_op) {
   SmallVector<ktdp::ConstructAccessTilesOp> access_tiles;
-  module.walk([&](ktdp::ConstructAccessTilesOp access_tile) {
+  func_op.walk([&](ktdp::ConstructAccessTilesOp access_tile) {
     access_tiles.push_back(access_tile);
   });
 
@@ -771,13 +789,13 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     insertion_point = tiled_loops_.front();
   } else {
     // Fallback: find the last memory view operation
-    module.walk([&](ktdp::ConstructMemoryViewOp memory_view) {
+    func_op.walk([&](ktdp::ConstructMemoryViewOp memory_view) {
       insertion_point = memory_view.getOperation();
     });
   }
 
   if (!insertion_point) {
-    module.emitError(
+    func_op.emitError(
         "No insertion point found for reinterpret_cast operations");
     signalPassFailure();
     return;
@@ -872,48 +890,39 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
   }
 }
 
-void ConstructThreeStagePipelinePass::runOnOperation() {
-  if (DisableThisPass) return;
+void ConstructThreeStagePipelinePass::runOnFunc(func::FuncOp func_op) {
+  LLVM_DEBUG(llvm::dbgs() << "Processing function: " << func_op.getName()
+                          << "\n");
 
-  ModuleOp module = getOperation();
-
-  LLVM_DEBUG(
-      llvm::dbgs() << "Starting ConstructThreeStagePipeline transformation\n");
-
-  // Initialize const_builder_ and set insertion point at start of first
-  // function
-  module.walk([&](func::FuncOp func_op) {
-    if (!func_op.empty()) {
-      const_builder_.emplace(&getContext());
-      const_builder_->setInsertionPointToStart(&func_op.front());
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
+  // Initialize const_builder_ at start of function
+  if (!func_op.empty()) {
+    const_builder_.emplace(&getContext());
+    const_builder_->setInsertionPointToStart(&func_op.front());
+  }
 
   // Step 1: Generalize named linalg operations to linalg.generic
-  if (failed(generalizeLinalgOps(module))) {
-    module.emitError("Failed to generalize linalg operations");
+  if (failed(generalizeLinalgOps(func_op))) {
+    func_op.emitError("Failed to generalize linalg operations");
     signalPassFailure();
     return;
   }
 
   DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << "After generalization:\n"
-                                             << module << "\n\n");
+                                             << func_op << "\n\n");
 
   // Step 2: Fuse consecutive linalg.generic operations
-  if (failed(fuseLinalgOps(module))) {
-    module.emitError("Failed to fuse linalg operations");
+  if (failed(fuseLinalgOps(func_op))) {
+    func_op.emitError("Failed to fuse linalg operations");
     signalPassFailure();
     return;
   }
 
   DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << "After fusion:\n"
-                                             << module << "\n\n");
+                                             << func_op << "\n\n");
 
   // Collect ktdp load/store operations and linalg operations
   SmallVector<linalg::LinalgOp> linalg_ops;
-  module.walk([&](Operation* op) {
+  func_op.walk([&](Operation* op) {
     if (auto load_op = dyn_cast<ktdp::LoadOp>(op)) {
       load_ops_.push_back(load_op);
       ops_to_delete_.push_back(op);
@@ -929,7 +938,7 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
   createLoopsFromLinalg(linalg_ops);
 
   DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << "After loops created:\n"
-                                             << module << "\n\n");
+                                             << func_op << "\n\n");
 
   // Step 4: Create pipeline if we have tiled loops
   if (!tiled_loops_.empty()) {
@@ -938,16 +947,31 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
   }
 
   DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << "After pipeline created:\n"
-                                             << module << "\n\n");
+                                             << func_op << "\n\n");
 
   // Step 5: Replace access tiles with reinterpret_cast after pipeline creation
-  replaceAccessTilesWithReinterpretCast(module);
+  replaceAccessTilesWithReinterpretCast(func_op);
 
   // Step 6: Cleanup operations (removes original load/store/compute ops)
   cleanupOperations();
 
   DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << "After cleanup:\n"
-                                             << module << "\n\n");
+                                             << func_op << "\n\n");
+}
+
+void ConstructThreeStagePipelinePass::runOnOperation() {
+  if (DisableThisPass) return;
+
+  ModuleOp module = getOperation();
+
+  LLVM_DEBUG(
+      llvm::dbgs() << "Starting ConstructThreeStagePipeline transformation\n");
+
+  // Process each function in each nested module
+  module.walk([&](func::FuncOp func_op) {
+    resetState();
+    runOnFunc(func_op);
+  });
 }
 
 namespace ktdf {
