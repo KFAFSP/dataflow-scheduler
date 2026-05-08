@@ -41,15 +41,15 @@ module {
 
     // Looping over tile size with each iteration working over 1x64 fp16
     scf.for %i = %c0 to %tile_size step %c1 {
-
+        %start_row_i = arith.addi %start_row, %i : index
         // Construct an access tile from the memory view of A
-        %A_access_tile = ktdp.construct_access_tile %A_view[%start_row + %i, %c0] {
+        %A_access_tile = ktdp.construct_access_tile %A_view[%start_row_i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = #identity
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
 
         // Construct an access tile from the memory view of B
-        %B_access_tile = ktdp.construct_access_tile %B_view[%start_row + %i, %c0] {
+        %B_access_tile = ktdp.construct_access_tile %B_view[%start_row_i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = #identity
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
@@ -66,7 +66,7 @@ module {
                     outs(%C_data_tile: tensor<1x64xf16>) -> tensor<1x64xf16>
 
         // Construct an access tile from the memory view of C
-        %C_access_tile = ktdp.construct_access_tile %C_view[%start_row + %i, %c0] {
+        %C_access_tile = ktdp.construct_access_tile %C_view[%start_row_i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = #identity
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
@@ -131,14 +131,16 @@ module {
             memory_space = #ktdp.spyre_memory_space<HBM>
         } : memref<96x64xf16>
         
+        %start_row_i = arith.addi %start_row, %i : index
+
         // Construct an access tile from the memory view of A
-        %A_access_tile = ktdp.construct_access_tile %A_view[%start_row + %i, %c0] {
+        %A_access_tile = ktdp.construct_access_tile %A_view[%start_row_i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = #identity
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
 
         // Construct an access tile from the memory view of B
-        %B_access_tile = ktdp.construct_access_tile %B_view[%start_row + %i, %c0] {
+        %B_access_tile = ktdp.construct_access_tile %B_view[%start_row_i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = #identity
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
@@ -155,7 +157,7 @@ module {
                     outs(%C_data_tile: tensor<1x64xf16>) -> tensor<1x64xf16>
 
         // Construct an access tile from the memory view of C
-        %C_access_tile = ktdp.construct_access_tile %C_view[%start_row + %i, %c0] {
+        %C_access_tile = ktdp.construct_access_tile %C_view[%start_row_i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = #identity
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
@@ -226,32 +228,38 @@ module {
         
         scf.for %m = %c0 to %c1 step %c1 {ktdf.loop parallel} {
           scf.for %n = %c0 to %c64 step %c64 {ktdf.loop parallel} {                                                                                                       
-            ktdf.pipeline depth(0)  {                                                              
-              %res_sfp_A, %res_sfp_B, %res_sfp_out, %res_t1, %res_t2, %res_t3 = ktdf.private {                      
-                %sfp_A   = memref.alloc() : memref<64xf16, "SFP_REG">                                               
-                %sfp_B   = memref.alloc() : memref<64xf16, "SFP_REG">                                               
-                %sfp_out = memref.alloc() : memref<64xf16, "SFP_REG">                                               
+            ktdf.pipeline {                                                              
+              %res_fifo_A, %res_fifo_B, %res_fifo_out, %res_t1, %res_t2, %res_t3 = ktdf.private {                       
+                %fifo_slot_A = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+                %fifo_slot_B = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+                %fifo_slot_out = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
+                                                          
                 %t1 = ktdf.create_token : !ktdf.token                                                              
                 %t2 = ktdf.create_token : !ktdf.token                                                               
                 %t3 = ktdf.create_token : !ktdf.token                                                               
-                ktdf.private_yield %sfp_A, %sfp_B, %sfp_out, %t1, %t2, %t3                                          
-                    : memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">,              
-                      !ktdf.token, !ktdf.token, !ktdf.token                                                         
+                ktdf.private_yield %fifo_slot_A, %fifo_slot_B, %fifo_slot_out, %t1, %t2, %t3                                          
+                    : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>,              
+                      !ktdf.token, !ktdf.token, !ktdf.token
               }                                                                                                                                                         
               ktdf.stage depend_in() depend_out(%res_t1) {                                                          
-                ktdf.data_transfer from %A[%m, %n] size [1, 64] to %res_sfp_A[%c0] size [64] : memref<1x64xf16, "DRAM">, memref<64xf16, "SFP_REG">
-                ktdf.data_transfer from %B[%m, %n] size [1, 64] to %res_sfp_B[%c0] size [64] : memref<1x64xf16, "DRAM">, memref<64xf16, "SFP_REG">
-                ktdf.stage_yield                                                                                                                                       
+                ktdf.data_transfer from %A[%m, %n] size [1, 64] to %res_fifo_A size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+                ktdf.data_transfer from %B[%m, %n] size [1, 64] to %res_fifo_B size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
               }                                                                                                     
               
-              ktdf.stage depend_in(%res_t1) depend_out(%res_t2) {                                                   
-                linalg.add ins(%res_sfp_A, %res_sfp_B : memref<64xf16, "SFP_REG">, memref<64xf16, "SFP_REG">) outs(%res_sfp_out : memref<64xf16, "SFP_REG">)          
-                ktdf.stage_yield                                                                                    
+              ktdf.stage depend_in(%res_t1) depend_out(%res_t2) {                 
+                %fifo_read_A = ktdf.read_from_fifo %res_fifo_A : <"lxlu-to-sfp", 64xf16> -> tensor<1x64xf16>
+                %fifo_read_B = ktdf.read_from_fifo %res_fifo_B : <"lxlu-to-sfp", 64xf16> -> tensor<1x64xf16>
+                %C_tensor = tensor.empty() : tensor<1x64xf16>
+                %add = linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel", "parallel"]} ins(%fifo_read_A, %fifo_read_B : tensor<1x64xf16>, tensor<1x64xf16>) outs(%C_tensor : tensor<1x64xf16>) {
+                ^bb0(%in: f16, %in_10: f16, %out: f16):
+                  %14 = arith.addf %in, %in_10 : f16
+                  linalg.yield %14 : f16
+                } -> tensor<1x64xf16>
+                ktdf.write_to_fifo %add, %res_fifo_out : tensor<1x64xf16>, <"sfp-to-lxsu", 64xf16>
               }                                                                                                     
               
               ktdf.stage depend_in(%res_t2) depend_out(%res_t3) {                                                   
-                ktdf.data_transfer from %res_sfp_out[%c0] size [64] to %C[%m, %n] size [1, 64] : memref<64xf16, "SFP_REG">, memref<1x64xf16, "DRAM">
-                ktdf.stage_yield                                                                                   
+                ktdf.data_transfer from %res_fifo_out size [64] to %reinterpret_cast_9[%arg1, %arg2] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>>                
               }                                                                                                    
             } // ktdf.pipeline depth(0)                                                                            
           } // scf.for n parallel
