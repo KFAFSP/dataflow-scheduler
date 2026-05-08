@@ -9,7 +9,7 @@
 //
 // This pass performs the following steps in order to create a three-stage
 // pipeline:
-//   Step 1: Generalize named linalg operations to linalg.generic
+//   Step 1: Generalize linalg, arith, and math operations to linalg.generic
 //   Step 2: Fuse consecutive linalg.generic operations
 //   Step 3: Create loops from linalg operations (tiling)
 //   Step 4: Create pipeline with three stages (load, compute, store)
@@ -25,12 +25,14 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
 #include "src/Utils/SchedulerExtContext.h"
@@ -166,21 +168,27 @@ void ConstructThreeStagePipelinePass::resetState() {
 
 LogicalResult ConstructThreeStagePipelinePass::generalizeLinalgOps(
     func::FuncOp func_op) {
-  LLVM_DEBUG(llvm::dbgs()
-             << "Generalizing named linalg operations to linalg.generic\n");
+  LLVM_DEBUG(
+      llvm::dbgs()
+      << "Generalizing linalg, arith, and math operations to linalg.generic\n");
 
   SmallVector<linalg::LinalgOp> linalg_ops;
-  func_op.walk([&](linalg::LinalgOp linalg_op) {
-    // Skip if already generic
-    if (!isa<linalg::GenericOp>(linalg_op.getOperation())) {
-      linalg_ops.push_back(linalg_op);
+
+  func_op.walk([&](Operation* op) {
+    // Collect linalg operations that are not already generic
+    if (auto linalg_op = dyn_cast<linalg::LinalgOp>(op)) {
+      if (!isa<linalg::GenericOp>(op)) {
+        linalg_ops.push_back(linalg_op);
+      }
     }
   });
 
   IRRewriter rewriter(&getContext());
+
+  // Generalize named linalg operations
   for (auto linalg_op : linalg_ops) {
     LLVM_DEBUG(llvm::dbgs()
-               << "  Generalizing: " << linalg_op->getName() << "\n");
+               << "  Generalizing linalg op: " << linalg_op->getName() << "\n");
     rewriter.setInsertionPoint(linalg_op);
 
     FailureOr<linalg::GenericOp> generic_result =
@@ -190,11 +198,22 @@ LogicalResult ConstructThreeStagePipelinePass::generalizeLinalgOps(
       linalg_op.emitError("Failed to generalize linalg operation");
       return failure();
     }
-
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Successfully generalized to linalg.generic\n");
   }
 
+  // Convert arith and math operations to linalg using elementwise patterns
+  LLVM_DEBUG(llvm::dbgs() << "  Converting arith/math operations\n");
+
+  RewritePatternSet patterns(&getContext());
+  linalg::populateElementwiseToLinalgConversionPatterns(patterns);
+
+  if (failed(applyPatternsGreedily(func_op, std::move(patterns)))) {
+    func_op.emitError(
+        "Failed to convert arith/math operations to linalg.generic");
+    return failure();
+  }
+
+  LLVM_DEBUG(llvm::dbgs()
+             << "  Successfully generalized compute ops to linalg.generic\n");
   return success();
 }
 
