@@ -75,11 +75,11 @@ void PipelineTreeNode::printChildren(raw_ostream& os) const {
 //===----------------------------------------------------------------------===//
 
 void StageNode::print(raw_ostream& os) const {
-  constexpr bool kShowDependencies = false;
+  constexpr bool kShowDependencies = true;
   printNodeHeader(os);
 
   if (kShowDependencies && !dependencies_.empty()) {
-    os << " [depends on: ";
+    os << " [unblocks: ";
     for (size_t i = 0; i < dependencies_.size(); ++i) {
       if (i > 0) os << ", ";
       os << "Stage " << dependencies_[i]->getStageId();
@@ -151,13 +151,13 @@ void PipelineTree::compute(Operation& unit) {
 
     // Create appropriate node type based on operation using factory methods
     PipelineTreeNode* node = nullptr;
-    if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+    if (isa<scf::ForOp>(op)) {
       node = createLoopNode(op);
-    } else if (auto pipelineOp = dyn_cast<PipelineOp>(op)) {
+    } else if (isa<PipelineOp>(op)) {
       node = createPipelineNode(op);
-    } else if (auto stageOp = dyn_cast<StageOp>(op)) {
+    } else if (isa<StageOp>(op)) {
       node = createStageNode(op, next_stage_id++);
-    } else if (auto privateOp = dyn_cast<PrivateOp>(op)) {
+    } else if (isa<PrivateOp>(op)) {
       node = createPrivateNode(op);
     }
     if (!node) return;
@@ -176,9 +176,40 @@ void PipelineTree::compute(Operation& unit) {
     parent->insertChildNode(node);
   });
 
-  // TODO: Build stage dependencies by analyzing token flow
-  // This would require analyzing ConsumeTokenOp and ProduceTokenOp
-  // to determine which stages depend on which other stages
+  // Build stage dependencies by analyzing token flow
+  // For each pipeline, analyze the token dependencies between stages
+  unit.walk([&](PipelineOp pipeline_op) {
+    // Map from token values to the stages that produce them (depends_out)
+    llvm::DenseMap<Value, StageNode*> token_producers;
+    
+    // First pass: collect all token producers
+    for (auto stage_op : pipeline_op.getStages()) {
+      StageNode* stage_node = static_cast<StageNode*>(getNodeForOp(stage_op));
+      assert(stage_node);
+      
+      // Record this stage as a producer for all its output tokens
+      for (Value token : stage_op.getDependsOut()) {
+        token_producers[token] = stage_node;
+      }
+    }
+    
+    // Second pass: build dependencies by matching consumers to producers
+    for (auto stage_op : pipeline_op.getStages()) {
+      StageNode* consumer_stage = static_cast<StageNode*>(getNodeForOp(stage_op));
+      assert(consumer_stage);
+      
+      // For each input token, find the producer stage and add this stage
+      // as a dependency of that producer
+      for (Value token : stage_op.getDependsIn()) {
+        auto it = token_producers.find(token);
+        if (it != token_producers.end()) {
+          StageNode* producer_stage = it->second;
+          // Producer stage adds consumer as a dependency
+          producer_stage->addDependency(consumer_stage);
+        }
+      }
+    }
+  });
 }
 
 //===----------------------------------------------------------------------===//

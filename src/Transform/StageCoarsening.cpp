@@ -478,11 +478,8 @@ void StageCoarseningPass::CorrectStageDependencies(
     TransformCandidate& candidate, PipelineTree& tree) {
   LLVM_DEBUG(llvm::dbgs() << "Correcting stage dependencies...\n");
 
-  // TODO: Implement dependency correction
-  // For each stage dependency that crosses pipeline boundaries:
-  //   1. Identify the dependency
-  //   2. Create nested pipeline if needed
-  //   3. Move stages to correct pipeline level
+  // TODO: Implement dependency correction:
+  // Identify stage dependency that cross pipeline boundaries and fix them.
 
   LLVM_DEBUG(llvm::dbgs() << "  (Implementation pending)\n");
 }
