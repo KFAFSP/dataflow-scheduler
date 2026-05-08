@@ -190,8 +190,11 @@ void ComputeGroupExtractionPass::unionAccessTilesFromAncestors(
     }
 
     for (Value operand : current_op->getOperands()) {
-      if (Operation* operand_def_op = operand.getDefiningOp())
-        worklist.push_back(operand_def_op);
+      // Skip if operand is a basic block argument.
+      if (isa<BlockArgument>(operand)) continue;
+
+      Operation* operand_def_op = operand.getDefiningOp();
+      worklist.push_back(operand_def_op);
     }
   }
 }
@@ -255,14 +258,14 @@ void ComputeGroupExtractionPass::buildAccessTileEqClasses(
 }
 
 // Helper function to recursively collect iter args from operand dependencies
-static void collectIterArgsUsed(Value val, llvm::DenseSet<Operation*>& visited,
-                                llvm::SmallVectorImpl<Value>& iter_args) {
+static void collectArgsUsed(Value val, llvm::DenseSet<Operation*>& visited,
+                            llvm::SmallVectorImpl<Value>& args) {
   // If this is a block argument (e.g., iter arg from scf.for), add it to the
   // list of arguments to pass to the extracted function
   if (isa<BlockArgument>(val)) {
     // Avoid duplicates
-    if (llvm::find(iter_args, val) == iter_args.end()) {
-      iter_args.push_back(val);
+    if (llvm::find(args, val) == args.end()) {
+      args.push_back(val);
     }
     return;
   }
@@ -275,7 +278,7 @@ static void collectIterArgsUsed(Value val, llvm::DenseSet<Operation*>& visited,
 
   // Recursively collect from operands
   for (Value operand : op->getOperands()) {
-    collectIterArgsUsed(operand, visited, iter_args);
+    collectArgsUsed(operand, visited, args);
   }
 }
 
@@ -328,18 +331,18 @@ void ComputeGroupExtractionPass::extractComputeGroup(
     }
   }
 
-  // Collect iter args (block arguments) needed by the extracted function
-  llvm::SmallVector<Value> iter_args;
+  // Collect args (block arguments) needed by the extracted function
+  llvm::SmallVector<Value> args;
   llvm::DenseSet<Operation*> visited;
   for (Operation* op : ops_to_move) {
     for (Value operand : op->getOperands()) {
-      collectIterArgsUsed(operand, visited, iter_args);
+      collectArgsUsed(operand, visited, args);
     }
   }
 
-  // Build function type with iter_args as parameters
+  // Build function type with args as parameters
   llvm::SmallVector<Type> arg_types;
-  for (Value arg : iter_args) {
+  for (Value arg : args) {
     arg_types.push_back(arg.getType());
   }
   auto func_type = builder.getFunctionType(arg_types, {});
@@ -367,10 +370,10 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   Block* func_block = func_op.addEntryBlock();
   builder.setInsertionPointToStart(func_block);
 
-  // Map iter args to function arguments so they can be used when cloning
+  // Map args to function arguments so they can be used when cloning
   IRMapping mapper;
-  for (size_t i = 0; i < iter_args.size(); ++i) {
-    mapper.map(iter_args[i], func_block->getArgument(i));
+  for (size_t i = 0; i < args.size(); ++i) {
+    mapper.map(args[i], func_block->getArgument(i));
   }
 
   // Step 1: Materialize all dependencies for the entire range.
@@ -400,15 +403,14 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   // Create call operation before erasing operations
   builder.setInsertionPoint(group.first_load);
   auto call_op = func::CallOp::create(builder, top_level_module.getLoc(),
-                                      forward_decl, iter_args);
+                                      forward_decl, args);
 
   // Step 3: Erase the original operations in reverse order to avoid dangling
   // uses
   for (auto it = ops_to_move.rbegin(); it != ops_to_move.rend(); ++it) {
     Operation* op = *it;
-    if (op->use_empty()) {
-      op->erase();
-    }
+    assert(op->use_empty() && "Operation should have no uses left");
+    op->erase();
   }
 
   // Add return operation to the new function
@@ -419,7 +421,7 @@ void ComputeGroupExtractionPass::extractComputeGroup(
     llvm::dbgs() << "Extracted compute group into function: " << func_name
                  << "\n";
     llvm::dbgs() << "Operations: " << ops_to_move.size() << "\n";
-    llvm::dbgs() << "Block arguments: " << iter_args.size() << "\n";
+    llvm::dbgs() << "Block arguments: " << args.size() << "\n";
   });
 }
 
@@ -441,7 +443,7 @@ void ComputeGroupExtractionPass::processBlockForExtraction(
     // group.
     // Reason: Otherwise, if control flow operations were to be extracted,
     // we might end up with nested func calls.
-    if (isa<scf::ForOp>(&block_op) || isa<scf::IfOp>(&block_op)) {
+    if (block_op.getNumRegions() > 0) {
       // Save current compute group if any
       if (current_class_leader && first_load_op && last_store_op) {
         groups_to_extract_.push_back({first_load_op, last_store_op});
