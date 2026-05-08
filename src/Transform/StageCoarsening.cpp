@@ -478,10 +478,124 @@ void StageCoarseningPass::CorrectStageDependencies(
     TransformCandidate& candidate, PipelineTree& tree) {
   LLVM_DEBUG(llvm::dbgs() << "Correcting stage dependencies...\n");
 
-  // TODO: Implement dependency correction:
-  // Identify stage dependency that cross pipeline boundaries and fix them.
+  // Step 1: Build pipeline-to-depth map and collect all stages
+  llvm::DenseMap<const PipelineNode*, unsigned> pipeline_to_depth;
+  llvm::SmallVector<StageNode*> all_stages;
+  unsigned pipeline_depth = 0;
 
-  LLVM_DEBUG(llvm::dbgs() << "  (Implementation pending)\n");
+  PipelineTreeNode::walk<PipelineTreeNode::kPreOrder>(
+      tree.getRoot(), [&](OperationTreeNode* node) {
+        auto* pnode = static_cast<PipelineTreeNode*>(node);
+        if (pnode->isPipelineNode()) {
+          pipeline_to_depth[static_cast<const PipelineNode*>(pnode)] =
+              pipeline_depth;
+          pipeline_depth++;
+        } else if (pnode->isStageNode()) {
+          all_stages.push_back(static_cast<StageNode*>(pnode));
+        }
+        return node;
+      });
+
+  // Helper lambda to find a stage at the same level as the target pipeline by
+  // walking up from start_stage
+  auto findStageAtPipeline = [&](StageNode* start_stage,
+                                 PipelineNode* target_pipeline) -> StageNode* {
+    // Find the stage whose containing pipeline is at the target depth
+    OperationTreeNode* result_stage =
+        start_stage->findParent([&](const OperationTreeNode* node) {
+          if (!static_cast<const PipelineTreeNode*>(node)->isStageNode()) {
+            return false;
+          }
+          const StageNode* stage = static_cast<const StageNode*>(node);
+          const PipelineTreeNode* parent =
+              static_cast<const PipelineTreeNode*>(stage->getParentNode());
+          assert(parent->isPipelineNode() && "Stage parent must be a pipeline");
+          const PipelineNode* stage_pipeline =
+              static_cast<const PipelineNode*>(parent);
+          return stage_pipeline == target_pipeline;
+        });
+
+    return static_cast<StageNode*>(result_stage);
+  };
+
+  // Step 2: Process each stage and correct boundary-crossing dependencies
+  for (StageNode* source_stage : all_stages) {
+    PipelineTreeNode* source_parent =
+        static_cast<PipelineTreeNode*>(source_stage->getParentNode());
+    assert(source_parent->isPipelineNode() &&
+           "Stage parent must be a pipeline");
+    PipelineNode* source_pipeline = static_cast<PipelineNode*>(source_parent);
+    unsigned source_depth = pipeline_to_depth[source_pipeline];
+
+    for (StageNode* sink_stage : source_stage->getDependencies()) {
+      PipelineTreeNode* sink_parent =
+          static_cast<PipelineTreeNode*>(sink_stage->getParentNode());
+      assert(sink_parent->isPipelineNode() &&
+             "Stage parent must be a pipeline");
+      PipelineNode* sink_pipeline = static_cast<PipelineNode*>(sink_parent);
+      unsigned sink_depth = pipeline_to_depth[sink_pipeline];
+
+      // If source and sink are in the same pipeline, nothing to do
+      if (source_pipeline == sink_pipeline) continue;
+
+      // If source is at lower depth than sink (outer -> inner)
+      if (source_depth < sink_depth) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "    Correcting outer->inner dependency: Stage "
+                   << source_stage->getStageId() << " (depth " << source_depth
+                   << ") -> Stage " << sink_stage->getStageId() << " (depth "
+                   << sink_depth << ")\n");
+
+        // Walk up from sink to find stage at source's depth
+        StageNode* new_sink = findStageAtPipeline(sink_stage, source_pipeline);
+        if (new_sink) {
+          LLVM_DEBUG(llvm::dbgs() << "      Redirected to Stage "
+                                  << new_sink->getStageId() << "\n");
+          source_stage->replaceDependency(sink_stage, new_sink);
+        }
+      }
+      // If source is at higher depth than sink (inner -> outer)
+      else if (source_depth > sink_depth) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "    Correcting inner->outer dependency: Stage "
+                   << source_stage->getStageId() << " (depth " << source_depth
+                   << ") -> Stage " << sink_stage->getStageId() << " (depth "
+                   << sink_depth << ")\n");
+
+        // Walk up from source to find stage at sink's depth
+        StageNode* new_source =
+            findStageAtPipeline(source_stage, sink_pipeline);
+        if (new_source) {
+          LLVM_DEBUG(llvm::dbgs() << "      Moved dependency to Stage "
+                                  << new_source->getStageId() << "\n");
+
+          // Add dependency to new source (if not already present)
+          const llvm::SmallVector<StageNode*>& new_source_deps =
+              new_source->getDependencies();
+
+          bool already_has_dep = false;
+          for (StageNode* existing_dep : new_source_deps) {
+            if (existing_dep == sink_stage) {
+              already_has_dep = true;
+              break;
+            }
+          }
+
+          if (!already_has_dep) {
+            new_source->addDependency(sink_stage);
+          }
+
+          // Mark dependency for removal by nullifying it
+          source_stage->nullifyDependency(sink_stage);
+        }
+      }
+    }
+
+    // Remove all nullified dependencies
+    source_stage->removeNullifiedDependencies();
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "  Stage dependency correction complete.\n");
 }
 
 //===----------------------------------------------------------------------===//

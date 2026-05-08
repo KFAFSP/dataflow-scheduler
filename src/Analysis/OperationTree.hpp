@@ -188,6 +188,27 @@ class OperationTreeNode {
   /// child).
   void insertChildNode(OperationTreeNode *child, OperationTreeNode *pos = nullptr);
 
+  /// Walk up the parent chain and find the first parent that matches the predicate.
+  /// Returns nullptr if no matching parent is found.
+  template <typename PredicateFn>
+  const OperationTreeNode *findParent(PredicateFn predicate) const {
+    const OperationTreeNode *current = getParentNode();
+    while (current) {
+      if (predicate(current)) {
+        return current;
+      }
+      current = current->getParentNode();
+    }
+    return nullptr;
+  }
+
+  /// Non-const version that calls the const version
+  template <typename PredicateFn>
+  OperationTreeNode *findParent(PredicateFn predicate) {
+    return const_cast<OperationTreeNode *>(
+        static_cast<const OperationTreeNode *>(this)->findParent(predicate));
+  }
+
  protected:
   static void preOrderWalk(OperationTreeNode *n, ActionFuncTy action);
   static void postOrderWalk(OperationTreeNode *n, ActionFuncTy action);

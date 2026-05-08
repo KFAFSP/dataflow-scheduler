@@ -181,23 +181,24 @@ void PipelineTree::compute(Operation& unit) {
   unit.walk([&](PipelineOp pipeline_op) {
     // Map from token values to the stages that produce them (depends_out)
     llvm::DenseMap<Value, StageNode*> token_producers;
-    
+
     // First pass: collect all token producers
     for (auto stage_op : pipeline_op.getStages()) {
       StageNode* stage_node = static_cast<StageNode*>(getNodeForOp(stage_op));
       assert(stage_node);
-      
+
       // Record this stage as a producer for all its output tokens
       for (Value token : stage_op.getDependsOut()) {
         token_producers[token] = stage_node;
       }
     }
-    
+
     // Second pass: build dependencies by matching consumers to producers
     for (auto stage_op : pipeline_op.getStages()) {
-      StageNode* consumer_stage = static_cast<StageNode*>(getNodeForOp(stage_op));
+      StageNode* consumer_stage =
+          static_cast<StageNode*>(getNodeForOp(stage_op));
       assert(consumer_stage);
-      
+
       // For each input token, find the producer stage and add this stage
       // as a dependency of that producer
       for (Value token : stage_op.getDependsIn()) {

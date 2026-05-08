@@ -196,6 +196,33 @@ class StageNode : public PipelineTreeNode {
     return dependencies_;
   }
 
+  /// Replace a dependency with another stage node
+  void replaceDependency(StageNode *old_target, StageNode *new_target) {
+    for (auto &dep : dependencies_) {
+      if (dep == old_target) {
+        dep = new_target;
+        return;
+      }
+    }
+  }
+
+  /// Mark a dependency for removal by nullifying it
+  void nullifyDependency(StageNode *target) {
+    for (auto &dep : dependencies_) {
+      if (dep == target) {
+        dep = nullptr;
+        return;
+      }
+    }
+  }
+
+  /// Remove all nullified dependencies
+  void removeNullifiedDependencies() {
+    dependencies_.erase(
+        std::remove(dependencies_.begin(), dependencies_.end(), nullptr),
+        dependencies_.end());
+  }
+
   void print(raw_ostream &os) const override;
 
  private:
