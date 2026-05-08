@@ -12,12 +12,6 @@
 // CHECK-NEXT:     %[[CONSTANT_5:.*]] = arith.constant 18432 : index
 // CHECK-NEXT:     %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
 // CHECK-NEXT:     %[[MULI_0:.*]] = arith.muli %[[GET_COMPUTE_TILE_ID_0]], %[[CONSTANT_2]] : index
-// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_4]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_2:.*]] = ktdp.construct_memory_view %[[CONSTANT_5]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-NEXT:     %[[REINTERPRET_CAST_0:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_2]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
-// CHECK-NEXT:     %[[REINTERPRET_CAST_1:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_1]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
-// CHECK-NEXT:     %[[REINTERPRET_CAST_2:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_0]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
 // CHECK-NEXT:     %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x64xf16>
 // CHECK-NEXT:     %[[CONSTANT_6:.*]] = arith.constant 0 : index
 // CHECK-NEXT:     %[[CONSTANT_7:.*]] = arith.constant 1 : index
@@ -25,6 +19,12 @@
 // CHECK-NEXT:     %[[CONSTANT_9:.*]] = arith.constant 0 : index
 // CHECK-NEXT:     %[[CONSTANT_10:.*]] = arith.constant 64 : index
 // CHECK-NEXT:     %[[CONSTANT_11:.*]] = arith.constant 64 : index
+// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK-NEXT:     %[[REINTERPRET_CAST_0:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_0]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
+// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_4]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK-NEXT:     %[[REINTERPRET_CAST_1:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_1]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
+// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_2:.*]] = ktdp.construct_memory_view %[[CONSTANT_5]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK-NEXT:     %[[REINTERPRET_CAST_2:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_2]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
 // CHECK-NEXT:     %[[FOR_0:.*]] = scf.for %[[VAL_0:.*]] = %[[CONSTANT_6]] to %[[CONSTANT_7]] step %[[CONSTANT_8]] iter_args(%[[VAL_1:.*]] = %[[EMPTY_0]]) -> (tensor<1x64xf16>) {
 // CHECK-NEXT:       %[[FOR_1:.*]] = scf.for %[[VAL_2:.*]] = %[[CONSTANT_9]] to %[[CONSTANT_10]] step %[[CONSTANT_11]] iter_args(%[[VAL_3:.*]] = %[[VAL_1]]) -> (tensor<1x64xf16>) {
 // CHECK-NEXT:         ktdf.pipeline {
@@ -38,7 +38,7 @@
 // CHECK-NEXT:             ktdf.private_yield %[[FIFO_0]], %[[FIFO_1]], %[[FIFO_2]], %[[CREATE_TOKEN_0]], %[[CREATE_TOKEN_1]], %[[CREATE_TOKEN_2]] : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, !ktdf.token, !ktdf.token, !ktdf.token
 // CHECK-NEXT:           }
 // CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[VAL_4:.*]]#3 : !ktdf.token) {
-// CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_2]]{{\[}}%[[VAL_0]], %[[VAL_2]]] size [1, 64] to %[[VAL_4]]#0 size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+// CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_0]]{{\[}}%[[VAL_0]], %[[VAL_2]]] size [1, 64] to %[[VAL_4]]#0 size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
 // CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_1]]{{\[}}%[[VAL_0]], %[[VAL_2]]] size [1, 64] to %[[VAL_4]]#1 size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
 // CHECK-NEXT:           }
 // CHECK-NEXT:           ktdf.stage depends_in(%[[VAL_5:.*]]#3 : !ktdf.token) depends_out(%[[VAL_5]]#4 : !ktdf.token) {
@@ -53,7 +53,7 @@
 // CHECK-NEXT:             ktdf.write_to_fifo %[[GENERIC_0]], %[[VAL_5]]#2 : tensor<1x64xf16>, <"sfp-to-lxsu", 64xf16>
 // CHECK-NEXT:           }
 // CHECK-NEXT:           ktdf.stage depends_in(%[[VAL_9:.*]]#4 : !ktdf.token) depends_out(%[[VAL_9]]#5 : !ktdf.token) {
-// CHECK-NEXT:             ktdf.data_transfer from %[[VAL_9]]#2 size [64] to %[[REINTERPRET_CAST_0]]{{\[}}%[[VAL_0]], %[[VAL_2]]] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>>
+// CHECK-NEXT:             ktdf.data_transfer from %[[VAL_9]]#2 size [64] to %[[REINTERPRET_CAST_2]]{{\[}}%[[VAL_0]], %[[VAL_2]]] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>>
 // CHECK-NEXT:           }
 // CHECK-NEXT:         }
 // CHECK-NEXT:         scf.yield %[[VAL_3]] : tensor<1x64xf16>

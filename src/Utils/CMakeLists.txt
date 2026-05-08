@@ -4,6 +4,7 @@ add_library(SchedulerUtils
 
   LINK_LIBS PUBLIC
   MLIRIR
+  KTDFOps
 )
 
 target_link_libraries(SchedulerUtils

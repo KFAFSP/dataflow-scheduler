@@ -12,6 +12,7 @@
 #include <cstring>
 
 #include "mlir/IR/Builders.h"
+#include "src/Dialects/KTDF/KTDFOps.hpp"
 
 namespace scheduler {
 
@@ -33,6 +34,16 @@ mlir::StringAttr SchedulerExtContext::getTransferMemSpace(
   }
   // Default to DRAM if component not recognized
   return mlir::StringAttr::get(context, "DRAM");
+}
+
+mlir::ktdf::FifoType SchedulerExtContext::getFifoTypeLoad() const {
+  // Load operations transfer data from LXLU to SFP
+  return mlir::ktdf::FifoType::LxluToSfp;
+}
+
+mlir::ktdf::FifoType SchedulerExtContext::getFifoTypeStore() const {
+  // Store operations transfer data from SFP to LXSU
+  return mlir::ktdf::FifoType::SfpToLxsu;
 }
 
 }  // namespace scheduler

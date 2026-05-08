@@ -13,6 +13,7 @@
 #include <cstdint>
 
 #include "mlir/IR/Attributes.h"
+#include "src/Dialects/KTDF/KTDFTypes.hpp"
 
 namespace scheduler {
 
@@ -34,6 +35,14 @@ struct SchedulerExtContext {
   /// @return StringAttr with the memory space name (e.g., "SFP_REG")
   mlir::StringAttr getTransferMemSpace(mlir::MLIRContext* context,
                                        const char* component) const;
+
+  /// Returns the FIFO type for load operations
+  /// @return FifoType for loads (e.g., LxluToSfp)
+  mlir::ktdf::FifoType getFifoTypeLoad() const;
+
+  /// Returns the FIFO type for store operations
+  /// @return FifoType for stores (e.g., SfpToLxsu)
+  mlir::ktdf::FifoType getFifoTypeStore() const;
 };
 
 /// @brief Construct a DummySchedulerExtContext. In general prefer
