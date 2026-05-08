@@ -13,6 +13,7 @@
 // CHECK-NEXT:     %[[CONSTANT_6:.*]] = arith.constant 24576 : index
 // CHECK-NEXT:     %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
 // CHECK-NEXT:     %[[MULI_0:.*]] = arith.muli %[[GET_COMPUTE_TILE_ID_0]], %[[CONSTANT_2]] : index
+// CHECK-NEXT:     %[[ADDI_0:.*]] = arith.addi %[[MULI_0]], %[[ARG0]] : index
 // CHECK-NEXT:     %[[CONSTANT_7:.*]] = arith.constant 0 : index
 // CHECK-NEXT:     %[[CONSTANT_8:.*]] = arith.constant 1 : index
 // CHECK-NEXT:     %[[CONSTANT_9:.*]] = arith.constant 1 : index
@@ -20,13 +21,21 @@
 // CHECK-NEXT:     %[[CONSTANT_11:.*]] = arith.constant 64 : index
 // CHECK-NEXT:     %[[CONSTANT_12:.*]] = arith.constant 64 : index
 // CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-NEXT:     %[[REINTERPRET_CAST_0:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_0]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
+// CHECK-NEXT:     %[[CONSTANT_13:.*]] = arith.constant 64 : index
+// CHECK-NEXT:     %[[MULI_1:.*]] = arith.muli %[[ADDI_0]], %[[CONSTANT_13]] : index
+// CHECK-NEXT:     %[[REINTERPRET_CAST_0:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_0]] to offset: {{\[}}%[[MULI_1]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
 // CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_4]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-NEXT:     %[[REINTERPRET_CAST_1:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_1]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
+// CHECK-NEXT:     %[[CONSTANT_14:.*]] = arith.constant 64 : index
+// CHECK-NEXT:     %[[MULI_2:.*]] = arith.muli %[[ADDI_0]], %[[CONSTANT_14]] : index
+// CHECK-NEXT:     %[[REINTERPRET_CAST_1:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_1]] to offset: {{\[}}%[[MULI_2]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
 // CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_2:.*]] = ktdp.construct_memory_view %[[CONSTANT_5]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-NEXT:     %[[REINTERPRET_CAST_2:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_2]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
+// CHECK-NEXT:     %[[CONSTANT_15:.*]] = arith.constant 64 : index
+// CHECK-NEXT:     %[[MULI_3:.*]] = arith.muli %[[ADDI_0]], %[[CONSTANT_15]] : index
+// CHECK-NEXT:     %[[REINTERPRET_CAST_2:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_2]] to offset: {{\[}}%[[MULI_3]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
 // CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_3:.*]] = ktdp.construct_memory_view %[[CONSTANT_6]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
-// CHECK-NEXT:     %[[REINTERPRET_CAST_3:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_3]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
+// CHECK-NEXT:     %[[CONSTANT_16:.*]] = arith.constant 64 : index
+// CHECK-NEXT:     %[[MULI_4:.*]] = arith.muli %[[ADDI_0]], %[[CONSTANT_16]] : index
+// CHECK-NEXT:     %[[REINTERPRET_CAST_3:.*]] = memref.reinterpret_cast %[[CONSTRUCT_MEMORY_VIEW_3]] to offset: {{\[}}%[[MULI_4]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
 // CHECK-NEXT:     scf.for %[[VAL_0:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_8]] step %[[CONSTANT_9]] {
 // CHECK-NEXT:       scf.for %[[VAL_1:.*]] = %[[CONSTANT_10]] to %[[CONSTANT_11]] step %[[CONSTANT_12]] {
 // CHECK-NEXT:         ktdf.pipeline {
@@ -104,18 +113,20 @@ module {
             memory_space = #ktdp.spyre_memory_space<HBM>
         } : memref<96x64xf16>
 
+        %start_row_i = arith.addi %start_row, %i : index
+        
         // Construct access tiles
-        %A_access_tile = ktdp.construct_access_tile %A_view[%start_row+%i, %c0] {
+        %A_access_tile = ktdp.construct_access_tile %A_view[%start_row_i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = affine_map<(d0, d1) -> (d0, d1)>
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
 
-        %B_access_tile = ktdp.construct_access_tile %B_view[%start_row+%i, %c0] {
+        %B_access_tile = ktdp.construct_access_tile %B_view[%start_row_i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = affine_map<(d0, d1) -> (d0, d1)>
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
 
-        %C_access_tile = ktdp.construct_access_tile %C_view[%start_row+%i, %c0] {
+        %C_access_tile = ktdp.construct_access_tile %C_view[%start_row_i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = affine_map<(d0, d1) -> (d0, d1)>
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
@@ -137,7 +148,7 @@ module {
                     outs(%result_empty: tensor<1x64xf16>) -> tensor<1x64xf16>
 
         // Construct access tile for output
-        %D_access_tile = ktdp.construct_access_tile %D_view[%start_row+%i, %c0] {
+        %D_access_tile = ktdp.construct_access_tile %D_view[%start_row_i, %c0] {
             access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 0 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
             access_tile_order = affine_map<(d0, d1) -> (d0, d1)>
         } : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>

@@ -36,6 +36,7 @@
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
 #include "src/Transform/Utils/CustomTiling.h"
+#include "src/Transform/Utils/Utils.h"
 #include "src/Utils/SchedulerExtContext.h"
 
 #define PASS_NAME "construct-three-stage-pipeline"
@@ -148,6 +149,11 @@ struct ConstructThreeStagePipelinePass
 
   // Replace construct_access_tile with memref.reinterpret_cast
   void replaceAccessTilesWithReinterpretCast(func::FuncOp func_op);
+
+  // Compute offset for reinterpret_cast from indices and strides
+  Value computeReinterpretCastOffset(OpBuilder& builder, Location loc,
+                                     SmallVector<Value>& indices,
+                                     SmallVector<int64_t>& strides);
 
   // Get strides from memref type, computing default row-major strides if needed
   SmallVector<int64_t> getStridesFromMemRefType(MemRefType memref_type);
@@ -791,6 +797,58 @@ void ConstructThreeStagePipelinePass::createComputeOps(
   }
 }
 
+Value ConstructThreeStagePipelinePass::computeReinterpretCastOffset(
+    OpBuilder& builder, Location loc, SmallVector<Value>& indices,
+    SmallVector<int64_t>& strides) {
+  // Calculate offset from access tile indices and memory view strides.
+  // For an access tile %A_view[%idx0, %idx1, ...] with strides [stride0,
+  // stride1, ...], the offset is: %idx0 * stride0 + %idx1 * stride1 + ...
+  // This is computed using a sequence of arith.muli and arith.addi operations.
+
+  size_t num_indices = indices.size();
+
+  if (num_indices == 0) {
+    // No indices means offset is 0
+    return arith::ConstantIndexOp::create(builder, loc, 0);
+  }
+
+  // Compute terms: indices[i] * strides[i] for each dimension
+  // Optimizations:
+  // - Skip multiplication if stride is 1
+  // - Skip addition if index is constant 0
+  SmallVector<Value> terms;
+  for (size_t i = 0; i < num_indices; ++i) {
+    if (scheduler::utils::isTargetConstant(0, indices[i])) {
+      continue;
+    }
+
+    Value term;
+    if (strides[i] == 1) {
+      term = indices[i];
+    } else {
+      Value stride_const =
+          arith::ConstantIndexOp::create(builder, loc, strides[i]);
+      term = arith::MulIOp::create(builder, loc, indices[i], stride_const);
+    }
+    terms.push_back(term);
+  }
+
+  if (terms.empty()) {
+    // All indices were constant 0
+    return arith::ConstantIndexOp::create(builder, loc, 0);
+  } else if (terms.size() == 1) {
+    // Only one term, no addition needed
+    return terms[0];
+  } else {
+    // Add all terms together
+    Value offset = terms[0];
+    for (size_t i = 1; i < terms.size(); ++i) {
+      offset = arith::AddIOp::create(builder, loc, offset, terms[i]);
+    }
+    return offset;
+  }
+}
+
 void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     func::FuncOp func_op) {
   SmallVector<ktdp::ConstructAccessTilesOp> access_tiles;
@@ -872,14 +930,17 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     // it dominates the reinterpret_cast
     memory_view.getDefiningOp()->moveBefore(insertion_point);
 
-    // TODO: Calculate proper offset as sum of (index[i] * stride[i]) for all
-    // dimensions For now, just use the first index as offset
-    Value offset;
-    if (num_indices > 0) {
-      offset = indices[0];
-    } else {
-      offset = arith::ConstantIndexOp::create(*const_builder_, loc, 0);
+    // Assert that indices and strides have the same size
+    if (num_indices != strides.size()) {
+      access_tile.emitError("Number of indices (")
+          << num_indices << ") does not match number of strides ("
+          << strides.size() << ")";
+      signalPassFailure();
+      return;
     }
+
+    // Calculate offset from access tile indices and memory view strides
+    Value offset = computeReinterpretCastOffset(builder, loc, indices, strides);
 
     // Create sizes for reinterpret_cast
     SmallVector<OpFoldResult> sizes;

@@ -13,6 +13,7 @@ add_library(SchedulerTransforms
     StripMineSCFForLoops.cpp
     TileSCFForLoops.cpp
     Utils/CustomTiling.cpp
+    Utils/Utils.cpp
 )
 
 target_link_libraries(SchedulerTransforms
