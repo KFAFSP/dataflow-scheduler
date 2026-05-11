@@ -8,8 +8,6 @@ scheduler_tablegen(KTDFOpsDialect.hpp.inc -gen-dialect-decls -dialect=ktdf)
 scheduler_tablegen(KTDFOpsDialect.cpp.inc -gen-dialect-defs -dialect=ktdf)
 scheduler_tablegen(KTDFOps.hpp.inc -gen-op-decls)
 scheduler_tablegen(KTDFOps.cpp.inc -gen-op-defs)
-scheduler_tablegen(KTDFOpsAttributes.hpp.inc -gen-attrdef-decls -attrdefs-dialect=ktdf)
-scheduler_tablegen(KTDFOpsAttributes.cpp.inc -gen-attrdef-defs -attrdefs-dialect=ktdf)
 scheduler_tablegen(KTDFOps.md -gen-dialect-doc -dialect=ktdf)
 add_public_tablegen_target(KTDFOpsIncGen)
 

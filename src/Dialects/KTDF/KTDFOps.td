@@ -44,6 +44,9 @@ include "KTDFEnums.td"
 // Import the KTDF type definitions
 include "KTDFTypes.td"
 
+// Import the KTDF attribute definitions
+include "KTDFAttributes.td"
+
 // Base class for KTDF dialect operations
 class KTDF_Op<string mnemonic, list<Trait> traits = []> :
     Op<KTDF_Dialect, mnemonic, traits> {
@@ -371,7 +374,8 @@ def KTDF_StageOp : KTDF_Op<"stage", [
 
   let arguments = (ins
     Variadic<KTDF_TokenType>:$depends_in,
-    Variadic<KTDF_TokenType>:$depends_out
+    Variadic<KTDF_TokenType>:$depends_out,
+    OptionalAttr<KTDF_ApplicableUnitsCustomAttr>:$applicable_units
   );
 
   let regions = (region SizedRegion<1>:$body);

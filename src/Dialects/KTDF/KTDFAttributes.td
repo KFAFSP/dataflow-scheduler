@@ -87,4 +87,40 @@ def KTDF_LoopTypeAttr : EnumAttr<KTDF_Dialect, KTDF_LoopTypeEnum, "loop_type"> {
   let assemblyFormat = "`<` $value `>`";
 }
 
+//===----------------------------------------------------------------------===//
+// ApplicableUnitsAttr
+//===----------------------------------------------------------------------===//
+
+def KTDF_ApplicableUnitsCustomAttr : KTDF_Attr<"ApplicableUnitsCustom", "applicable_units"> {
+  let summary = "KTDF applicable units attribute for stage operations";
+  let description = [{
+    Syntax:
+
+    ```
+    applicable-units-attr ::= `applicable_units` `<` `[` applicable-units-list `]` `>`
+    applicable-units-list ::= applicable-units-kind (`,` applicable-units-kind)*
+    ```
+
+    The applicable units attribute specifies a non-empty list of processing units
+    that a stage operation can be executed on. This allows flexibility in scheduling
+    by indicating which units are capable of executing the operation.
+
+    Example:
+
+    ```mlir
+    ktdf.stage {applicable_units = #ktdf.applicable_units<[SFP]>} {
+      // stage body
+    }
+    
+    ktdf.stage {applicable_units = #ktdf.applicable_units<[SFP, LXLU, L3LU]>} {
+      // stage body that can run on multiple units
+    }
+    ```
+  }];
+
+  let parameters = (ins ArrayRefParameter<"::mlir::ktdf::ApplicableUnits">:$value);
+
+  let assemblyFormat = "`<` `[` $value `]` `>`";
+}
+
 #endif // KTDF_SRC_DIALECTS_KTDF_ATTRIBUTES_TD

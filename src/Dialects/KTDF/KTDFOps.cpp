@@ -46,11 +46,6 @@ void KTDFDialect::initialize() {
 #include "src/Dialects/KTDF/KTDFOps.cpp.inc"
 
       >();
-  addAttributes<
-#define GET_ATTRDEF_LIST
-#include "src/Dialects/KTDF/KTDFOpsAttributes.cpp.inc"
-
-      >();
   registerTypes();
   registerAttributes();
 }
@@ -130,9 +125,6 @@ static void printSizesList(OpAsmPrinter& printer, Operation* op,
 
 #define GET_OP_CLASSES
 #include "src/Dialects/KTDF/KTDFOps.cpp.inc"
-
-#define GET_ATTRDEF_CLASSES
-#include "src/Dialects/KTDF/KTDFOpsAttributes.cpp.inc"
 
 //===----------------------------------------------------------------------===//
 // PipelineOp
