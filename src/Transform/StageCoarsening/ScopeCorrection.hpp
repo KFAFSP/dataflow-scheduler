@@ -49,6 +49,17 @@ class ScopeCorrection {
     llvm::SmallVector<unsigned> result_indices;
     llvm::SmallVector<mlir::Operation*> ops_to_move;
     llvm::SmallVector<mlir::Value> old_results;
+
+    /// Build result types from operations to move
+    llvm::SmallVector<mlir::Type> getMovingResultTypes() const {
+      llvm::SmallVector<mlir::Type> result_types;
+      for (mlir::Operation* op : ops_to_move) {
+        assert(op->getNumResults() == 1 &&
+               "unhandled case of op with non-unit results");
+        result_types.push_back(op->getResult(0).getType());
+      }
+      return result_types;
+    }
   };
 
   /// Find the outer pipeline's private operation
@@ -57,29 +68,32 @@ class ScopeCorrection {
   /// Find all inner pipelines
   llvm::SmallVector<mlir::ktdf::PipelineOp> findInnerPipelines();
 
-  /// Analyze which private results are only used in specific inner pipelines
+  /// Analyze which private results are only used in specific inner pipelines, and updates an internal mapping. 
   void analyzePrivateResultUsage();
 
   /// Move specified private results from outer private to inner pipeline
   void movePrivateResultsToInnerPipeline(mlir::ktdf::PipelineOp inner_pipeline,
-                                         ScopeCorrectionInfo& move_info);
+                                         ScopeCorrectionInfo& sc_info);
 
-  /// Helper to recreate a PrivateOp with new results
+  /// Helper to recreate a PrivateOp with new or different results
+  ///
+  /// @param old_private The original private op to recreate (if null, creates a new empty private)
+  /// @param new_result_types The result types for the new private op
+  /// @param ops_to_prepend Operations to clone at the beginning of the body
+  /// @param ops_to_exclude Operations from old body to skip (only used if old_private is non-null)
   mlir::ktdf::PrivateOp recreatePrivateOp(
       mlir::ktdf::PrivateOp old_private,
       llvm::ArrayRef<mlir::Type> new_result_types,
-      llvm::function_ref<void(mlir::OpBuilder&, mlir::IRMapping&, mlir::Block&)>
-          body_builder,
-      llvm::function_ref<llvm::SmallVector<mlir::Value>(mlir::IRMapping&)>
-          yield_builder);
+      llvm::ArrayRef<mlir::Operation*> ops_to_prepend = {},
+      llvm::ArrayRef<mlir::Operation*> ops_to_exclude = {});
 
   /// Extend an existing inner private node with moved allocations
   void extendInnerPrivate(mlir::ktdf::PrivateOp inner_private,
-                          ScopeCorrectionInfo& move_info);
+                          ScopeCorrectionInfo& sc_info);
 
   /// Create a new inner private node with moved allocations
   void createInnerPrivate(mlir::ktdf::PipelineOp inner_pipeline,
-                          ScopeCorrectionInfo& move_info);
+                          ScopeCorrectionInfo& sc_info);
 
   /// Update the outer private to remove moved results
   void updateOuterPrivate(llvm::ArrayRef<unsigned> removed_indices);
@@ -88,7 +102,7 @@ class ScopeCorrection {
   mlir::ktdf::PipelineOp outer_pipeline_;
   mlir::ktdf::PrivateOp outer_private_;
   llvm::DenseMap<mlir::ktdf::PipelineOp, ScopeCorrectionInfo>
-      pipeline_to_move_info_;
+      pipeline_to_sc_info_;
 };
 
 }  // namespace ktdf
