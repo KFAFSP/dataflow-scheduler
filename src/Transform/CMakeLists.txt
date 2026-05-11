@@ -7,6 +7,7 @@ add_library(SchedulerTransforms
     TileSCFForLoops.cpp
     StripMineSCFForLoops.cpp
     BufferExpansion.cpp
+    ScopeCorrection.cpp
     StageCoarsening.cpp
     PipelineTree/Legalizer.cpp
     PipelineTree/Materializer.cpp
