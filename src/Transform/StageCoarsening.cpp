@@ -56,9 +56,11 @@ namespace ktdf {
 #define GEN_PASS_DEF_STAGECOARSENINGPASS
 #include "src/Transform/Passes.h.inc"
 
-#define DEBUG_TYPE "stage-coarsening"
+#define PASS_NAME "stage-coarsening"
+#define DEBUG_TYPE PASS_NAME
 
 namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 //===----------------------------------------------------------------------===//
 // Stage Coarsening Pass
@@ -132,6 +134,45 @@ struct StageCoarseningPass
   void GenerateTransformedIR(
       TransformCandidate& candidate, PipelineTree& tree,
       llvm::ArrayRef<const scheduler::BufferExpansionInfo*> expansion_infos);
+
+  //===--------------------------------------------------------------------===//
+  // Fix Private Result Scoping
+  //===--------------------------------------------------------------------===//
+
+  /// Fix scoping of private results that are only used in inner pipelines
+  void fixPrivateResultScoping(mlir::OpBuilder& builder,
+                               mlir::Operation* outer_pipeline_op);
+
+  /// Analyze which private results are only used in specific inner pipelines
+  void analyzePrivateResultUsage(
+      mlir::ktdf::PrivateOp outer_private,
+      mlir::ktdf::PipelineOp outer_pipeline,
+      llvm::ArrayRef<mlir::ktdf::PipelineOp> inner_pipelines,
+      llvm::DenseMap<mlir::ktdf::PipelineOp, llvm::SmallVector<unsigned>>&
+          pipeline_to_result_indices);
+
+  /// Move specified private results from outer private to inner pipeline
+  void movePrivateResultsToInnerPipeline(
+      mlir::OpBuilder& builder, mlir::ktdf::PrivateOp outer_private,
+      mlir::ktdf::PipelineOp inner_pipeline,
+      llvm::ArrayRef<unsigned> result_indices);
+
+  /// Extend an existing inner private node with moved allocations
+  void extendInnerPrivate(mlir::OpBuilder& builder,
+                          mlir::ktdf::PrivateOp inner_private,
+                          llvm::ArrayRef<mlir::Operation*> ops_to_move,
+                          llvm::SmallVectorImpl<mlir::Value>& old_results);
+
+  /// Create a new inner private node with moved allocations
+  void createInnerPrivate(mlir::OpBuilder& builder,
+                          mlir::ktdf::PipelineOp inner_pipeline,
+                          llvm::ArrayRef<mlir::Operation*> ops_to_move,
+                          llvm::SmallVectorImpl<mlir::Value>& old_results);
+
+  /// Update the outer private to remove moved results
+  void updateOuterPrivate(mlir::OpBuilder& builder,
+                          mlir::ktdf::PrivateOp outer_private,
+                          llvm::ArrayRef<unsigned> removed_indices);
 };
 
 //===----------------------------------------------------------------------===//
@@ -636,12 +677,370 @@ void StageCoarseningPass::GenerateTransformedIR(
   // Use the materializer to generate IR from the tree
   scheduler::PipelineTreeMaterializer materializer(builder, value_map,
                                                    buffer_cloner);
-  materializer.materialize(*outer_pipeline);
+  mlir::Operation* new_outer_pipeline =
+      materializer.materialize(*outer_pipeline);
 
   // Erase the original candidate loop nest and all the old ops under it
   root->erase();
 
+  DEBUG_WITH_TYPE(VerboseDebug, {
+    llvm::dbgs() << "IR after materialization:\n";
+    new_outer_pipeline->dump();
+  });
+
+  // Fix scoping of private results that are only used in inner pipelines
+  fixPrivateResultScoping(builder, new_outer_pipeline);
+
+  DEBUG_WITH_TYPE(VerboseDebug, {
+    llvm::dbgs() << "IR after private scoping correction:\n";
+    new_outer_pipeline->dump();
+  });
+
   LLVM_DEBUG(llvm::dbgs() << "  IR generation complete.\n");
+}
+
+//===----------------------------------------------------------------------===//
+// Fix Private Result Scoping
+//===----------------------------------------------------------------------===//
+
+/// Analyze and fix the scoping of SSA values from outer pipeline's ktdf.private
+/// that are only used in inner pipeline stages. Such values should be moved to
+/// the inner pipeline's private node.
+void StageCoarseningPass::fixPrivateResultScoping(
+    mlir::OpBuilder& builder, mlir::Operation* outer_pipeline_op) {
+  LLVM_DEBUG(llvm::dbgs() << "\n--- Fixing Private Result Scoping ---\n");
+
+  // Find the outer pipeline's private operation
+  auto outer_pipeline = mlir::cast<mlir::ktdf::PipelineOp>(outer_pipeline_op);
+  mlir::ktdf::PrivateOp outer_private = nullptr;
+  outer_pipeline.walk([&](mlir::ktdf::PrivateOp priv_op) {
+    if (priv_op->getParentOp() == outer_pipeline.getOperation()) {
+      outer_private = priv_op;
+      return mlir::WalkResult::interrupt();
+    }
+    return mlir::WalkResult::advance();
+  });
+
+  if (!outer_private) {
+    LLVM_DEBUG(llvm::dbgs() << "  No outer private node found, skipping.\n");
+    return;
+  }
+
+  // Find all inner pipelines
+  llvm::SmallVector<mlir::ktdf::PipelineOp> inner_pipelines;
+  outer_pipeline.walk([&](mlir::ktdf::PipelineOp inner_pipeline) {
+    if (inner_pipeline != outer_pipeline) {
+      inner_pipelines.push_back(inner_pipeline);
+    }
+    return mlir::WalkResult::advance();
+  });
+
+  if (inner_pipelines.empty()) {
+    LLVM_DEBUG(llvm::dbgs() << "  No inner pipelines found, skipping.\n");
+    return;
+  }
+
+  // Analyze which results need to be moved
+  llvm::DenseMap<mlir::ktdf::PipelineOp, llvm::SmallVector<unsigned>>
+      pipeline_to_result_indices;
+
+  analyzePrivateResultUsage(outer_private, outer_pipeline, inner_pipelines,
+                            pipeline_to_result_indices);
+
+  if (pipeline_to_result_indices.empty()) {
+    LLVM_DEBUG(llvm::dbgs() << "  No results need to be moved.\n");
+    return;
+  }
+
+  // Move results to their respective inner pipelines
+  for (auto& [inner_pipeline, result_indices] : pipeline_to_result_indices) {
+    movePrivateResultsToInnerPipeline(builder, outer_private, inner_pipeline,
+                                      result_indices);
+  }
+}
+
+/// Analyze which private results are only used in specific inner pipelines
+void StageCoarseningPass::analyzePrivateResultUsage(
+    mlir::ktdf::PrivateOp outer_private, mlir::ktdf::PipelineOp outer_pipeline,
+    llvm::ArrayRef<mlir::ktdf::PipelineOp> inner_pipelines,
+    llvm::DenseMap<mlir::ktdf::PipelineOp, llvm::SmallVector<unsigned>>&
+        pipeline_to_result_indices) {
+  for (auto [idx, result] : llvm::enumerate(outer_private.getResults())) {
+    // Skip tokens - they're for stage dependencies
+    if (mlir::isa<mlir::ktdf::TokenType>(result.getType())) {
+      continue;
+    }
+
+    // Check all uses of this result
+    bool only_used_in_inner = true;
+    mlir::ktdf::PipelineOp target_inner_pipeline = nullptr;
+
+    for (mlir::OpOperand& use : result.getUses()) {
+      mlir::Operation* user = use.getOwner();
+
+      // Find which pipeline (if any) contains this use
+      mlir::ktdf::PipelineOp containing_pipeline =
+          user->getParentOfType<mlir::ktdf::PipelineOp>();
+
+      // If use is not in an inner pipeline, we can't move this result
+      if (!containing_pipeline || containing_pipeline == outer_pipeline) {
+        only_used_in_inner = false;
+        break;
+      }
+
+      // Check if all uses are in the same inner pipeline
+      if (!target_inner_pipeline) {
+        target_inner_pipeline = containing_pipeline;
+      } else if (target_inner_pipeline != containing_pipeline) {
+        // Used in multiple inner pipelines, can't move
+        only_used_in_inner = false;
+        break;
+      }
+    }
+
+    if (only_used_in_inner && target_inner_pipeline) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "  Result #" << idx << " only used in inner pipeline\n");
+      pipeline_to_result_indices[target_inner_pipeline].push_back(idx);
+    }
+  }
+}
+
+/// Move specified private results from outer private to inner pipeline's
+/// private
+void StageCoarseningPass::movePrivateResultsToInnerPipeline(
+    mlir::OpBuilder& builder, mlir::ktdf::PrivateOp outer_private,
+    mlir::ktdf::PipelineOp inner_pipeline,
+    llvm::ArrayRef<unsigned> result_indices) {
+  LLVM_DEBUG(llvm::dbgs() << "  Moving " << result_indices.size()
+                          << " result(s) to inner pipeline\n");
+
+  // Find or create the inner pipeline's private operation
+  mlir::ktdf::PrivateOp inner_private = nullptr;
+  for (mlir::Operation& op : inner_pipeline.getBody().front()) {
+    if (auto priv = mlir::dyn_cast<mlir::ktdf::PrivateOp>(&op)) {
+      inner_private = priv;
+      break;
+    }
+  }
+
+  // Collect the operations to move and their corresponding results
+  llvm::SmallVector<mlir::Operation*> ops_to_move;
+  llvm::SmallVector<mlir::Value> old_results_to_move;
+
+  auto yield_op = mlir::cast<mlir::ktdf::PrivateYieldOp>(
+      outer_private.getBody().front().getTerminator());
+
+  for (unsigned idx : result_indices) {
+    mlir::Value result = outer_private.getResult(idx);
+    old_results_to_move.push_back(result);
+
+    // Find the operation that produces this yielded value
+    mlir::Value yielded_val = yield_op.getOperand(idx);
+    if (mlir::Operation* def_op = yielded_val.getDefiningOp()) {
+      ops_to_move.push_back(def_op);
+    }
+  }
+
+  if (inner_private) {
+    // Inner pipeline already has a private node - extend it
+    extendInnerPrivate(builder, inner_private, ops_to_move,
+                       old_results_to_move);
+  } else {
+    // Create a new private node for the inner pipeline
+    createInnerPrivate(builder, inner_pipeline, ops_to_move,
+                       old_results_to_move);
+  }
+
+  // Update the outer private to remove the moved results
+  updateOuterPrivate(builder, outer_private, result_indices);
+}
+
+/// Extend an existing inner private node with moved allocations
+void StageCoarseningPass::extendInnerPrivate(
+    mlir::OpBuilder& builder, mlir::ktdf::PrivateOp inner_private,
+    llvm::ArrayRef<mlir::Operation*> ops_to_move,
+    llvm::SmallVectorImpl<mlir::Value>& old_results) {
+  LLVM_DEBUG(llvm::dbgs() << "    Extending existing inner private\n");
+
+  // Get the old yield first to preserve existing operands
+  auto old_yield = mlir::cast<mlir::ktdf::PrivateYieldOp>(
+      inner_private.getBody().front().getTerminator());
+  llvm::SmallVector<mlir::Value> existing_yield_operands(
+      old_yield.getOperands().begin(), old_yield.getOperands().end());
+
+  // Clone moved operations at the beginning of the inner private body
+  builder.setInsertionPointToStart(&inner_private.getBody().front());
+  mlir::IRMapping value_map;
+  llvm::SmallVector<mlir::Value> new_values;
+
+  for (mlir::Operation* op : ops_to_move) {
+    mlir::Operation* cloned = builder.clone(*op, value_map);
+    new_values.push_back(cloned->getResult(0));
+  }
+
+  // Build new yield operands: moved results first, then existing results
+  llvm::SmallVector<mlir::Value> new_yield_operands;
+  new_yield_operands.append(new_values.begin(), new_values.end());
+  new_yield_operands.append(existing_yield_operands.begin(),
+                            existing_yield_operands.end());
+
+  // Build new result types
+  llvm::SmallVector<mlir::Type> new_result_types;
+  for (mlir::Value val : new_yield_operands) {
+    new_result_types.push_back(val.getType());
+  }
+
+  // Create new private op with extended results
+  builder.setInsertionPoint(inner_private);
+  auto new_inner_private = mlir::ktdf::PrivateOp::create(
+      builder, inner_private.getLoc(), new_result_types);
+
+  // Move operations from old body to new body (excluding terminator)
+  mlir::Block& new_body = new_inner_private.getBody().front();
+  mlir::Block& old_body = inner_private.getBody().front();
+  new_body.getOperations().splice(new_body.begin(), old_body.getOperations(),
+                                  old_body.begin(), std::prev(old_body.end()));
+
+  // Create new yield in the new body
+  builder.setInsertionPointToEnd(&new_body);
+  mlir::ktdf::PrivateYieldOp::create(builder, old_yield.getLoc(),
+                                     new_yield_operands);
+
+  // Map moved results to new results (now at the beginning)
+  for (unsigned i = 0; i < old_results.size(); ++i) {
+    old_results[i].replaceAllUsesWith(new_inner_private.getResult(i));
+  }
+
+  // Replace uses of old existing results with new results (shifted by moved
+  // count)
+  unsigned moved_count = old_results.size();
+  for (unsigned i = 0; i < inner_private.getNumResults(); ++i) {
+    inner_private.getResult(i).replaceAllUsesWith(
+        new_inner_private.getResult(moved_count + i));
+  }
+
+  inner_private.erase();
+}
+
+/// Create a new inner private node with moved allocations
+void StageCoarseningPass::createInnerPrivate(
+    mlir::OpBuilder& builder, mlir::ktdf::PipelineOp inner_pipeline,
+    llvm::ArrayRef<mlir::Operation*> ops_to_move,
+    llvm::SmallVectorImpl<mlir::Value>& old_results) {
+  LLVM_DEBUG(llvm::dbgs() << "    Creating new inner private\n");
+
+  // Determine result types from operations to move
+  llvm::SmallVector<mlir::Type> result_types;
+  for (mlir::Operation* op : ops_to_move) {
+    result_types.push_back(op->getResult(0).getType());
+  }
+
+  // Create the private operation at the start of inner pipeline
+  builder.setInsertionPointToStart(&inner_pipeline.getBody().front());
+  auto new_private = mlir::ktdf::PrivateOp::create(
+      builder, inner_pipeline.getLoc(), result_types);
+
+  // Clone operations into the private body
+  mlir::Block& private_body = new_private.getBody().front();
+  builder.setInsertionPointToStart(&private_body);
+  mlir::IRMapping value_map;
+  llvm::SmallVector<mlir::Value> new_values;
+
+  for (mlir::Operation* op : ops_to_move) {
+    mlir::Operation* cloned = builder.clone(*op, value_map);
+    new_values.push_back(cloned->getResult(0));
+  }
+
+  // Create yield operation
+  mlir::ktdf::PrivateYieldOp::create(builder, inner_pipeline.getLoc(),
+                                     new_values);
+
+  // Replace all uses of old results with new results
+  for (unsigned i = 0; i < old_results.size(); ++i) {
+    old_results[i].replaceAllUsesWith(new_private.getResult(i));
+  }
+}
+
+/// Update the outer private to remove moved results
+void StageCoarseningPass::updateOuterPrivate(
+    mlir::OpBuilder& builder, mlir::ktdf::PrivateOp outer_private,
+    llvm::ArrayRef<unsigned> removed_indices) {
+  LLVM_DEBUG(llvm::dbgs() << "    Updating outer private\n");
+
+  // Build set of indices to remove for O(1) lookup
+  llvm::DenseSet<unsigned> to_remove(removed_indices.begin(),
+                                     removed_indices.end());
+
+  // Get the yield operation
+  auto old_yield = mlir::cast<mlir::ktdf::PrivateYieldOp>(
+      outer_private.getBody().front().getTerminator());
+
+  // Identify operations that define removed results (to be excluded from new
+  // body)
+  llvm::DenseSet<mlir::Operation*> ops_to_exclude;
+  for (unsigned idx : removed_indices) {
+    mlir::Value yielded_val = old_yield.getOperand(idx);
+    if (mlir::Operation* def_op = yielded_val.getDefiningOp()) {
+      ops_to_exclude.insert(def_op);
+    }
+  }
+
+  // Build new yield operands and result types (excluding removed ones)
+  llvm::SmallVector<mlir::Value> new_yield_operands;
+  llvm::SmallVector<mlir::Type> new_result_types;
+
+  for (auto [idx, operand] : llvm::enumerate(old_yield.getOperands())) {
+    if (!to_remove.contains(idx)) {
+      new_yield_operands.push_back(operand);
+      new_result_types.push_back(operand.getType());
+    }
+  }
+
+  // Create new private op with reduced results
+  builder.setInsertionPoint(outer_private);
+  auto new_outer_private = mlir::ktdf::PrivateOp::create(
+      builder, outer_private.getLoc(), new_result_types);
+
+  // Clone operations from old body to new body (excluding removed ops and
+  // terminator)
+  mlir::Block& new_body = new_outer_private.getBody().front();
+  mlir::Block& old_body = outer_private.getBody().front();
+  builder.setInsertionPointToStart(&new_body);
+  mlir::IRMapping value_map;
+
+  for (mlir::Operation& op : old_body.without_terminator()) {
+    // Skip operations that produce removed results
+    if (ops_to_exclude.contains(&op)) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "      Skipping stale operation: " << op << "\n");
+      continue;
+    }
+    // Clone the operation
+    builder.clone(op, value_map);
+  }
+
+  // Create new yield in the new body with mapped operands
+  builder.setInsertionPointToEnd(&new_body);
+  llvm::SmallVector<mlir::Value> mapped_yield_operands;
+  for (mlir::Value operand : new_yield_operands) {
+    mapped_yield_operands.push_back(value_map.lookupOrDefault(operand));
+  }
+  mlir::ktdf::PrivateYieldOp::create(builder, old_yield.getLoc(),
+                                     mapped_yield_operands);
+
+  // Map old results to new results (skipping removed ones)
+  unsigned new_idx = 0;
+  for (unsigned old_idx = 0; old_idx < outer_private.getNumResults();
+       ++old_idx) {
+    if (!to_remove.contains(old_idx)) {
+      outer_private.getResult(old_idx).replaceAllUsesWith(
+          new_outer_private.getResult(new_idx));
+      new_idx++;
+    }
+  }
+
+  outer_private.erase();
 }
 
 }  // namespace
