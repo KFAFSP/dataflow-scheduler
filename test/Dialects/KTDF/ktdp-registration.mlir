@@ -23,7 +23,7 @@
 // CHECK-NEXT:     %[[VAL_12:.*]] = ktdp.load %[[VAL_10]] : <3x64xindex> -> tensor<3x64xf16>
 // CHECK-NEXT:     %[[VAL_13:.*]] = tensor.empty() : tensor<3x64xf16>
 // CHECK-NEXT:     %[[VAL_14:.*]] = linalg.add ins(%[[VAL_11]], %[[VAL_12]] : tensor<3x64xf16>, tensor<3x64xf16>) outs(%[[VAL_13]] : tensor<3x64xf16>) -> tensor<3x64xf16>
-// CHECK-NEXT:     %[[VAL_15:.*]] = tensor.extract_slice %[[VAL_13]][0, 0] [1, 64] [1, 1] : tensor<3x64xf16> to tensor<1x64xf16>
+// CHECK-NEXT:     %[[VAL_15:.*]] = tensor.extract_slice %[[VAL_14]][0, 0] [1, 64] [1, 1] : tensor<3x64xf16> to tensor<1x64xf16>
 // CHECK-NEXT:     %[[VAL_16:.*]] = ktdp.construct_memory_view %[[VAL_4]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
 // CHECK-NEXT:     %[[VAL_17:.*]] = ktdp.construct_access_tile %[[VAL_16]]{{\[}}%[[VAL_6]], %[[VAL_0]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_3]]} : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
 // CHECK-NEXT:     ktdp.store %[[VAL_15]], %[[VAL_17]] : tensor<1x64xf16>, <1x64xindex>
@@ -74,11 +74,11 @@ module {
 
     // Perform add operation on the data tiles.
     %C_data_tile = tensor.empty() : tensor<3x64xf16>
-    linalg.add ins(%A_data_tile, %B_data_tile : tensor<3x64xf16>, tensor<3x64xf16>)
+    %C_result = linalg.add ins(%A_data_tile, %B_data_tile : tensor<3x64xf16>, tensor<3x64xf16>)
                 outs(%C_data_tile: tensor<3x64xf16>) -> tensor<3x64xf16>
 
-    // extract 1x64 slice of C_data_tile
-    %C_data_subtile = tensor.extract_slice %C_data_tile[0, 0] [1, 64] [1, 1]
+    // extract 1x64 slice of C_result
+    %C_data_subtile = tensor.extract_slice %C_result[0, 0] [1, 64] [1, 1]
       : tensor<3x64xf16> to tensor<1x64xf16>
 
     // Construct a memory view of C from a given address

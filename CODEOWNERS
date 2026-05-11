@@ -1,0 +1,12 @@
+# KTIR-Scheduler Code Owners
+
+# KTDF Dialect components
+/src/Dialects/KTDF/ @alexgatea @bmahjour @prasanth-ibm
+
+# Transform passes
+/src/Transform/ComputeGroupExtraction.cpp @alexgatea
+/src/Transform/ConstructThreeStagePipeline.cpp @alexgatea
+
+# Tools
+/tools/scheduler/ @alexgatea
+

@@ -127,7 +127,18 @@ function run() {
       fi
     else
       echo "scheduler not found!"
-      return 1        
+      return 1
+    fi
+    
+    # For compute-group-extraction pass, add top-level module checks
+    if echo "${run_scheduler}" | grep -q "compute-group-extraction"; then
+      echo "Adding top-level module checks for compute-group-extraction..."
+      # Replace first CHECK-LABEL:   module { with CHECK: module { and CHECK:   module {
+      awk '!done && /^\/\/ CHECK-LABEL:   module \{$/ {print "// CHECK: module {"; print "// CHECK:   module {"; done=1; next} {print}' /tmp/out_sent > /tmp/out && mv /tmp/out /tmp/out_sent
+      # Replace remaining CHECK-LABEL with CHECK for other child modules
+      sed -e 's/^\/\/ CHECK-LABEL:   module {$/\/\/ CHECK:   module {/' < /tmp/out_sent > /tmp/out && mv /tmp/out /tmp/out_sent
+      # Add closing brace for top-level module without extra newline
+      printf "// CHECK: }" >> /tmp/out_sent
     fi
     
     echo "" | cat - $file > /tmp/out && mv /tmp/out $file
