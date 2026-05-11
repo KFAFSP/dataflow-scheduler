@@ -366,6 +366,29 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   func_op.setPrivate();
   extracted_module.push_back(func_op);
 
+  // Create a dummy function that calls the extracted function to prevent
+  // Symbol DCE from removing it (since it's private and called from another
+  // module)
+  builder.setInsertionPointToEnd(extracted_module.getBody());
+  auto dummy_func_name = func_name + "_keep_alive";
+  auto dummy_func = func::FuncOp::create(top_level_module.getLoc(),
+                                         dummy_func_name, func_type);
+  dummy_func.setPrivate();
+  extracted_module.push_back(dummy_func);
+
+  Block* dummy_block = dummy_func.addEntryBlock();
+  builder.setInsertionPointToStart(dummy_block);
+
+  // Create dummy arguments for the call
+  llvm::SmallVector<Value> dummy_args;
+  for (size_t i = 0; i < args.size(); ++i) {
+    dummy_args.push_back(dummy_block->getArgument(i));
+  }
+
+  // Add call to the extracted function
+  func::CallOp::create(builder, top_level_module.getLoc(), func_op, dummy_args);
+  func::ReturnOp::create(builder, top_level_module.getLoc());
+
   // Create entry block with arguments
   Block* func_block = func_op.addEntryBlock();
   builder.setInsertionPointToStart(func_block);
@@ -404,7 +427,6 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   builder.setInsertionPoint(group.first_load);
   auto call_op = func::CallOp::create(builder, top_level_module.getLoc(),
                                       forward_decl, args);
-
   // Step 3: Erase the original operations in reverse order to avoid dangling
   // uses
   for (auto it = ops_to_move.rbegin(); it != ops_to_move.rend(); ++it) {

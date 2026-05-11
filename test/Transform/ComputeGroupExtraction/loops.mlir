@@ -57,6 +57,10 @@
 // CHECK-NEXT:       ktdp.store %[[ADD_0]], %[[CONSTRUCT_ACCESS_TILE_1]] : tensor<3x64xf16>, <3x64xindex>
 // CHECK-NEXT:       return
 // CHECK-NEXT:     }
+// CHECK-NEXT:     func.func private @"local-schedule-0_keep_alive"() {
+// CHECK-NEXT:       call @"local-schedule-0"() : () -> ()
+// CHECK-NEXT:       return
+// CHECK-NEXT:     }
 // CHECK-NEXT:   }
 
 // CHECK:   module {
@@ -75,6 +79,10 @@
 // CHECK-NEXT:       %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
 // CHECK-NEXT:       %[[CONSTRUCT_ACCESS_TILE_1:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_1]]{{\[}}%[[MULI_0]], %[[CONSTANT_2]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
 // CHECK-NEXT:       ktdp.store %[[ADD_0]], %[[CONSTRUCT_ACCESS_TILE_1]] : tensor<3x64xf16>, <3x64xindex>
+// CHECK-NEXT:       return
+// CHECK-NEXT:     }
+// CHECK-NEXT:     func.func private @"local-schedule-1_keep_alive"() {
+// CHECK-NEXT:       call @"local-schedule-1"() : () -> ()
 // CHECK-NEXT:       return
 // CHECK-NEXT:     }
 // CHECK-NEXT:   }
@@ -99,6 +107,10 @@
 // CHECK-NEXT:       %[[CONSTRUCT_MEMORY_VIEW_2:.*]] = ktdp.construct_memory_view %[[CONSTANT_4]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
 // CHECK-NEXT:       %[[CONSTRUCT_ACCESS_TILE_2:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_2]]{{\[}}%[[MULI_0]], %[[CONSTANT_2]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
 // CHECK-NEXT:       ktdp.store %[[ADD_0]], %[[CONSTRUCT_ACCESS_TILE_2]] : tensor<3x64xf16>, <3x64xindex>
+// CHECK-NEXT:       return
+// CHECK-NEXT:     }
+// CHECK-NEXT:     func.func private @"local-schedule-2_keep_alive"() {
+// CHECK-NEXT:       call @"local-schedule-2"() : () -> ()
 // CHECK-NEXT:       return
 // CHECK-NEXT:     }
 // CHECK-NEXT:   }

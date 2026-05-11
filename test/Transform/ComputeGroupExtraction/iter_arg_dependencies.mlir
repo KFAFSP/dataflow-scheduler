@@ -56,6 +56,10 @@
 // CHECK-NEXT:       ktdp.store %[[ADD_0]], %[[CONSTRUCT_ACCESS_TILE_2]] : tensor<3x64xf16>, <3x64xindex>
 // CHECK-NEXT:       return
 // CHECK-NEXT:     }
+// CHECK-NEXT:     func.func private @"local-schedule-0_keep_alive"(%[[VAL_1:.*]]: index) {
+// CHECK-NEXT:       call @"local-schedule-0"(%[[VAL_1]]) : (index) -> ()
+// CHECK-NEXT:       return
+// CHECK-NEXT:     }
 // CHECK-NEXT:   }
 // CHECK: }
 

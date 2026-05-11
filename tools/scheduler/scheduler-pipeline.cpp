@@ -1,6 +1,7 @@
 #include "Transform/Passes.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Transforms/Passes.h"
 #include "tools/scheduler-driver-lib/scheduler-main.h"
 
 namespace scheduler {
@@ -19,6 +20,7 @@ namespace ktdf {
 
 void buildKTDPToDFIRPipeline(mlir::OpPassManager& pm) {
   pm.addPass(createComputeGroupExtractionPass());
+  pm.addPass(mlir::createSymbolDCEPass());
 }
 
 }  // namespace ktdf
