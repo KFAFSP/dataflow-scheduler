@@ -1,3 +1,120 @@
+// CAUTION: Be careful when updating this test to make sure SSA results from ktdf.private are reusing the appropriate FileCheck matches.
+
+// RUN: scheduler --stage-coarsening %s | FileCheck %s
+
+// CHECK: #[[$ATTR_0:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>
+
+
+// CHECK-LABEL:   func.func @local_schedule_1(
+// CHECK-SAME:                                %[[VAL_0:.*]]: index) {
+// CHECK-NEXT:     %[[VAL_1:.*]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[VAL_2:.*]] = arith.constant 1 : index
+// CHECK-NEXT:     %[[VAL_3:.*]] = arith.constant 2 : index
+// CHECK-NEXT:     %[[VAL_4:.*]] = arith.constant 64 : index
+// CHECK-NEXT:     %[[VAL_5:.*]] = arith.constant 32 : index
+// CHECK-NEXT:     %[[VAL_6:.*]] = arith.constant 1024 : index
+// CHECK-NEXT:     %[[VAL_7:.*]] = arith.constant 12288 : index
+// CHECK-NEXT:     %[[VAL_8:.*]] = arith.constant 18432 : index
+// CHECK-NEXT:     %[[VAL_9:.*]] = ktdp.get_compute_tile_id : index
+// CHECK-NEXT:     %[[VAL_10:.*]] = arith.muli %[[VAL_9]], %[[VAL_5]] : index
+// CHECK-NEXT:     %[[VAL_11:.*]] = arith.addi %[[VAL_10]], %[[VAL_0]] : index
+// CHECK-NEXT:     %[[VAL_12:.*]] = ktdp.construct_memory_view %[[VAL_6]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_0]], memory_space = {{.*}}<HBM>} : memref<96x64xf16, {{.*}}<HBM>>
+// CHECK-NEXT:     %[[VAL_13:.*]] = ktdp.construct_memory_view %[[VAL_7]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_0]], memory_space = {{.*}}<HBM>} : memref<96x64xf16, {{.*}}<HBM>>
+// CHECK-NEXT:     %[[VAL_14:.*]] = ktdp.construct_memory_view %[[VAL_8]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_0]], memory_space = {{.*}}<HBM>} : memref<96x64xf16, {{.*}}<HBM>>
+// CHECK-NEXT:     %[[VAL_15:.*]] = arith.muli %[[VAL_11]], %[[VAL_4]] : index
+// CHECK-NEXT:     %[[VAL_16:.*]] = memref.reinterpret_cast %[[VAL_12]] to offset: {{\[}}%[[VAL_15]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, {{.*}}<HBM>> to memref<1x64xf16, strided<[64, 1], offset: ?>, {{.*}}<HBM>>
+// CHECK-NEXT:     %[[VAL_17:.*]] = memref.reinterpret_cast %[[VAL_13]] to offset: {{\[}}%[[VAL_15]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, {{.*}}<HBM>> to memref<1x64xf16, strided<[64, 1], offset: ?>, {{.*}}<HBM>>
+// CHECK-NEXT:     %[[VAL_18:.*]] = memref.reinterpret_cast %[[VAL_14]] to offset: {{\[}}%[[VAL_15]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, {{.*}}<HBM>> to memref<1x64xf16, strided<[64, 1], offset: ?>, {{.*}}<HBM>>
+// CHECK-NEXT:     scf.for %[[VAL_19:.*]] = %[[VAL_1]] to %[[VAL_2]] step %[[VAL_3]] {
+// CHECK-NEXT:       scf.for %[[VAL_20:.*]] = %[[VAL_1]] to %[[VAL_4]] step %[[VAL_4]] {
+// CHECK-NEXT:         ktdf.pipeline {
+// CHECK-NEXT:           %[[VAL_21:.*]]:5 = ktdf.private -> (memref<2x1x64xf16, {{.*}}<LX>>, memref<2x1x64xf16, {{.*}}<LX>>, memref<2x1x64xf16, {{.*}}<LX>>, !ktdf.token, !ktdf.token) {
+// CHECK-NEXT:             %[[VAL_22:.*]] = memref.alloc() : memref<2x1x64xf16, {{.*}}<LX>>
+// CHECK-NEXT:             %[[VAL_23:.*]] = memref.alloc() : memref<2x1x64xf16, {{.*}}<LX>>
+// CHECK-NEXT:             %[[VAL_24:.*]] = memref.alloc() : memref<2x1x64xf16, {{.*}}<LX>>
+// CHECK-NEXT:             %[[VAL_25:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:             %[[VAL_26:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:             ktdf.private_yield %[[VAL_22]], %[[VAL_23]], %[[VAL_24]], %[[VAL_25]], %[[VAL_26]] : memref<2x1x64xf16, {{.*}}<LX>>, memref<2x1x64xf16, {{.*}}<LX>>, memref<2x1x64xf16, {{.*}}<LX>>, !ktdf.token, !ktdf.token
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[VAL_21]]#3 : !ktdf.token) {
+// CHECK-NEXT:             scf.for %[[VAL_28:.*]] = %[[VAL_1]] to %[[VAL_3]] step %[[VAL_2]] {
+// CHECK-NEXT:               scf.for %[[VAL_29:.*]] = %[[VAL_1]] to %[[VAL_4]] step %[[VAL_4]] {
+// CHECK-NEXT:                 %[[VAL_30:.*]] = arith.addi %[[VAL_19]], %[[VAL_28]] : index
+// CHECK-NEXT:                 %[[VAL_31:.*]] = arith.addi %[[VAL_20]], %[[VAL_29]] : index
+// CHECK-NEXT:                 %[[VAL_32:.*]] = arith.subi %[[VAL_28]], %[[VAL_1]] : index
+// CHECK-NEXT:                 %[[VAL_33:.*]] = arith.divsi %[[VAL_32]], %[[VAL_2]] : index
+// CHECK-NEXT:                 %[[VAL_34:.*]] = arith.subi %[[VAL_29]], %[[VAL_1]] : index
+// CHECK-NEXT:                 %[[VAL_35:.*]] = arith.divsi %[[VAL_34]], %[[VAL_4]] : index
+// CHECK-NEXT:                 ktdf.data_transfer from %[[VAL_16]]{{\[}}%[[VAL_30]], %[[VAL_31]]] size [1, 64] to %[[VAL_21]]#0{{\[}}%[[VAL_33]], %[[VAL_35]], %[[VAL_1]]] size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>, {{.*}}<HBM>>, memref<2x1x64xf16, {{.*}}<LX>>
+// CHECK-NEXT:                 %[[VAL_36:.*]] = arith.subi %[[VAL_28]], %[[VAL_1]] : index
+// CHECK-NEXT:                 %[[VAL_37:.*]] = arith.divsi %[[VAL_36]], %[[VAL_2]] : index
+// CHECK-NEXT:                 %[[VAL_38:.*]] = arith.subi %[[VAL_29]], %[[VAL_1]] : index
+// CHECK-NEXT:                 %[[VAL_39:.*]] = arith.divsi %[[VAL_38]], %[[VAL_4]] : index
+// CHECK-NEXT:                 ktdf.data_transfer from %[[VAL_17]]{{\[}}%[[VAL_30]], %[[VAL_31]]] size [1, 64] to %[[VAL_21]]#1{{\[}}%[[VAL_37]], %[[VAL_39]], %[[VAL_1]]] size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>, {{.*}}<HBM>>, memref<2x1x64xf16, {{.*}}<LX>>
+// CHECK-NEXT:               } {loop_type = {{.*}}<parallel_loop>}
+// CHECK-NEXT:             } {loop_type = {{.*}}<parallel_loop>}
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(%[[VAL_21]]#3 : !ktdf.token) depends_out(%[[VAL_21]]#4 : !ktdf.token) {
+// CHECK-NEXT:             scf.for %[[VAL_41:.*]] = %[[VAL_1]] to %[[VAL_3]] step %[[VAL_2]] {
+// CHECK-NEXT:               scf.for %[[VAL_42:.*]] = %[[VAL_1]] to %[[VAL_4]] step %[[VAL_4]] {
+// CHECK-NEXT:                 ktdf.pipeline {
+// CHECK-NEXT:                   %[[VAL_43:.*]]:5 = ktdf.private -> (memref<64xf16, {{.*}}<SFP_REG>>, memref<64xf16, {{.*}}<SFP_REG>>, memref<64xf16, {{.*}}<SFP_REG>>, !ktdf.token, !ktdf.token) {
+// CHECK-NEXT:                     %[[VAL_44:.*]] = memref.alloc() : memref<64xf16, {{.*}}<SFP_REG>>
+// CHECK-NEXT:                     %[[VAL_45:.*]] = memref.alloc() : memref<64xf16, {{.*}}<SFP_REG>>
+// CHECK-NEXT:                     %[[VAL_46:.*]] = memref.alloc() : memref<64xf16, {{.*}}<SFP_REG>>
+// CHECK-NEXT:                     %[[VAL_47:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:                     %[[VAL_48:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:                     ktdf.private_yield %[[VAL_44]], %[[VAL_45]], %[[VAL_46]], %[[VAL_47]], %[[VAL_48]] : memref<64xf16, {{.*}}<SFP_REG>>, memref<64xf16, {{.*}}<SFP_REG>>, memref<64xf16, {{.*}}<SFP_REG>>, !ktdf.token, !ktdf.token
+// CHECK-NEXT:                   }
+// CHECK-NEXT:                   ktdf.stage depends_in(none) depends_out(%[[VAL_43]]#3 : !ktdf.token) {
+// CHECK-NEXT:                     %[[VAL_50:.*]] = arith.subi %[[VAL_41]], %[[VAL_1]] : index
+// CHECK-NEXT:                     %[[VAL_51:.*]] = arith.divsi %[[VAL_50]], %[[VAL_2]] : index
+// CHECK-NEXT:                     %[[VAL_52:.*]] = arith.subi %[[VAL_42]], %[[VAL_1]] : index
+// CHECK-NEXT:                     %[[VAL_53:.*]] = arith.divsi %[[VAL_52]], %[[VAL_4]] : index
+// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_21]]#0{{\[}}%[[VAL_51]], %[[VAL_53]], %[[VAL_1]]] size [64] to %[[VAL_43]]#0{{\[}}%[[VAL_1]]] size [64] : memref<2x1x64xf16, {{.*}}<LX>>, memref<64xf16, {{.*}}<SFP_REG>>
+// CHECK-NEXT:                     %[[VAL_54:.*]] = arith.subi %[[VAL_41]], %[[VAL_1]] : index
+// CHECK-NEXT:                     %[[VAL_55:.*]] = arith.divsi %[[VAL_54]], %[[VAL_2]] : index
+// CHECK-NEXT:                     %[[VAL_56:.*]] = arith.subi %[[VAL_42]], %[[VAL_1]] : index
+// CHECK-NEXT:                     %[[VAL_57:.*]] = arith.divsi %[[VAL_56]], %[[VAL_4]] : index
+// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_21]]#1{{\[}}%[[VAL_55]], %[[VAL_57]], %[[VAL_1]]] size [64] to %[[VAL_43]]#1{{\[}}%[[VAL_1]]] size [64] : memref<2x1x64xf16, {{.*}}<LX>>, memref<64xf16, {{.*}}<SFP_REG>>
+// CHECK-NEXT:                   }
+// CHECK-NEXT:                   ktdf.stage depends_in(%[[VAL_43]]#3 : !ktdf.token) depends_out(%[[VAL_43]]#4 : !ktdf.token) {
+// CHECK-NEXT:                     linalg.add ins(%[[VAL_43]]#0, %[[VAL_43]]#1 : memref<64xf16, {{.*}}<SFP_REG>>, memref<64xf16, {{.*}}<SFP_REG>>) outs(%[[VAL_43]]#2 : memref<64xf16, {{.*}}<SFP_REG>>)
+// CHECK-NEXT:                   }
+// CHECK-NEXT:                   ktdf.stage depends_in(%[[VAL_43]]#4 : !ktdf.token) depends_out(none) {
+// CHECK-NEXT:                     %[[VAL_60:.*]] = arith.subi %[[VAL_41]], %[[VAL_1]] : index
+// CHECK-NEXT:                     %[[VAL_61:.*]] = arith.divsi %[[VAL_60]], %[[VAL_2]] : index
+// CHECK-NEXT:                     %[[VAL_62:.*]] = arith.subi %[[VAL_42]], %[[VAL_1]] : index
+// CHECK-NEXT:                     %[[VAL_63:.*]] = arith.divsi %[[VAL_62]], %[[VAL_4]] : index
+// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_43]]#2 size [64] to %[[VAL_21]]#2{{\[}}%[[VAL_61]], %[[VAL_63]], %[[VAL_1]]] size [64] : memref<64xf16, {{.*}}<SFP_REG>>, memref<2x1x64xf16, {{.*}}<LX>>
+// CHECK-NEXT:                   }
+// CHECK-NEXT:                 }
+// CHECK-NEXT:               } {loop_type = {{.*}}<parallel_loop>}
+// CHECK-NEXT:             } {loop_type = {{.*}}<parallel_loop>}
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(%[[VAL_21]]#4 : !ktdf.token) depends_out(none) {
+// CHECK-NEXT:             scf.for %[[VAL_65:.*]] = %[[VAL_1]] to %[[VAL_3]] step %[[VAL_2]] {
+// CHECK-NEXT:               scf.for %[[VAL_66:.*]] = %[[VAL_1]] to %[[VAL_4]] step %[[VAL_4]] {
+// CHECK-NEXT:                 %[[VAL_67:.*]] = arith.addi %[[VAL_19]], %[[VAL_65]] : index
+// CHECK-NEXT:                 %[[VAL_68:.*]] = arith.addi %[[VAL_20]], %[[VAL_66]] : index
+// CHECK-NEXT:                 %[[VAL_69:.*]] = arith.subi %[[VAL_65]], %[[VAL_1]] : index
+// CHECK-NEXT:                 %[[VAL_70:.*]] = arith.divsi %[[VAL_69]], %[[VAL_2]] : index
+// CHECK-NEXT:                 %[[VAL_71:.*]] = arith.subi %[[VAL_66]], %[[VAL_1]] : index
+// CHECK-NEXT:                 %[[VAL_72:.*]] = arith.divsi %[[VAL_71]], %[[VAL_4]] : index
+// CHECK-NEXT:                 ktdf.data_transfer from %[[VAL_21]]#2{{\[}}%[[VAL_70]], %[[VAL_72]], %[[VAL_1]]] size [64] to %[[VAL_18]]{{\[}}%[[VAL_67]], %[[VAL_68]]] size [1, 64] : memref<2x1x64xf16, {{.*}}<LX>>, memref<1x64xf16, strided<[64, 1], offset: ?>, {{.*}}<HBM>>
+// CHECK-NEXT:               } {loop_type = {{.*}}<parallel_loop>}
+// CHECK-NEXT:             } {loop_type = {{.*}}<parallel_loop>}
+// CHECK-NEXT:           }
+// CHECK-NEXT:         }
+// CHECK-NEXT:       } {loop_type = {{.*}}<parallel_loop>}
+// CHECK-NEXT:     } {loop_type = {{.*}}<parallel_loop>}
+// CHECK-NEXT:     return
+// CHECK-NEXT:   }
+
+
+
+
+
 module {
     func.func @local_schedule_1(%i: index) {
         %c0 = arith.constant 0 : index

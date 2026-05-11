@@ -162,18 +162,23 @@ void PipelineTree::compute(Operation& unit) {
     }
     if (!node) return;
 
-    // Find parent: either another selected operation or root
-    OperationTreeNode* parent = root_;
-    Operation* curr_op = op;
-    while ((curr_op = curr_op->getParentOp())) {
-      if (!isOperationSelected(*curr_op)) continue;
-      auto parent_it = opToNode_.find(curr_op);
-      assert(parent_it != opToNode_.end() &&
-             "expected parent to be in the map (due to pre-order traversal)");
-      parent = parent_it->getSecond();
-      break;
+    if (op == &unit) {
+      root_->insertChildNode(node);
+    } else {
+      // Find parent: either another selected operation or root
+      OperationTreeNode* parent = root_;
+      Operation* curr_op = op;
+      while ((curr_op = curr_op->getParentOp())) {
+        if (!isOperationSelected(*curr_op)) continue;
+        if (curr_op == &unit) break;  // reached the top where we
+        auto parent_it = opToNode_.find(curr_op);
+        assert(parent_it != opToNode_.end() &&
+               "expected parent to be in the map (due to pre-order traversal)");
+        parent = parent_it->getSecond();
+        break;
+      }
+      parent->insertChildNode(node);
     }
-    parent->insertChildNode(node);
   });
 
   // Build stage dependencies by analyzing token flow

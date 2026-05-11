@@ -21,6 +21,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/IR/IRMapping.h"
+#include "src/Utils/OperationUtils.hpp"
 
 #define DEBUG_TYPE "stage-coarsening"
 
@@ -76,6 +77,7 @@ void ScopeCorrection::analyzePrivateResultUsage() {
   auto yield_op = mlir::cast<mlir::ktdf::PrivateYieldOp>(
       outer_private_.getBody().front().getTerminator());
 
+  mlir::SmallPtrSet<mlir::Operation*, 16> visited_moved_ops;
   for (auto [idx, result] : llvm::enumerate(outer_private_.getResults())) {
     // Skip tokens as they are handled by the pipeline tree materialization
     if (mlir::isa<mlir::ktdf::TokenType>(result.getType())) continue;
@@ -116,9 +118,12 @@ void ScopeCorrection::analyzePrivateResultUsage() {
     sc_info.result_indices.push_back(idx);
     sc_info.old_results.push_back(result);
 
-    // Find the operation that produces this yielded value
+    // Find the operation that produces this yielded value.
+    // Avoid adding duplicate ops when there are ops with multiple results being
+    // moved (eg. fifo.allocate).
     mlir::Value yielded_val = yield_op.getOperand(idx);
-    if (mlir::Operation* def_op = yielded_val.getDefiningOp()) {
+    mlir::Operation* def_op = yielded_val.getDefiningOp();
+    if (def_op && visited_moved_ops.insert(def_op).second) {
       sc_info.ops_to_move.push_back(def_op);
     }
   }
@@ -194,8 +199,9 @@ mlir::ktdf::PrivateOp ScopeCorrection::recreatePrivateOp(
 
   // Add results from prepended operations
   for (mlir::Operation* op : ops_to_prepend) {
-    assert(op->getNumResults() == 1 && "expected ops with single result");
-    new_yield_operands.push_back(value_map.lookup(op->getResult(0)));
+    for (int i = 0; i < op->getNumResults(); i++) {
+      new_yield_operands.push_back(value_map.lookup(op->getResult(i)));
+    }
   }
 
   // Add mapped operands from old yield (if old_private exists)
