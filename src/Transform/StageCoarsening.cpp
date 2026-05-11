@@ -45,11 +45,11 @@
 #include "src/Analysis/PipelineTree.hpp"
 #include "src/Analysis/StageGrouping.hpp"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
-#include "src/Transform/BufferExpansion.hpp"
 #include "src/Transform/Passes.h"
 #include "src/Transform/PipelineTree/Legalizer.hpp"
 #include "src/Transform/PipelineTree/Materializer.hpp"
-#include "src/Transform/ScopeCorrection.hpp"
+#include "src/Transform/StageCoarsening/BufferExpansion.hpp"
+#include "src/Transform/StageCoarsening/ScopeCorrection.hpp"
 #include "src/Utils/OperationUtils.hpp"
 
 namespace ktdf {
@@ -652,8 +652,8 @@ void StageCoarseningPass::GenerateTransformedIR(
 
   // Fix scoping of private results that are only used in inner pipelines
   LLVM_DEBUG(llvm::dbgs() << "\n--- Fixing Private Result Scoping ---\n");
-  ScopeCorrection corrector(builder, mlir::cast<mlir::ktdf::PipelineOp>(new_outer_pipeline));
-  corrector.run();
+  ScopeCorrection scope_corrector(builder, new_outer_pipeline);
+  scope_corrector.run();
 
   DEBUG_WITH_TYPE(VerboseDebug, {
     llvm::dbgs() << "IR after private scoping correction:\n";
@@ -662,69 +662,6 @@ void StageCoarseningPass::GenerateTransformedIR(
 
   LLVM_DEBUG(llvm::dbgs() << "  IR generation complete.\n");
 }
-
-//===----------------------------------------------------------------------===//
-// Scope Correction Helper Class
-//===----------------------------------------------------------------------===//
-
-/// Helper class to encapsulate private result scope correction logic
-class ScopeCorrection {
- public:
-  ScopeCorrection(mlir::OpBuilder& builder,
-                  mlir::ktdf::PipelineOp outer_pipeline)
-      : builder_(builder), outer_pipeline_(outer_pipeline) {}
-
-  /// Perform the scope correction analysis and transformation
-  void run();
-
- private:
-  /// Information about results to move to an inner pipeline
-  struct ScopeCorrectionInfo {
-    mlir::ktdf::PipelineOp target_pipeline;
-    llvm::SmallVector<unsigned> result_indices;
-    llvm::SmallVector<mlir::Operation*> ops_to_move;
-    llvm::SmallVector<mlir::Value> old_results;
-  };
-
-  /// Find the outer pipeline's private operation
-  mlir::ktdf::PrivateOp findOuterPrivate();
-
-  /// Find all inner pipelines
-  llvm::SmallVector<mlir::ktdf::PipelineOp> findInnerPipelines();
-
-  /// Analyze which private results are only used in specific inner pipelines
-  void analyzePrivateResultUsage();
-
-  /// Move specified private results from outer private to inner pipeline
-  void movePrivateResultsToInnerPipeline(mlir::ktdf::PipelineOp inner_pipeline,
-                                         ScopeCorrectionInfo& move_info);
-
-  /// Helper to recreate a PrivateOp with new results
-  mlir::ktdf::PrivateOp recreatePrivateOp(
-      mlir::ktdf::PrivateOp old_private,
-      llvm::ArrayRef<mlir::Type> new_result_types,
-      llvm::function_ref<void(mlir::OpBuilder&, mlir::IRMapping&, mlir::Block&)>
-          body_builder,
-      llvm::function_ref<llvm::SmallVector<mlir::Value>(mlir::IRMapping&)>
-          yield_builder);
-
-  /// Extend an existing inner private node with moved allocations
-  void extendInnerPrivate(mlir::ktdf::PrivateOp inner_private,
-                          ScopeCorrectionInfo& move_info);
-
-  /// Create a new inner private node with moved allocations
-  void createInnerPrivate(mlir::ktdf::PipelineOp inner_pipeline,
-                          ScopeCorrectionInfo& move_info);
-
-  /// Update the outer private to remove moved results
-  void updateOuterPrivate(llvm::ArrayRef<unsigned> removed_indices);
-
-  mlir::OpBuilder& builder_;
-  mlir::ktdf::PipelineOp outer_pipeline_;
-  mlir::ktdf::PrivateOp outer_private_;
-  llvm::DenseMap<mlir::ktdf::PipelineOp, ScopeCorrectionInfo>
-      pipeline_to_move_info_;
-};
 
 }  // namespace
 }  // namespace ktdf

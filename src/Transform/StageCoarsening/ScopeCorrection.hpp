@@ -35,9 +35,9 @@ namespace ktdf {
 /// Helper class to encapsulate private result scope correction logic
 class ScopeCorrection {
  public:
-  ScopeCorrection(mlir::OpBuilder& builder,
-                  mlir::ktdf::PipelineOp outer_pipeline)
-      : builder_(builder), outer_pipeline_(outer_pipeline) {}
+  ScopeCorrection(mlir::OpBuilder& builder, mlir::Operation* outer_pipeline)
+      : builder_(builder),
+        outer_pipeline_(mlir::cast<mlir::ktdf::PipelineOp>(outer_pipeline)) {}
 
   /// Perform the scope correction analysis and transformation
   void run();
@@ -87,7 +87,8 @@ class ScopeCorrection {
   mlir::OpBuilder& builder_;
   mlir::ktdf::PipelineOp outer_pipeline_;
   mlir::ktdf::PrivateOp outer_private_;
-  llvm::DenseMap<mlir::ktdf::PipelineOp, ScopeCorrectionInfo> pipeline_to_move_info_;
+  llvm::DenseMap<mlir::ktdf::PipelineOp, ScopeCorrectionInfo>
+      pipeline_to_move_info_;
 };
 
 }  // namespace ktdf

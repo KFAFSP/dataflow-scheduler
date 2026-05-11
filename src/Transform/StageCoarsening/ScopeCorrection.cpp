@@ -16,7 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "src/Transform/ScopeCorrection.hpp"
+#include "ScopeCorrection.hpp"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Debug.h"

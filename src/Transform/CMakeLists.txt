@@ -4,13 +4,13 @@ add_public_tablegen_target(SchedulerTransformsPassIncGen)
 
 add_library(SchedulerTransforms
     ComputeGroupExtraction.cpp
-    TileSCFForLoops.cpp
-    StripMineSCFForLoops.cpp
-    BufferExpansion.cpp
-    ScopeCorrection.cpp
-    StageCoarsening.cpp
     PipelineTree/Legalizer.cpp
     PipelineTree/Materializer.cpp
+    StageCoarsening/BufferExpansion.cpp
+    StageCoarsening/ScopeCorrection.cpp
+    StageCoarsening.cpp
+    StripMineSCFForLoops.cpp
+    TileSCFForLoops.cpp
 )
 
 target_link_libraries(SchedulerTransforms
