@@ -155,40 +155,36 @@ mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
   llvm::SmallVector<mlir::Value> depends_in;
   llvm::SmallVector<mlir::Value> depends_out;
 
-  // For depends_out: find tokens corresponding to stages that depend on this
-  // stage
-  for (StageNode* dependent_stage : stage_node.getDependencies()) {
-    auto it = stage_to_token_map_.find(dependent_stage);
-    if (it == stage_to_token_map_.end()) continue;  // depends_out(none)
+  // For depends_out: find the token produced by this stage
+  if (!stage_node.getDependencies().empty()) {
+    auto it = stage_to_token_map_.find(&stage_node);
+    assert(it != stage_to_token_map_.end() &&
+           "expected token map to be updated for this stage");
     depends_out.push_back(it->second);
     LLVM_DEBUG(llvm::dbgs() << "      Added depends_out token for stage "
-                            << dependent_stage->getStageId() << "\n");
+                            << stage_node.getStageId() << "\n");
   }
 
   // For depends_in: find stages that this stage depends on
   // We need to look at all stages in the parent pipeline and check if this
-  // stage is in their dependencies
+  // stage is in their list of dependents.
   const PipelineTreeNode* parent =
       static_cast<const PipelineTreeNode*>(stage_node.getParentNode());
-  if (parent && parent->isPipelineNode()) {
-    const PipelineNode* pipeline_parent =
-        static_cast<const PipelineNode*>(parent);
-    llvm::SmallVector<StageNode*> all_stages = pipeline_parent->getStages();
-
-    for (StageNode* other_stage : all_stages) {
-      // Check if this stage is in other_stage's dependencies
-      for (StageNode* dep : other_stage->getDependencies()) {
-        if (dep != &stage_node) continue;
-        // This stage depends on other_stage, find its token
-        auto it = stage_to_token_map_.find(other_stage);
-        assert(it != stage_to_token_map_.end() &&
-               "expected token to have been created during materialization of "
-               "private op");
-        depends_in.push_back(it->second);
-        LLVM_DEBUG(llvm::dbgs() << "      Added depends_in token from stage "
-                                << other_stage->getStageId() << "\n");
-        break;
-      }
+  assert(parent && parent->isPipelineNode());
+  const PipelineNode* pipeline_parent =
+      static_cast<const PipelineNode*>(parent);
+  for (StageNode* other_stage : pipeline_parent->getStages()) {
+    if (other_stage == &stage_node) continue;
+    // Check if this stage is in other_stage's dependencies
+    for (StageNode* dep : other_stage->getDependencies()) {
+      if (dep != &stage_node) continue;
+      // This stage depends on other_stage (other_stage unblocks this stage)
+      auto it = stage_to_token_map_.find(other_stage);
+      assert(it != stage_to_token_map_.end());
+      depends_in.push_back(it->second);
+      LLVM_DEBUG(llvm::dbgs()
+                 << "      Added depends_in token for this stage from stage "
+                 << other_stage->getStageId() << "\n");
     }
   }
 
