@@ -117,10 +117,11 @@ class PipelineTreeNode : public OperationTreeNode {
       const PipelineTreeNode *start_node,
       std::function<bool(const PipelineTreeNode *)> stop);
 
-  /// Find the innermost loop in a loop nest by walking down the first child
-  /// chain. Stops when hitting a non-loop node or when there are no more
-  /// children. Returns nullptr if the input node is nullptr or not a loop.
-  /// Otherwise returns \p start_node if no other inner loop is found.
+  /// Find the innermost loop in a loop nest by traversing all children and
+  /// tracking loop depths. Returns the loop node with the maximum depth from
+  /// \p start_node. Returns nullptr if the input node is nullptr or not a loop.
+  /// If \p start_node is a loop with no nested loops, returns \p start_node.
+  /// If more than one innermost loop exist at the same depth, the first one visited is returned.
   static const PipelineTreeNode *findInnermostLoop(
       const PipelineTreeNode *start_node);
 

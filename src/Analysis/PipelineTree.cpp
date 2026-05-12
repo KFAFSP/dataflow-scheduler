@@ -244,15 +244,35 @@ const PipelineTreeNode* PipelineTreeNode::findInnermostLoop(
     const PipelineTreeNode* start_node) {
   if (!start_node || !start_node->isLoopNode()) return nullptr;
 
+  // Track the deepest loop found and its depth
   const PipelineTreeNode* innermost_loop = start_node;
+  unsigned max_depth = 0;
 
-  while (true) {
-    const PipelineTreeNode* child =
-        static_cast<const PipelineTreeNode*>(innermost_loop->getFirstChild());
-    if (!child || !child->isLoopNode()) break;
+  // Helper function to recursively find the deepest loop
+  std::function<void(const PipelineTreeNode*, unsigned)> findDeepestLoop =
+      [&](const PipelineTreeNode* node, unsigned current_depth) {
+        if (!node) return;
 
-    innermost_loop = child;
-  }
+        // If this is a loop and it's deeper than what we've seen, update
+        if (node->isLoopNode() && current_depth > max_depth) {
+          max_depth = current_depth;
+          innermost_loop = node;
+        }
+
+        // Recursively check all children
+        const OperationTreeNode* child = node->getFirstChild();
+        while (child) {
+          const PipelineTreeNode* pipeline_child =
+              static_cast<const PipelineTreeNode*>(child);
+          unsigned next_depth =
+              current_depth + (pipeline_child->isLoopNode() ? 1 : 0);
+          findDeepestLoop(pipeline_child, next_depth);
+          child = child->getNextSibling();
+        }
+      };
+
+  // Start the search from start_node with depth 0
+  findDeepestLoop(start_node, 0);
 
   return innermost_loop;
 }
