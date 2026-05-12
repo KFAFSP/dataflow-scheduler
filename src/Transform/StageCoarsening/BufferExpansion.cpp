@@ -337,7 +337,7 @@ void PerformBufferExpansionAnalysis(
 
   // Step 1: Identify common memrefs across stage groups
   // Map from memref value to the set of group indices that use it
-  llvm::DenseMap<mlir::Value, llvm::SmallSet<size_t, 4>> memref_to_groups;
+  llvm::MapVector<mlir::Value, llvm::SmallSet<size_t, 4>> memref_to_groups;
 
   const llvm::SmallVector<ktdf::StageGroup>& groups = grouping.getGroups();
 
@@ -422,7 +422,7 @@ void PerformBufferExpansionAnalysis(
 
   // Step 3: Analyze loop dependencies for each candidate buffer
   // Map from buffer to the list of loop IVs it depends on
-  llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>>
+  llvm::MapVector<mlir::Value, llvm::SmallVector<mlir::Value>>
       buffer_to_loop_ivs;
 
   // Build set of loop IVs from candidate loop nest for quick lookup
@@ -530,7 +530,9 @@ void PerformBufferExpansionAnalysis(
 
       // Dynamic size - compute at runtime
       // Create: ceildiv(upper - lower, step)
-      mlir::OpBuilder builder(loop);
+      // Note we need to put the insertion point right before the top level
+      // loop, because that's where the coarsened pipeline will eventually land.
+      mlir::OpBuilder builder(loop_nest.front());
       mlir::Location loc = loop.getLoc();
       mlir::Value diff =
           mlir::arith::SubIOp::create(builder, loc, upper, lower).getResult();
