@@ -274,6 +274,73 @@ def KTDF_CreateTokenOp : KTDF_Op<"create_token", [Pure]> {
 }
 
 //===----------------------------------------------------------------------===//
+// Tile Size Operations
+//===----------------------------------------------------------------------===//
+
+def KTDF_CreateTileSizeOp : KTDF_Op<"create_tile_size", [Pure]> {
+  let summary = "Create a placeholder for a tile size to be determined by the scheduler";
+  let description = [{
+    The `ktdf.create_tile_size` operation creates a placeholder value of index type
+    that represents a tile size whose concrete value will be determined by the
+    scheduler at a later stage. This operation enables loop tiling transformations
+    while deferring the actual tile size selection until scratchpad usage can be
+    computed more accurately.
+
+    The operation takes two named attributes:
+    - `min_value`: Specifies the minimum acceptable value for the tile size
+    - `divisibility`: Specifies a value that the selected tile size must evenly divide
+
+    The scheduler will later replace this placeholder with a concrete tile size value
+    that satisfies both constraints and optimizes for scratchpad usage.
+
+    Example:
+    ```mlir
+    // Create a tile size with minimum value 8 that must divide 4
+    %tile_size = ktdf.create_tile_size {min_value = 8 : index, divisibility = 4 : index} : index
+    
+    // Use in loop tiling
+    scf.for %i = %c0 to %N step %tile_size {
+      // Loop body
+    }
+    ```
+  }];
+
+  let arguments = (ins
+    IndexAttr:$min_value,
+    IndexAttr:$divisibility
+  );
+
+  let results = (outs
+    Index:$result
+  );
+
+  let assemblyFormat = "attr-dict `:` type($result)";
+
+  let builders = [
+    OpBuilder<(ins "int64_t":$minValue, "int64_t":$divisibility), [{
+      auto indexType = $_builder.getIndexType();
+      $_state.addAttribute("min_value",
+                          $_builder.getIndexAttr(minValue));
+      $_state.addAttribute("divisibility",
+                          $_builder.getIndexAttr(divisibility));
+      $_state.addTypes(indexType);
+    }]>
+  ];
+
+  let extraClassDeclaration = [{
+    /// Returns the minimum value for the tile size
+    int64_t getMinValueInt() {
+      return getMinValue().getSExtValue();
+    }
+    
+    /// Returns the divisibility constraint
+    int64_t getDivisibilityInt() {
+      return getDivisibility().getSExtValue();
+    }
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // Pipeline and Stage Operations
 //===----------------------------------------------------------------------===//
 
