@@ -107,7 +107,7 @@ struct ConstructThreeStagePipelinePass
   void resetState();
 
   // Generalize named linalg operations to linalg.generic
-  LogicalResult generalizeLinalgOps(func::FuncOp func_op);
+  LogicalResult generalizeLinalgArithMathOps(func::FuncOp func_op);
 
   // Fuse consecutive linalg.generic operations
   LogicalResult fuseLinalgOps(func::FuncOp func_op);
@@ -173,7 +173,7 @@ void ConstructThreeStagePipelinePass::resetState() {
   const_builder_.reset();
 }
 
-LogicalResult ConstructThreeStagePipelinePass::generalizeLinalgOps(
+LogicalResult ConstructThreeStagePipelinePass::generalizeLinalgArithMathOps(
     func::FuncOp func_op) {
   LLVM_DEBUG(
       llvm::dbgs()
@@ -244,6 +244,8 @@ LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(
       if (!producer) continue;
 
       rewriter.setInsertionPoint(consumer);
+      // TODO: we may want do non-element-wise fusion as well such as matmul
+      // followed by add.
       FailureOr<linalg::ElementwiseOpFusionResult> fusion_result =
           linalg::fuseElementwiseOps(rewriter, operand);
 
@@ -981,8 +983,9 @@ void ConstructThreeStagePipelinePass::runOnFunc(func::FuncOp func_op) {
     const_builder_->setInsertionPointToStart(&func_op.front());
   }
 
-  // Step 1: Generalize named linalg operations to linalg.generic
-  if (failed(generalizeLinalgOps(func_op))) {
+  // Step 1: Generalize named linalg operations and arith/math operations to
+  // linalg.generic
+  if (failed(generalizeLinalgArithMathOps(func_op))) {
     func_op.emitError("Failed to generalize linalg operations");
     signalPassFailure();
     return;
