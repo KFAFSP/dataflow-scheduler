@@ -21,6 +21,8 @@
 #include "Materializer.hpp"
 
 #include "llvm/Support/Debug.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 
@@ -96,6 +98,91 @@ void PipelineTreeMaterializer::cloneStageBody(mlir::ktdf::StageOp orig_stage) {
   }
 }
 
+/// Check if an operation should be cloned when materializing loop bounds.
+/// Only allows specific operations that are safe to clone between loops:
+bool PipelineTreeMaterializer::isOpAllowedBetweenLoops(mlir::Operation* op) {
+  // Check for allowed affine operations
+  if (mlir::isa<mlir::affine::AffineApplyOp>(op)) {
+    return true;
+  }
+
+  // Check for allowed arith operations
+  if (mlir::isa<mlir::arith::AddIOp>(op) ||
+      mlir::isa<mlir::arith::SubIOp>(op) ||
+      mlir::isa<mlir::arith::MinSIOp>(op) ||
+      mlir::isa<mlir::arith::MaxSIOp>(op)) {
+    return true;
+  }
+
+  return false;
+}
+
+/// Check if an operation is in the same block as the template operation.
+/// If it is, we don't need to clone it as it's already available.
+bool PipelineTreeMaterializer::isInSameBlock(mlir::Operation* op,
+                                             mlir::Operation* template_op) {
+  if (!op || !template_op) {
+    return false;
+  }
+
+  return op->getBlock() == template_op->getBlock();
+}
+
+/// Helper function to materialize a value by cloning its defining operation
+/// if it's not already in the value map. This handles cases where loop bounds
+/// are computed by arith or affine operations between nested loops.
+mlir::Value PipelineTreeMaterializer::materializeValue(
+    mlir::Value value, mlir::Operation* template_op) {
+  // First check if the value is already mapped
+  mlir::Value mapped = value_map_.lookupOrDefault(value);
+  if (mapped != value)
+    return mapped;  // Already mapped, return the mapped value
+
+  // If the value is a block argument, we can't materialize it further
+  if (mlir::isa<mlir::BlockArgument>(value)) return value;
+
+  // Get the defining operation
+  mlir::Operation* def_op = value.getDefiningOp();
+  assert(def_op && "Value must have a defining operation");
+
+  // If the value is a constant-like operation, we assume it's in an ancestor
+  // block that dominates the current insertion point.
+  if (def_op->hasTrait<mlir::OpTrait::ConstantLike>()) return value;
+
+  // Check if the operation is in the same block as the template operation
+  // If it is not, we assume it to be in an ancestor block that dominates the
+  // current insertion point.
+  if (!isInSameBlock(def_op, template_op)) return value;
+
+  assert(isOpAllowedBetweenLoops(def_op) &&
+         "only simple arithmetic ops created by loop tiling are allowed in "
+         "between loop nests");
+
+  // Recursively materialize all operands first
+  llvm::SmallVector<mlir::Value> materialized_operands;
+  for (mlir::Value operand : def_op->getOperands()) {
+    materialized_operands.push_back(materializeValue(operand, template_op));
+  }
+
+  // Clone the operation with materialized operands
+  mlir::IRMapping local_map;
+  for (auto [orig, mat] :
+       llvm::zip(def_op->getOperands(), materialized_operands)) {
+    local_map.map(orig, mat);
+  }
+
+  mlir::Operation* cloned_op = builder_.clone(*def_op, local_map);
+
+  // These operations should have exactly one result
+  assert(cloned_op->getNumResults() == 1 &&
+         "Expected single-result operation for loop bound computation");
+
+  mlir::Value cloned_result = cloned_op->getResult(0);
+  value_map_.map(value, cloned_result);
+
+  return cloned_result;
+}
+
 mlir::scf::ForOp PipelineTreeMaterializer::materializeLoopNode(
     const LoopNode& loop_node) {
   // Get the template operation to copy loop bounds from
@@ -104,12 +191,12 @@ mlir::scf::ForOp PipelineTreeMaterializer::materializeLoopNode(
   assert(template_op && "Loop node must have either operation or template");
   auto template_for = mlir::cast<mlir::scf::ForOp>(template_op);
 
-  // Map the loop bounds through the value_map
+  // Materialize the loop bounds, cloning any defining operations if needed
   mlir::Value lower_bound =
-      value_map_.lookupOrDefault(template_for.getLowerBound());
+      materializeValue(template_for.getLowerBound(), template_op);
   mlir::Value upper_bound =
-      value_map_.lookupOrDefault(template_for.getUpperBound());
-  mlir::Value step = value_map_.lookupOrDefault(template_for.getStep());
+      materializeValue(template_for.getUpperBound(), template_op);
+  mlir::Value step = materializeValue(template_for.getStep(), template_op);
 
   // Create the new loop with empty body
   auto new_loop = mlir::scf::ForOp::create(builder_, template_for.getLoc(),

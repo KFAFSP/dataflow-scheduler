@@ -103,7 +103,19 @@ class PipelineTreeMaterializer {
   /// Returns nullptr if the node hasn't been materialized yet
   mlir::Operation* getMaterializedOp(const PipelineTreeNode& node) const;
 
+  /// Check if an operation is allowed between nested loops (for bound computation)
+  /// Only allows: affine.apply, arith.addi, arith.subi, arith.minsi, arith.maxsi
+  static bool isOpAllowedBetweenLoops(mlir::Operation* op);
+
  private:
+
+  /// Check if an operation is in the same block as the template operation
+  static bool isInSameBlock(mlir::Operation* op, mlir::Operation* template_op);
+
+  /// Helper to materialize a value by cloning its defining operation if needed
+  /// This handles cases where loop bounds are computed by arith/affine operations
+  mlir::Value materializeValue(mlir::Value value, mlir::Operation* template_op);
+
   /// Materialize a loop node by creating an scf.for operation
   mlir::scf::ForOp materializeLoopNode(const LoopNode& loop_node);
 

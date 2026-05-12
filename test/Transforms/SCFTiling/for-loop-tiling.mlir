@@ -1,5 +1,6 @@
 // RUN: scheduler --tile-scf-for-loops="tile-sizes=32,32" --canonicalize %s | FileCheck %s
 
+
 // CHECK: #[[$ATTR_0:.+]] = affine_map<()[s0, s1] -> (-s0 + s1)>
 // CHECK: #[[$ATTR_1:.+]] = affine_map<(d0)[s0] -> (d0 + s0)>
 
@@ -17,22 +18,22 @@
 // CHECK-NEXT:         %[[VAL_9:.*]] = arith.minsi %[[VAL_8]], %[[VAL_2]] : index
 // CHECK-NEXT:         %[[VAL_10:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_6]], %[[VAL_9]]]
 // CHECK-NEXT:         scf.for %[[VAL_11:.*]] = %[[VAL_1]] to %[[VAL_10]] step %[[VAL_4]] {
-// CHECK-NEXT:           %[[VAL_12:.*]] = affine.apply #[[$ATTR_1]](%[[VAL_11]]){{\[}}%[[VAL_6]]]
-// CHECK-NEXT:           %[[VAL_13:.*]] = arith.addi %[[VAL_7]], %[[VAL_5]] : index
-// CHECK-NEXT:           %[[VAL_14:.*]] = arith.minsi %[[VAL_13]], %[[VAL_3]] : index
-// CHECK-NEXT:           %[[VAL_15:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_7]], %[[VAL_14]]]
-// CHECK-NEXT:           scf.for %[[VAL_16:.*]] = %[[VAL_1]] to %[[VAL_15]] step %[[VAL_4]] {
-// CHECK-NEXT:             %[[VAL_17:.*]] = affine.apply #[[$ATTR_1]](%[[VAL_16]]){{\[}}%[[VAL_7]]]
-// CHECK-NEXT:             %[[VAL_18:.*]] = arith.addi %[[VAL_12]], %[[VAL_17]] : index
-// CHECK-NEXT:             memref.store %[[VAL_18]], %[[VAL_0]]{{\[}}%[[VAL_12]], %[[VAL_17]]] : memref<10x200xindex>
+// CHECK-NEXT:           %[[VAL_12:.*]] = arith.addi %[[VAL_7]], %[[VAL_5]] : index
+// CHECK-NEXT:           %[[VAL_13:.*]] = arith.minsi %[[VAL_12]], %[[VAL_3]] : index
+// CHECK-NEXT:           %[[VAL_14:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_7]], %[[VAL_13]]]
+// CHECK-NEXT:           scf.for %[[VAL_15:.*]] = %[[VAL_1]] to %[[VAL_14]] step %[[VAL_4]] {
+// CHECK-NEXT:             %[[VAL_16:.*]] = affine.apply #[[$ATTR_1]](%[[VAL_15]]){{\[}}%[[VAL_7]]]
+// CHECK-NEXT:             %[[VAL_17:.*]] = affine.apply #[[$ATTR_1]](%[[VAL_11]]){{\[}}%[[VAL_6]]]
+// CHECK-NEXT:             %[[VAL_18:.*]] = arith.addi %[[VAL_17]], %[[VAL_16]] : index
+// CHECK-NEXT:             %[[VAL_19:.*]] = affine.apply #[[$ATTR_1]](%[[VAL_15]]){{\[}}%[[VAL_7]]]
+// CHECK-NEXT:             %[[VAL_20:.*]] = affine.apply #[[$ATTR_1]](%[[VAL_11]]){{\[}}%[[VAL_6]]]
+// CHECK-NEXT:             memref.store %[[VAL_18]], %[[VAL_0]]{{\[}}%[[VAL_20]], %[[VAL_19]]] : memref<10x200xindex>
 // CHECK-NEXT:           }
 // CHECK-NEXT:         }
 // CHECK-NEXT:       }
 // CHECK-NEXT:     }
 // CHECK-NEXT:     return
 // CHECK-NEXT:   }
-
-
 
 
 

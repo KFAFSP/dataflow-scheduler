@@ -34,6 +34,7 @@
 //   }
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -90,16 +91,17 @@ struct TileSCFForLoopsPass
 
     // Track which create_tile_size ops we've used
     llvm::SmallVector<mlir::Value> available_tile_sizes;
-    
+
     // Collect all create_tile_size ops before the root loop
     mlir::Block* block = root_loop->getBlock();
     for (mlir::Operation& op : block->getOperations()) {
       if (&op == root_loop.getOperation()) break;
-      if (auto create_tile_op = mlir::dyn_cast<mlir::ktdf::CreateTileSizeOp>(&op)) {
+      if (auto create_tile_op =
+              mlir::dyn_cast<mlir::ktdf::CreateTileSizeOp>(&op)) {
         available_tile_sizes.push_back(create_tile_op.getResult());
       }
     }
-    
+
     // If not enough in current block, search parent regions
     if (available_tile_sizes.size() < nested_loops.size()) {
       mlir::Operation* parent_op = block->getParentOp();
@@ -108,7 +110,8 @@ struct TileSCFForLoopsPass
         mlir::Block* parent_block = parent_op->getBlock();
         for (mlir::Operation& op : parent_block->getOperations()) {
           if (&op == parent_op) break;
-          if (auto create_tile_op = mlir::dyn_cast<mlir::ktdf::CreateTileSizeOp>(&op)) {
+          if (auto create_tile_op =
+                  mlir::dyn_cast<mlir::ktdf::CreateTileSizeOp>(&op)) {
             available_tile_sizes.push_back(create_tile_op.getResult());
           }
         }
@@ -120,7 +123,7 @@ struct TileSCFForLoopsPass
     size_t tile_size_idx = 0;
     for (size_t i = 0; i < nested_loops.size(); ++i) {
       int64_t tile_size = (i < tileSizes.size()) ? tileSizes[i] : 32;
-      
+
       // If tile size is negative, use the next available create_tile_size op
       if (tile_size < 0 && tile_size_idx < available_tile_sizes.size()) {
         tile_size_values.push_back(available_tile_sizes[tile_size_idx++]);
@@ -137,6 +140,47 @@ struct TileSCFForLoopsPass
     // If normalization is enabled, normalize the inner loops
     if (normalizeInnerLoops && !inner_loops.empty()) {
       normalizeInnerTiledLoops(nested_loops, inner_loops, rewriter);
+    }
+  }
+
+  // Helper function to materialize affine.apply operations closer to their uses
+  // This is particularly useful after denormalization, where affine.apply ops
+  // are created at the loop start but may not be used until deep in nested
+  // structures (e.g., ktdf.pipeline blocks). We clone the affine.apply before
+  // each use to ensure are uses have a dominating def.
+  void sinkAffineApplyOpsToUses(mlir::scf::ForOp loop,
+                                mlir::IRRewriter& rewriter) {
+    // Collect all affine.apply operations in the loop body
+    llvm::SmallVector<mlir::affine::AffineApplyOp> affine_ops;
+    loop.getBody()->walk([&](mlir::affine::AffineApplyOp affine_op) {
+      affine_ops.push_back(affine_op);
+    });
+
+    // For each affine.apply, materialize it before each use
+    for (mlir::affine::AffineApplyOp affine_op : affine_ops) {
+      if (affine_op->use_empty()) continue;
+
+      // Collect all uses first (before we start modifying)
+      llvm::SmallVector<mlir::OpOperand*> uses;
+      for (mlir::OpOperand& use : affine_op->getUses()) {
+        uses.push_back(&use);
+      }
+
+      // For each use, clone the affine.apply right before the using operation
+      for (mlir::OpOperand* use : uses) {
+        mlir::Operation* user = use->getOwner();
+
+        // Clone the affine.apply operation before the user
+        rewriter.setInsertionPoint(user);
+        mlir::affine::AffineApplyOp cloned_op =
+            mlir::cast<mlir::affine::AffineApplyOp>(rewriter.clone(*affine_op));
+
+        // Replace this specific use with the cloned operation
+        use->set(cloned_op.getResult());
+      }
+
+      // Erase the original affine.apply since all uses have been replaced
+      rewriter.eraseOp(affine_op);
     }
   }
 
@@ -172,6 +216,12 @@ struct TileSCFForLoopsPass
       rewriter.setInsertionPointToStart(inner_loop.getBody());
       mlir::denormalizeInductionVariable(
           rewriter, loc, inner_loop.getInductionVar(), orig_lb, orig_step);
+
+      // Post-process: sink affine.apply operations closer to their uses
+      // This moves the denormalization computation from the loop start to just
+      // before the first use, which is especially beneficial when uses are
+      // deeply nested (e.g., inside ktdf.pipeline blocks)
+      sinkAffineApplyOpsToUses(inner_loop, rewriter);
     }
   }
 };

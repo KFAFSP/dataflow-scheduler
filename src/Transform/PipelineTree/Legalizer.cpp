@@ -208,25 +208,8 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
     nested_pipeline->insertChildNode(stage);
   }
 
-  // TODO: Privatize buffers for nested pipeline
-  // This requires:
-  // 1. Identify buffers used by stages in the nested pipeline
-  // 2. Create a new PrivateNode for the nested pipeline
-  // 3. Move or duplicate buffer allocations
-  // 4. Update data transfer operations
-
-  // TODO: Create new tokens for nested pipeline
-  // This requires:
-  // 1. Analyze stage dependencies within the nested pipeline
-  // 2. Create token operations for the nested pipeline
-  // 3. Update stage operations to use new tokens
-
-  LLVM_DEBUG({
-    llvm::dbgs() << "      Nested pipeline created successfully\n";
-    llvm::dbgs()
-        << "      TODO: Buffer privatization and token creation not yet "
-           "implemented\n";
-  });
+  LLVM_DEBUG(
+      { llvm::dbgs() << "      Nested pipeline created successfully\n"; });
 
   return true;
 }

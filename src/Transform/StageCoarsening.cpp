@@ -37,6 +37,8 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
@@ -190,16 +192,45 @@ void StageCoarseningPass::identifyTransformCandidates(
       for (unsigned i = 0; i < loopNestDepth; ++i) {
         mlir::Operation* parent_op = current_op->getParentOp();
         if (!parent_op) break;
+        auto for_op = mlir::dyn_cast<mlir::scf::ForOp>(parent_op);
+        if (!for_op) break;
+        auto& body_ops = for_op.getBody()->getOperations();
 
-        if (auto forOp = mlir::dyn_cast<mlir::scf::ForOp>(parent_op)) {
-          // Check if this is a perfectly nested loop (single child in body)
-          auto& body_ops = forOp.getBody()->getOperations();
-          if (body_ops.size() == 2) {  // Loop body + terminator
-            loop_nest.push_back(forOp);
-            current_op = forOp.getOperation();
+        // Check if this is a perfectly nested loop
+        // Allow only specific simple operations between nested loops
+        bool is_perfectly_nested = true;
+        int num_sibling_loops = 0;
+        for (auto& op : body_ops) {
+          // Skip the terminator
+          if (mlir::isa<mlir::scf::YieldOp>(op)) continue;
+
+          // In the first iteration we may encounter the pipeline we started
+          // from, so just ignore it.
+          if (&op == pipeline.getOperation()) continue;
+
+          // Check if operation is a nested loop. We allow a nested loop as long
+          // as it is the only child of its parent.
+          if (auto inner_for = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+            num_sibling_loops++;
             continue;
           }
+
+          // Check if operation is allowed between loops using the proper
+          // function
+          if (!scheduler::PipelineTreeMaterializer::isOpAllowedBetweenLoops(
+                  &op)) {
+            is_perfectly_nested = false;
+            break;
+          }
         }
+
+        if (is_perfectly_nested && num_sibling_loops <= 1) {
+          loop_nest.push_back(for_op);
+          current_op = for_op.getOperation();
+          continue;
+        }
+
+        // Not perfectly nested, stop looking for more loops
         break;
       }
 
