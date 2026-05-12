@@ -226,47 +226,6 @@ bool StageGroupingAnalysis::shouldGroupTogether(mlir::ktdf::StageOp stage1,
   return false;
 }
 
-void StageGroupingAnalysis::analyzeDataTransfer(
-    mlir::ktdf::DataTransferOp transfer,
-    llvm::SmallSet<mlir::ktdf::MemorySpace, 4>& register_files,
-    llvm::SmallSet<mlir::ktdf::FifoType, 4>& fifo_types) {
-  // Helper to check if a memory space is a register file
-  auto isRegisterFile = [](mlir::ktdf::MemorySpace mem_space) {
-    // Currently only SFPRegisterFile is a register file
-    return mem_space == mlir::ktdf::MemorySpace::SFPRegisterFile;
-  };
-
-  // Check source and destination for register files or FIFO types
-  auto checkValue = [&](mlir::Value val) {
-    if (auto memref_type = mlir::dyn_cast<mlir::MemRefType>(val.getType())) {
-      auto mem_space = memref_type.getMemorySpace();
-      if (mem_space) {
-        // Extract memory space enum from attribute
-        if (auto mem_space_attr = mlir::dyn_cast<mlir::Attribute>(mem_space)) {
-          if (auto int_attr =
-                  mlir::dyn_cast<mlir::IntegerAttr>(mem_space_attr)) {
-            // Convert integer to MemorySpace enum
-            auto mem_space_enum =
-                static_cast<mlir::ktdf::MemorySpace>(int_attr.getInt());
-            // Only track register files, not LX or HBM
-            if (isRegisterFile(mem_space_enum)) {
-              register_files.insert(mem_space_enum);
-            }
-          }
-        }
-      }
-    } else if (auto fifo_slot_type =
-                   mlir::dyn_cast<mlir::ktdf::FifoSlotType>(val.getType())) {
-      // Store only the FIFO type enum (e.g., "sfp-to-lxsu", "lxlu-to-sfp")
-      // not the full type with sizes and element types
-      fifo_types.insert(fifo_slot_type.getFifoType());
-    }
-  };
-
-  checkValue(transfer.getSource());
-  checkValue(transfer.getDestination());
-}
-
 }  // namespace ktdf
 
 // Made with Bob

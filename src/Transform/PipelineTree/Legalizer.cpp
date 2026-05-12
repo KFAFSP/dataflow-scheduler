@@ -271,7 +271,7 @@ void PrivateMustExistRule::print(llvm::raw_ostream& os) const {
 // Legalizer Implementation
 //===----------------------------------------------------------------------===//
 
-Legalizer::Legalizer() : next_coarsened_stage_id_(1000) {
+Legalizer::Legalizer() : next_coarsened_stage_id_(0) {
   // Initialize all rules
   rules_.push_back(std::make_unique<PipelineChildrenRule>());
   rules_.push_back(std::make_unique<StageParentRule>());
@@ -279,7 +279,24 @@ Legalizer::Legalizer() : next_coarsened_stage_id_(1000) {
 }
 
 int Legalizer::findAndFixViolations(PipelineTree& tree) {
-  int iteration = 0;
+  assert(tree.getRoot());
+  // Initialize next_coarsened_stage_id_ to one past the maximum existing stage
+  // ID
+  next_coarsened_stage_id_ = 0;
+  OperationTreeNode::walk<OperationTreeNode::kPreOrder>(
+      tree.getRoot(), [this](OperationTreeNode* node) {
+        PipelineTreeNode* pnode = static_cast<PipelineTreeNode*>(node);
+        if (pnode->isStageNode()) {
+          StageNode* stage = static_cast<StageNode*>(pnode);
+          if (stage->getStageId() >= next_coarsened_stage_id_) {
+            next_coarsened_stage_id_ = stage->getStageId() + 1;
+          }
+        }
+        return node;
+      });
+
+  LLVM_DEBUG(llvm::dbgs() << "  Starting coarsened stage IDs at "
+                          << next_coarsened_stage_id_ << "\n");
 
   // Collect initial violations
   violations_.clear();
@@ -291,6 +308,7 @@ int Legalizer::findAndFixViolations(PipelineTree& tree) {
   }
 
   // Iteratively fix violations until none remain
+  int iteration = 0;
   while (!violations_.empty()) {
     ++iteration;
 

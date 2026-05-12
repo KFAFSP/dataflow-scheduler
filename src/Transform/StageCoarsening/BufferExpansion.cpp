@@ -27,11 +27,11 @@
 //   2. Further check to see if the candidate is allocated in the private region
 //   of the parent pipeline, otherwise ignore it.
 //   3. Collect the loop variables on which the candidate memref has
-//   dependency (see explaination below)...only collect loops that are in the
+//   dependency (see explanation below)...only collect loops that are in the
 //   nest of candidates being distributed.
 // Determine how to expand the buffers (ie what dimensions to add, what sizes,
 // etc) and record relevant information
-//   1. Expand the memref only in dimensions corresponding to the loop's
+//   1. Expand the memref only in dimensions corresponding to the loops
 //   collected (ie do not expand in dimensions that are loop invariant)... also
 //   check if the memref already contains those dims assert/skip them.
 //   2: Expand the memref in dims to the left of its current buffer and in the
@@ -326,19 +326,12 @@ mlir::ktdf::DataTransferOp StageCoarseningBufferCloner::cloneDataTransfer(
 }
 
 //===----------------------------------------------------------------------===//
-// Buffer Expansion Analysis
+// Buffer Expansion Analysis - Helper Functions
 //===----------------------------------------------------------------------===//
 
-void PerformBufferExpansionAnalysis(
-    llvm::ArrayRef<mlir::scf::ForOp> loop_nest, mlir::ktdf::PipelineOp pipeline,
-    const ktdf::StageGroupingAnalysis& grouping,
-    llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos) {
-  LLVM_DEBUG(llvm::dbgs() << "  Performing buffer expansion analysis...\n");
-
-  // Step 1: Identify common memrefs across stage groups
-  // Map from memref value to the set of group indices that use it
+llvm::MapVector<mlir::Value, llvm::SmallSet<size_t, 4>> identifyCommonMemrefs(
+    const ktdf::StageGroupingAnalysis& grouping) {
   llvm::MapVector<mlir::Value, llvm::SmallSet<size_t, 4>> memref_to_groups;
-
   const llvm::SmallVector<ktdf::StageGroup>& groups = grouping.getGroups();
 
   for (size_t group_idx = 0; group_idx < groups.size(); ++group_idx) {
@@ -361,11 +354,15 @@ void PerformBufferExpansionAnalysis(
                  << " unique memrefs across all stages\n";
   });
 
-  // Step 2: Filter for buffers that are:
-  // a) Used across multiple groups (shared)
-  // b) Written to in at least one stage
-  // c) Defined in the private region of the parent pipeline
+  return memref_to_groups;
+}
+
+llvm::SmallVector<mlir::Value> filterCandidateBuffers(
+    const llvm::MapVector<mlir::Value, llvm::SmallSet<size_t, 4>>&
+        memref_to_groups,
+    const ktdf::StageGroupingAnalysis& grouping) {
   llvm::SmallVector<mlir::Value> candidate_buffers;
+  const llvm::SmallVector<ktdf::StageGroup>& groups = grouping.getGroups();
 
   for (const auto& entry : memref_to_groups) {
     mlir::Value memref = entry.first;
@@ -420,8 +417,13 @@ void PerformBufferExpansionAnalysis(
                  << " candidate buffers for expansion\n";
   });
 
-  // Step 3: Analyze loop dependencies for each candidate buffer
-  // Map from buffer to the list of loop IVs it depends on
+  return candidate_buffers;
+}
+
+llvm::MapVector<mlir::Value, llvm::SmallVector<mlir::Value>>
+analyzeLoopDependencies(llvm::ArrayRef<mlir::Value> candidate_buffers,
+                        llvm::ArrayRef<mlir::scf::ForOp> loop_nest,
+                        mlir::ktdf::PipelineOp pipeline) {
   llvm::MapVector<mlir::Value, llvm::SmallVector<mlir::Value>>
       buffer_to_loop_ivs;
 
@@ -477,8 +479,14 @@ void PerformBufferExpansionAnalysis(
     }
   }
 
-  // Step 4: Calculate expansion dimensions and sizes
+  return buffer_to_loop_ivs;
+}
 
+void calculateExpansionInfo(
+    const llvm::MapVector<mlir::Value, llvm::SmallVector<mlir::Value>>&
+        buffer_to_loop_ivs,
+    llvm::ArrayRef<mlir::scf::ForOp> loop_nest,
+    llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos) {
   for (const auto& entry : buffer_to_loop_ivs) {
     mlir::Value buffer = entry.first;
     const llvm::SmallVector<mlir::Value>& dependent_ivs = entry.second;
@@ -572,6 +580,30 @@ void PerformBufferExpansionAnalysis(
                    << "\n";
     });
   }
+}
+
+//===----------------------------------------------------------------------===//
+// Buffer Expansion Analysis - Main Function
+//===----------------------------------------------------------------------===//
+
+void PerformBufferExpansionAnalysis(
+    llvm::ArrayRef<mlir::scf::ForOp> loop_nest, mlir::ktdf::PipelineOp pipeline,
+    const ktdf::StageGroupingAnalysis& grouping,
+    llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos) {
+  LLVM_DEBUG(llvm::dbgs() << "  Performing buffer expansion analysis...\n");
+
+  // Step 1: Identify common memrefs across stage groups
+  auto memref_to_groups = identifyCommonMemrefs(grouping);
+
+  // Step 2: Filter for candidate buffers that need expansion
+  auto candidate_buffers = filterCandidateBuffers(memref_to_groups, grouping);
+
+  // Step 3: Analyze loop dependencies for each candidate buffer
+  auto buffer_to_loop_ivs =
+      analyzeLoopDependencies(candidate_buffers, loop_nest, pipeline);
+
+  // Step 4: Calculate expansion dimensions and sizes
+  calculateExpansionInfo(buffer_to_loop_ivs, loop_nest, expansion_infos);
 }
 
 //===----------------------------------------------------------------------===//

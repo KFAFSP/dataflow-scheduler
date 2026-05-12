@@ -27,6 +27,8 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -113,6 +115,36 @@ void PerformBufferExpansionAnalysis(
 //===----------------------------------------------------------------------===//
 // Helper Functions
 //===----------------------------------------------------------------------===//
+
+/// Step 1: Identify common memrefs across stage groups
+/// Returns a map from memref value to the set of group indices that use it
+llvm::MapVector<mlir::Value, llvm::SmallSet<size_t, 4>>
+identifyCommonMemrefs(const ktdf::StageGroupingAnalysis& grouping);
+
+/// Step 2: Filter candidate buffers that need expansion
+/// Returns buffers that are:
+/// - Used across multiple groups
+/// - Written to in at least one stage
+/// - Defined in the private region of the parent pipeline
+llvm::SmallVector<mlir::Value> filterCandidateBuffers(
+    const llvm::MapVector<mlir::Value, llvm::SmallSet<size_t, 4>>&
+        memref_to_groups,
+    const ktdf::StageGroupingAnalysis& grouping);
+
+/// Step 3: Analyze loop dependencies for candidate buffers
+/// Returns a map from buffer to the list of loop IVs it depends on
+llvm::MapVector<mlir::Value, llvm::SmallVector<mlir::Value>>
+analyzeLoopDependencies(llvm::ArrayRef<mlir::Value> candidate_buffers,
+                        llvm::ArrayRef<mlir::scf::ForOp> loop_nest,
+                        mlir::ktdf::PipelineOp pipeline);
+
+/// Step 4: Calculate expansion dimensions and sizes for each buffer
+/// Creates BufferExpansionInfo objects for buffers that need expansion
+void calculateExpansionInfo(
+    const llvm::MapVector<mlir::Value, llvm::SmallVector<mlir::Value>>&
+        buffer_to_loop_ivs,
+    llvm::ArrayRef<mlir::scf::ForOp> loop_nest,
+    llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos);
 
 /// Check if a value depends on a target value through its defining operation
 /// and operands (recursively)

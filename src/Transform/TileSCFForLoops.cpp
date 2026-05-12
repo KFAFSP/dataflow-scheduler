@@ -63,11 +63,9 @@ struct TileSCFForLoopsPass
 
     // Collect all outermost scf.for loops (roots of perfectly nested loops)
     llvm::SmallVector<mlir::scf::ForOp> root_loops;
-    op->walk([&](mlir::scf::ForOp for_op) {
-      // Check if this is a root (not nested inside another scf.for)
-      if (!for_op->getParentOfType<mlir::scf::ForOp>()) {
-        root_loops.push_back(for_op);
-      }
+    op->walk<mlir::WalkOrder::PreOrder>([&](mlir::scf::ForOp for_op) {
+      root_loops.push_back(for_op);
+      return mlir::WalkResult::skip();
     });
 
     // Tile each perfectly nested loop nest

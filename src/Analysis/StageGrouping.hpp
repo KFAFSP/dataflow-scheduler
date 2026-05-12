@@ -103,11 +103,6 @@ class StageGroupingAnalysis {
   bool shouldGroupTogether(mlir::ktdf::StageOp stage1,
                           mlir::ktdf::StageOp stage2);
   
-  /// Analyze a data transfer operation for memory spaces and FIFO usage
-  void analyzeDataTransfer(mlir::ktdf::DataTransferOp transfer,
-                          llvm::SmallSet<mlir::ktdf::MemorySpace, 4>& memory_spaces,
-                          llvm::SmallSet<mlir::ktdf::FifoType, 4>& fifo_types);
-
   llvm::SmallVector<StageGroup> groups_;
   llvm::DenseMap<mlir::Operation*, unsigned> stage_to_group_;
 };
