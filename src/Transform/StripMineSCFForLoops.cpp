@@ -33,6 +33,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
+#include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
 
 namespace ktdf {
@@ -69,8 +70,46 @@ struct StripMineSCFForLoopsPass
     // Create tile size as a Value
     rewriter.setInsertionPoint(for_op);
     mlir::Location loc = for_op.getLoc();
-    mlir::Value tile_size_val =
-        mlir::arith::ConstantIndexOp::create(rewriter, loc, strip_mine_factor);
+    mlir::Value tile_size_val;
+    
+    // If strip-mine factor is negative, search for ktdf.create_tile_size
+    if (strip_mine_factor < 0) {
+      // Collect all create_tile_size ops before this loop
+      llvm::SmallVector<mlir::Value> available_tile_sizes;
+      mlir::Block* block = for_op->getBlock();
+      
+      for (mlir::Operation& op : block->getOperations()) {
+        if (&op == for_op.getOperation()) break;
+        if (auto create_tile_op = mlir::dyn_cast<mlir::ktdf::CreateTileSizeOp>(&op)) {
+          available_tile_sizes.push_back(create_tile_op.getResult());
+        }
+      }
+      
+      // If not enough in current block, search parent regions
+      if (available_tile_sizes.empty()) {
+        mlir::Operation* parent_op = block->getParentOp();
+        while (parent_op && !mlir::isa<mlir::ModuleOp>(parent_op) &&
+               available_tile_sizes.empty()) {
+          mlir::Block* parent_block = parent_op->getBlock();
+          for (mlir::Operation& op : parent_block->getOperations()) {
+            if (&op == parent_op) break;
+            if (auto create_tile_op = mlir::dyn_cast<mlir::ktdf::CreateTileSizeOp>(&op)) {
+              available_tile_sizes.push_back(create_tile_op.getResult());
+            }
+          }
+          parent_op = parent_block->getParentOp();
+        }
+      }
+      
+      // Use the first available create_tile_size, or default to 32
+      if (!available_tile_sizes.empty()) {
+        tile_size_val = available_tile_sizes[0];
+      } else {
+        tile_size_val = mlir::arith::ConstantIndexOp::create(rewriter, loc, 32);
+      }
+    } else {
+      tile_size_val = mlir::arith::ConstantIndexOp::create(rewriter, loc, strip_mine_factor);
+    }
 
     // Save original bounds and step for potential normalization
     mlir::Value orig_lb = for_op.getLowerBound();

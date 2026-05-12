@@ -41,6 +41,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
+#include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
 
 namespace ktdf {
@@ -87,11 +88,46 @@ struct TileSCFForLoopsPass
     rewriter.setInsertionPoint(root_loop);
     mlir::Location loc = root_loop.getLoc();
 
+    // Track which create_tile_size ops we've used
+    llvm::SmallVector<mlir::Value> available_tile_sizes;
+    
+    // Collect all create_tile_size ops before the root loop
+    mlir::Block* block = root_loop->getBlock();
+    for (mlir::Operation& op : block->getOperations()) {
+      if (&op == root_loop.getOperation()) break;
+      if (auto create_tile_op = mlir::dyn_cast<mlir::ktdf::CreateTileSizeOp>(&op)) {
+        available_tile_sizes.push_back(create_tile_op.getResult());
+      }
+    }
+    
+    // If not enough in current block, search parent regions
+    if (available_tile_sizes.size() < nested_loops.size()) {
+      mlir::Operation* parent_op = block->getParentOp();
+      while (parent_op && !mlir::isa<mlir::ModuleOp>(parent_op) &&
+             available_tile_sizes.size() < nested_loops.size()) {
+        mlir::Block* parent_block = parent_op->getBlock();
+        for (mlir::Operation& op : parent_block->getOperations()) {
+          if (&op == parent_op) break;
+          if (auto create_tile_op = mlir::dyn_cast<mlir::ktdf::CreateTileSizeOp>(&op)) {
+            available_tile_sizes.push_back(create_tile_op.getResult());
+          }
+        }
+        parent_op = parent_block->getParentOp();
+      }
+    }
+
     // Use configured tile sizes, or default to 32 for each loop
+    size_t tile_size_idx = 0;
     for (size_t i = 0; i < nested_loops.size(); ++i) {
       int64_t tile_size = (i < tileSizes.size()) ? tileSizes[i] : 32;
-      tile_size_values.push_back(
-          mlir::arith::ConstantIndexOp::create(rewriter, loc, tile_size));
+      
+      // If tile size is negative, use the next available create_tile_size op
+      if (tile_size < 0 && tile_size_idx < available_tile_sizes.size()) {
+        tile_size_values.push_back(available_tile_sizes[tile_size_idx++]);
+      } else {
+        tile_size_values.push_back(
+            mlir::arith::ConstantIndexOp::create(rewriter, loc, tile_size));
+      }
     }
 
     // Use MLIR's tilePerfectlyNested utility to tile the loop nest
