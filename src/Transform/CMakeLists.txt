@@ -8,6 +8,7 @@ add_library(SchedulerTransforms
     ConstructThreeStagePipeline.cpp
     PipelineTree/Legalizer.cpp
     PipelineTree/Materializer.cpp
+    ReusePromotion/Common/InvarianceCheck.cpp
     ReusePromotion/Common/PipelineScope.cpp
     StageCoarsening/BufferExpansion.cpp
     StageCoarsening/ScopeCorrection.cpp
