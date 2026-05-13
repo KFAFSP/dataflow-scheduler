@@ -1,4 +1,4 @@
-//===-------------------------- SchedulerExtContext.h ---------------------===//
+//===----------------------------------------------------------------------===//
 //
 // IBM Confidential
 // (C) Copyright IBM Corp. 2026
@@ -29,12 +29,6 @@ struct SchedulerExtContext {
 
   /// Returns the size of a stick in bytes (64 bytes for current architecture)
   uint64_t getStickSize() const;
-
-  /// Returns the memory space attribute for data transfers
-  /// @param component The component type
-  /// @return StringAttr with the memory space name (e.g., "SFP_REG")
-  mlir::StringAttr getTransferMemSpace(mlir::MLIRContext* context,
-                                       const char* component) const;
 
   /// Returns the FIFO type for load operations
   /// @return FifoType for loads (e.g., LxluToSfp)

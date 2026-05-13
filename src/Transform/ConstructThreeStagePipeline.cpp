@@ -1,4 +1,4 @@
-//===------------------- ConstructThreeStagePipeline.cpp -----------------===//
+//===----------------------------------------------------------------------===//
 //
 // IBM Confidential
 // (C) Copyright IBM Corp. 2026
@@ -35,7 +35,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
-#include "src/Transform/Utils/CustomTiling.h"
+#include "src/Transform/Utils/CustomLinalgTiling.h"
 #include "src/Transform/Utils/Utils.h"
 #include "src/Utils/SchedulerExtContext.h"
 
@@ -78,27 +78,6 @@ struct ConstructThreeStagePipelinePass
   const scheduler::SchedulerExtContext& schedulerExtContext() const {
     return scheduler_ctx_;
   }
-  const scheduler::SchedulerExtContext& scheduler_ctx_;
-
-  // Collected ktdp.load and ktdp.store operations
-  SmallVector<ktdp::LoadOp> load_ops_;
-  SmallVector<ktdp::StoreOp> store_ops_;
-  SmallVector<linalg::LinalgOp> compute_ops_;
-
-  // Tiled loops from linalg tiling (outermost to innermost)
-  SmallVector<Operation*> tiled_loops_;
-
-  // Tile sizes determined from linalg operation
-  SmallVector<int64_t> tile_sizes_;
-
-  // Total number of elements (product of tile_sizes_)
-  int64_t total_num_elements_ = 0;
-
-  // Operations to delete after pipeline creation
-  SmallVector<Operation*> ops_to_delete_;
-
-  // Builder for constants at function start
-  std::optional<OpBuilder> const_builder_;
 
   // Process a single function
   void runOnFunc(func::FuncOp func_op);
@@ -144,8 +123,8 @@ struct ConstructThreeStagePipelinePass
   void annotateLoopsWithIteratorTypes(ArrayRef<Operation*> loops,
                                       linalg::GenericOp generic_op);
 
-  // Delete op and recursively delete unused ancestors
-  void deleteOpAndUnusedAncestors(Operation* op);
+  // Delete op and recursively delete unused chain of operands
+  void deleteOpAndUnusedChainOfOperands(Operation* op);
 
   // Replace construct_access_tile with memref.reinterpret_cast
   void replaceAccessTilesWithReinterpretCast(func::FuncOp func_op);
@@ -160,6 +139,29 @@ struct ConstructThreeStagePipelinePass
 
   // Clean up operations after pipeline creation
   void cleanupOperations();
+
+  // Member variables
+  const scheduler::SchedulerExtContext& scheduler_ctx_;
+
+  // Collected ktdp.load and ktdp.store operations
+  SmallVector<ktdp::LoadOp> load_ops_;
+  SmallVector<ktdp::StoreOp> store_ops_;
+  SmallVector<linalg::LinalgOp> compute_ops_;
+
+  // Tiled loops from linalg tiling (outermost to innermost)
+  SmallVector<Operation*> tiled_loops_;
+
+  // Tile sizes determined from linalg operation
+  SmallVector<int64_t> tile_sizes_;
+
+  // Total number of elements (product of tile_sizes_)
+  int64_t total_num_elements_ = 0;
+
+  // Operations to delete after pipeline creation
+  SmallVector<Operation*> ops_to_delete_;
+
+  // Builder for constants at function start
+  std::optional<OpBuilder> const_builder_;
 };
 
 void ConstructThreeStagePipelinePass::resetState() {
@@ -193,7 +195,7 @@ LogicalResult ConstructThreeStagePipelinePass::generalizeLinalgArithMathOps(
   IRRewriter rewriter(&getContext());
 
   // Generalize named linalg operations
-  for (auto linalg_op : linalg_ops) {
+  for (linalg::LinalgOp linalg_op : linalg_ops) {
     LLVM_DEBUG(llvm::dbgs()
                << "  Generalizing linalg op: " << linalg_op->getName() << "\n");
     rewriter.setInsertionPoint(linalg_op);
@@ -234,10 +236,10 @@ LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(
 
   IRRewriter rewriter(&getContext());
   while (!worklist.empty()) {
-    auto consumer = worklist.pop_back_val();
+    linalg::GenericOp consumer = worklist.pop_back_val();
 
     // Try to fuse producer into this consumer
-    for (auto* operand : consumer.getDpsInputOperands()) {
+    for (OpOperand* operand : consumer.getDpsInputOperands()) {
       Value input = operand->get();
       auto producer = input.getDefiningOp<linalg::GenericOp>();
 
@@ -383,7 +385,7 @@ void ConstructThreeStagePipelinePass::createLoopsFromLinalg(
          "Currently only supporting one linalg.generic operation after fusion");
 
   IRRewriter rewriter(&getContext());
-  for (auto linalg_op : linalg_ops) {
+  for (linalg::LinalgOp linalg_op : linalg_ops) {
     LLVM_DEBUG(llvm::dbgs()
                << "  Processing: " << linalg_op->getName() << "\n");
 
@@ -401,13 +403,13 @@ void ConstructThreeStagePipelinePass::createLoopsFromLinalg(
 
     // Calculate total number of elements (product of tile_sizes_)
     total_num_elements_ = 1;
-    for (auto dim : tile_sizes_) {
+    for (int64_t dim : tile_sizes_) {
       total_num_elements_ *= dim;
     }
 
     LLVM_DEBUG({
       llvm::dbgs() << "  Tile sizes: ";
-      for (auto i : tile_sizes_) llvm::dbgs() << i << ", ";
+      for (int64_t i : tile_sizes_) llvm::dbgs() << i << ", ";
       llvm::dbgs() << "\n";
       llvm::dbgs() << "  Total num elements: " << total_num_elements_ << "\n";
     });
@@ -458,13 +460,16 @@ void ConstructThreeStagePipelinePass::createLoopsFromLinalg(
 
 mlir::ktdf::PrivateOp ConstructThreeStagePipelinePass::createPrivateOp(
     OpBuilder& builder, Location loc) {
-  auto token_type = mlir::ktdf::TokenType::get(&getContext());
+  mlir::ktdf::TokenType token_type = mlir::ktdf::TokenType::get(&getContext());
   SmallVector<Type> private_result_types;
-  SmallVector<mlir::ktdf::FifoSlotType> fifo_slot_types;
+
+  // Group FIFO slot types by their FIFO type to preserve ordering
+  llvm::MapVector<mlir::ktdf::FifoType, SmallVector<mlir::ktdf::FifoSlotType>>
+      fifo_type_groups;
 
   // Add FIFO slot types for load operations
-  auto load_fifo_type = schedulerExtContext().getFifoTypeLoad();
-  for (auto load_op : load_ops_) {
+  mlir::ktdf::FifoType load_fifo_type = schedulerExtContext().getFifoTypeLoad();
+  for (ktdp::LoadOp load_op : load_ops_) {
     auto tensor_type =
         dyn_cast<RankedTensorType>(load_op.getResult().getType());
     if (!tensor_type) {
@@ -472,16 +477,17 @@ mlir::ktdf::PrivateOp ConstructThreeStagePipelinePass::createPrivateOp(
       signalPassFailure();
       return nullptr;
     }
-    auto element_type = tensor_type.getElementType();
+    Type element_type = tensor_type.getElementType();
     auto fifo_slot_type = mlir::ktdf::FifoSlotType::get(
         &getContext(), load_fifo_type, total_num_elements_, element_type);
-    fifo_slot_types.push_back(fifo_slot_type);
+    fifo_type_groups[load_fifo_type].push_back(fifo_slot_type);
     private_result_types.push_back(fifo_slot_type);
   }
 
   // Add FIFO slot types for store operations
-  auto store_fifo_type = schedulerExtContext().getFifoTypeStore();
-  for (auto store_op : store_ops_) {
+  mlir::ktdf::FifoType store_fifo_type =
+      schedulerExtContext().getFifoTypeStore();
+  for (ktdp::StoreOp store_op : store_ops_) {
     auto tensor_type =
         dyn_cast<RankedTensorType>(store_op.getDataTile().getType());
     if (!tensor_type) {
@@ -490,10 +496,10 @@ mlir::ktdf::PrivateOp ConstructThreeStagePipelinePass::createPrivateOp(
       signalPassFailure();
       return nullptr;
     }
-    auto element_type = tensor_type.getElementType();
+    Type element_type = tensor_type.getElementType();
     auto fifo_slot_type = mlir::ktdf::FifoSlotType::get(
         &getContext(), store_fifo_type, total_num_elements_, element_type);
-    fifo_slot_types.push_back(fifo_slot_type);
+    fifo_type_groups[store_fifo_type].push_back(fifo_slot_type);
     private_result_types.push_back(fifo_slot_type);
   }
 
@@ -509,12 +515,19 @@ mlir::ktdf::PrivateOp ConstructThreeStagePipelinePass::createPrivateOp(
   Block* private_body = builder.createBlock(&private_region);
   builder.setInsertionPointToStart(private_body);
 
-  // Create ktdf.fifo.allocate for each FIFO slot
+  // Create ktdf.fifo.allocate operations grouped by FIFO type
+  // This preserves the order of load/stores within each FIFO type
   SmallVector<Value> fifo_results;
-  for (auto fifo_slot_type : fifo_slot_types) {
+  for (auto& [fifo_type, slot_types] : fifo_type_groups) {
+    // Create a single fifo.allocate with multiple results for this FIFO type
+    SmallVector<Type> result_types(slot_types.begin(), slot_types.end());
     auto fifo_alloc_op = mlir::ktdf::FifoAllocateOp::create(
-        builder, loc, TypeRange{fifo_slot_type}, ValueRange{});
-    fifo_results.push_back(fifo_alloc_op.getResult(0));
+        builder, loc, TypeRange{result_types}, ValueRange{});
+
+    // Add all results from this allocation to fifo_results
+    for (unsigned i = 0; i < fifo_alloc_op.getNumResults(); ++i) {
+      fifo_results.push_back(fifo_alloc_op.getResult(i));
+    }
   }
 
   // Create three tokens
@@ -546,7 +559,7 @@ void ConstructThreeStagePipelinePass::createPipeline(
   // yield. This ensures tensor.insert_slice and linalg.generic get cleaned up
   // later.
   auto yield_op = cast<scf::YieldOp>(innermost_loop.getBody()->getTerminator());
-  for (auto operand : yield_op.getOperands()) {
+  for (Value operand : yield_op.getOperands()) {
     if (auto* def_op = operand.getDefiningOp()) {
       ops_to_delete_.push_back(def_op);
     }
@@ -557,7 +570,7 @@ void ConstructThreeStagePipelinePass::createPipeline(
   // will be cleaned by a dead code elimination pass.
   OpBuilder yield_builder(yield_op);
   SmallVector<Value> new_yield_operands;
-  for (auto iter_arg : innermost_loop.getRegionIterArgs()) {
+  for (BlockArgument iter_arg : innermost_loop.getRegionIterArgs()) {
     new_yield_operands.push_back(iter_arg);
   }
   scf::YieldOp::create(yield_builder, yield_op.getLoc(), new_yield_operands);
@@ -622,17 +635,17 @@ void ConstructThreeStagePipelinePass::createPipeline(
                       /*private_result_offset=*/load_ops_.size());
 }
 
-void ConstructThreeStagePipelinePass::deleteOpAndUnusedAncestors(
+void ConstructThreeStagePipelinePass::deleteOpAndUnusedChainOfOperands(
     Operation* op) {
   // Collect operands before erasing
   SmallVector<Value> operands(op->getOperands().begin(),
                               op->getOperands().end());
   op->erase();
 
-  // Recursively delete unused ancestor operations
-  for (auto operand : operands) {
+  // Recursively delete unused operand operations
+  for (Value operand : operands) {
     if (auto* def_op = operand.getDefiningOp()) {
-      if (def_op->use_empty()) deleteOpAndUnusedAncestors(def_op);
+      if (def_op->use_empty()) deleteOpAndUnusedChainOfOperands(def_op);
     }
   }
 }
@@ -642,7 +655,7 @@ void ConstructThreeStagePipelinePass::cleanupOperations() {
 
   for (auto* op : ops_to_delete_) {
     if (!op || !op->use_empty()) continue;
-    deleteOpAndUnusedAncestors(op);
+    deleteOpAndUnusedChainOfOperands(op);
   }
 }
 
@@ -673,10 +686,10 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
     Value access_tile_value;
 
     if (is_load) {
-      auto load_op = load_ops_[i];
+      ktdp::LoadOp load_op = load_ops_[i];
       access_tile_value = load_op.getOperand();
     } else {
-      auto store_op = store_ops_[i];
+      ktdp::StoreOp store_op = store_ops_[i];
       access_tile_value = store_op.getOperation()->getOperand(1);
     }
 
@@ -751,7 +764,7 @@ void ConstructThreeStagePipelinePass::createComputeOps(
   // For each load operation, create ktdf.read_from_fifo to read tiled tensor
   // from FIFO slot, and map the load result to it.
   for (size_t i = 0; i < load_ops_.size(); ++i) {
-    auto load_op = load_ops_[i];
+    ktdp::LoadOp load_op = load_ops_[i];
     Value fifo_slot = private_op.getResult(i);
 
     auto read_fifo_op = mlir::ktdf::ReadFromFifoOp::create(
@@ -762,8 +775,8 @@ void ConstructThreeStagePipelinePass::createComputeOps(
   // Find all tensor.extract_slice operations that use load results
   // and map them to corresponding read_from_fifo result.
   IRMapping mapper;
-  for (auto load_op : load_ops_) {
-    for (auto user : load_op.getResult().getUsers()) {
+  for (ktdp::LoadOp load_op : load_ops_) {
+    for (Operation* user : load_op.getResult().getUsers()) {
       if (auto extract_op = dyn_cast<tensor::ExtractSliceOp>(user)) {
         mapper.map(extract_op.getResult(), value_map[load_op.getResult()]);
       }
@@ -772,7 +785,7 @@ void ConstructThreeStagePipelinePass::createComputeOps(
 
   // Clone compute operation into stage 2 and create write_to_fifo for each
   // store
-  auto compute_op = compute_ops_[0];
+  linalg::LinalgOp compute_op = compute_ops_[0];
   LLVM_DEBUG(llvm::dbgs() << "  Cloning compute op: " << compute_op->getName()
                           << "\n");
 
@@ -883,7 +896,7 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
 
   OpBuilder builder(&getContext());
 
-  for (auto access_tile : access_tiles) {
+  for (ktdp::ConstructAccessTilesOp access_tile : access_tiles) {
     // Get the memory view (source memref) - first operand
     Value memory_view = access_tile.getBase();
     auto memory_view_type = dyn_cast<MemRefType>(memory_view.getType());
@@ -907,7 +920,7 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     }
 
     // Get tile dimensions from the access tile type
-    auto tile_shape = access_tile_type.getShape();
+    ArrayRef<int64_t> tile_shape = access_tile_type.getShape();
     SmallVector<int64_t> tile_dims(tile_shape.begin(), tile_shape.end());
 
     // Get strides from memory view type
@@ -946,20 +959,20 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
 
     // Create sizes for reinterpret_cast
     SmallVector<OpFoldResult> sizes;
-    for (auto dim : tile_dims) {
+    for (int64_t dim : tile_dims) {
       sizes.push_back(builder.getIndexAttr(dim));
     }
 
     // Create strides for reinterpret_cast (same as memory view)
     SmallVector<OpFoldResult> reinterpret_strides;
-    for (auto stride : strides) {
+    for (int64_t stride : strides) {
       reinterpret_strides.push_back(builder.getIndexAttr(stride));
     }
 
     SmallVector<int64_t> result_shape(tile_dims.begin(), tile_dims.end());
-    auto strided_layout = StridedLayoutAttr::get(builder.getContext(),
-                                                 ShapedType::kDynamic, strides);
-    auto result_type =
+    StridedLayoutAttr strided_layout = StridedLayoutAttr::get(
+        builder.getContext(), ShapedType::kDynamic, strides);
+    MemRefType result_type =
         MemRefType::get(result_shape, memory_view_type.getElementType(),
                         strided_layout, memory_view_type.getMemorySpace());
 

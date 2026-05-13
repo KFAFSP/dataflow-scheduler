@@ -1,4 +1,4 @@
-//===----------------------- CustomTiling.h -------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // IBM Confidential
 // (C) Copyright IBM Corp. 2026
@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KTIR_TRANSFORM_CUSTOMTILING_H
-#define KTIR_TRANSFORM_CUSTOMTILING_H
+#ifndef KTIR_TRANSFORM_CUSTOMLINALGTILING_H
+#define KTIR_TRANSFORM_CUSTOMLINALGTILING_H
 
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
@@ -30,6 +30,6 @@ FailureOr<TiledLinalgOp> customTileLinalgOp(RewriterBase& rewriter, LinalgOp op,
 }  // namespace linalg
 }  // namespace mlir
 
-#endif  // KTIR_TRANSFORM_CUSTOMTILING_H
+#endif  // KTIR_TRANSFORM_CUSTOMLINALGTILING_H
 
 // Made with Bob

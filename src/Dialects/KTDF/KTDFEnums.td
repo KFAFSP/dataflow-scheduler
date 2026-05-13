@@ -56,6 +56,23 @@ def KTDF_FifoTypeEnum : I32EnumAttr<"FifoType",
 }
 
 //===----------------------------------------------------------------------===//
+// Component Type Enum
+//===----------------------------------------------------------------------===//
+
+def KTDF_ComponentTypeEnum : I32EnumAttr<"ComponentType",
+    "Hardware component type",
+    [
+      I32EnumAttrCase<"SFP", 0, "SFP">,
+      I32EnumAttrCase<"LXLU", 1, "LXLU">,
+      I32EnumAttrCase<"LXSU", 2, "LXSU">,
+      I32EnumAttrCase<"L3LU", 3, "L3LU">,
+      I32EnumAttrCase<"L3SU", 4, "L3SU">
+    ]> {
+  let cppNamespace = "::mlir::ktdf";
+  let genSpecializedAttr = 0;
+}
+
+//===----------------------------------------------------------------------===//
 // Loop Type Enum
 //===----------------------------------------------------------------------===//
 

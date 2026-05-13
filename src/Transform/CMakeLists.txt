@@ -12,7 +12,7 @@ add_library(SchedulerTransforms
     StageCoarsening.cpp
     StripMineSCFForLoops.cpp
     TileSCFForLoops.cpp
-    Utils/CustomTiling.cpp
+    Utils/CustomLinalgTiling.cpp
     Utils/Utils.cpp
 )
 

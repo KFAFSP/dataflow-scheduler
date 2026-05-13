@@ -1,4 +1,4 @@
-//===----------------------- CustomTiling.cpp -----------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // IBM Confidential
 // (C) Copyright IBM Corp. 2026
@@ -13,7 +13,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "src/Transform/Utils/CustomTiling.h"
+#include "src/Transform/Utils/CustomLinalgTiling.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
