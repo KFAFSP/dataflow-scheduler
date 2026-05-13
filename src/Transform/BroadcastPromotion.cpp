@@ -21,11 +21,17 @@
 
 #include <memory>
 
+#include "llvm/Support/Debug.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/Pass.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
+#include "src/Transform/ReusePromotion/Common/CandidateSearch.hpp"
+#include "src/Transform/ReusePromotion/Common/RegionClonePrune.hpp"
 
 namespace ktdf {
 
@@ -37,13 +43,91 @@ namespace ktdf {
 
 namespace {
 
+/// Clone the defining memref.alloc of `orig_dest` immediately before
+/// `insert_before_op`. Returns the cloned alloc's SSA result value.
+mlir::Value cloneDestAllocAbove(mlir::Value orig_dest,
+                                mlir::Operation *insert_before_op) {
+  auto alloc = orig_dest.getDefiningOp<mlir::memref::AllocOp>();
+  assert(alloc && "destination must come from a memref.alloc");
+  mlir::OpBuilder builder(insert_before_op);
+  mlir::Operation *new_alloc = builder.clone(*alloc.getOperation());
+  return new_alloc->getResult(0);
+}
+
+/// Perform one broadcast hoist for `c`.
+void performHoist(const reuse::Candidate &c) {
+  mlir::ktdf::DataTransferOp transfer = c.transfer;
+  mlir::ktdf::StageOp donor_stage = c.donor_stage;
+  mlir::scf::ForOp target_loop = c.target_loop;
+  mlir::Value orig_dest = transfer.getDestination();
+
+  LLVM_DEBUG(llvm::dbgs() << "[" << PASS_NAME << "] hoisting "
+                          << *transfer.getOperation() << "\n");
+
+  // 1. Fresh destination alloc immediately before target_loop.
+  mlir::Value new_dest =
+      cloneDestAllocAbove(orig_dest, target_loop.getOperation());
+
+  // 2. Sibling pipeline + stage immediately after the new alloc, still
+  //    before target_loop.
+  mlir::OpBuilder builder(target_loop);
+  auto new_pipeline = mlir::ktdf::PipelineOp::create(
+      builder, target_loop.getLoc());
+  builder.setInsertionPointToStart(new_pipeline.getBodyBlock());
+  auto new_stage = mlir::ktdf::StageOp::create(
+      builder, target_loop.getLoc(),
+      /*depends_in=*/mlir::ValueRange{},
+      /*depends_out=*/mlir::ValueRange{});
+
+  // 3. Seed IRMapping: original dest -> new_dest.
+  mlir::IRMapping value_map;
+  value_map.map(orig_dest, new_dest);
+
+  // 4. Clone donor stage body into new stage body; prune to the transfer.
+  mlir::Block *new_stage_body = &new_stage.getBody().front();
+  reuse::cloneRegionAndPruneToAnchor(
+      donor_stage.getBody(), new_stage_body,
+      new_stage_body->end(), transfer.getOperation(), value_map);
+
+  // 5. Rewire uses of orig_dest outside donor_stage to new_dest.
+  orig_dest.replaceUsesWithIf(new_dest, [&](mlir::OpOperand &use) {
+    mlir::Operation *user = use.getOwner();
+    return !donor_stage.getOperation()->isAncestor(user);
+  });
+
+  // 6. Erase original transfer.
+  transfer.erase();
+}
+
+/// Walk pipelines in post-order; return true iff a hoist was performed.
+bool tryHoistOneBroadcast(mlir::ModuleOp module) {
+  bool did_hoist = false;
+  module.walk<mlir::WalkOrder::PostOrder>(
+      [&](mlir::ktdf::PipelineOp pipeline) -> mlir::WalkResult {
+        if (did_hoist) {
+          return mlir::WalkResult::interrupt();
+        }
+        if (auto c = reuse::findFirstCandidate(pipeline)) {
+          performHoist(*c);
+          did_hoist = true;
+          return mlir::WalkResult::interrupt();
+        }
+        return mlir::WalkResult::advance();
+      });
+  return did_hoist;
+}
+
 struct BroadcastPromotionPass
     : public impl::BroadcastPromotionPassBase<BroadcastPromotionPass> {
   using impl::BroadcastPromotionPassBase<
       BroadcastPromotionPass>::BroadcastPromotionPassBase;
 
   void runOnOperation() override {
-    // TODO(Task 7): drive fixed-point loop calling tryHoistOneBroadcast.
+    mlir::ModuleOp module = getOperation();
+    bool changed = true;
+    while (changed) {
+      changed = tryHoistOneBroadcast(module);
+    }
   }
 };
 
