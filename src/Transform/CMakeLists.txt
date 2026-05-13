@@ -8,6 +8,7 @@ add_library(SchedulerTransforms
     ConstructThreeStagePipeline.cpp
     PipelineTree/Legalizer.cpp
     PipelineTree/Materializer.cpp
+    ReusePromotion/Common/CandidateSearch.cpp
     ReusePromotion/Common/InvarianceCheck.cpp
     ReusePromotion/Common/PipelineScope.cpp
     ReusePromotion/Common/RegionClonePrune.cpp
