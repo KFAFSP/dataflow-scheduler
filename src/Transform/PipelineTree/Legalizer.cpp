@@ -36,9 +36,7 @@ namespace pipeline_tree {
 bool PipelineChildrenRule::isViolated(PipelineTreeNode* node,
                                       PipelineTree& tree) const {
   // Check if this is a pipeline with illegal children
-  if (!node->isPipelineNode()) {
-    return false;
-  }
+  if (!node->isPipelineNode()) return false;
 
   OperationTreeNode* child = node->getFirstChild();
   while (child) {
@@ -70,7 +68,6 @@ bool PipelineChildrenRule::fixViolation(PipelineTreeNode* violating_node,
   OperationTreeNode* child = violating_node->getFirstChild();
   while (child) {
     PipelineTreeNode* child_pnode = static_cast<PipelineTreeNode*>(child);
-
     if (!child_pnode->isPrivateNode() && !child_pnode->isStageNode()) {
       // Illegal child - add to current group
       current_group.push_back(child_pnode);
@@ -81,7 +78,6 @@ bool PipelineChildrenRule::fixViolation(PipelineTreeNode* violating_node,
         current_group.clear();
       }
     }
-
     child = child->getNextSibling();
   }
 
@@ -115,7 +111,6 @@ bool PipelineChildrenRule::fixViolation(PipelineTreeNode* violating_node,
     LLVM_DEBUG(llvm::dbgs() << "        Created coarsened stage "
                             << (next_stage_id - 1) << "\n");
   }
-
   return true;
 }
 
@@ -126,16 +121,12 @@ void PipelineChildrenRule::print(llvm::raw_ostream& os) const {
 bool StageParentRule::isViolated(PipelineTreeNode* node,
                                  PipelineTree& tree) const {
   // Check if this is a stage with non-pipeline parent
-  if (!node->isStageNode()) {
-    return false;
-  }
+  if (!node->isStageNode()) return false;
 
   OperationTreeNode* parent = node->getParentNode();
-  if (!parent) {
-    return false;
-  }
+  assert(parent && "all nodes must have a parent except root node");
 
-  PipelineTreeNode* parent_pnode = static_cast<PipelineTreeNode*>(parent);
+  auto parent_pnode = static_cast<PipelineTreeNode*>(parent);
   return !parent_pnode->isPipelineNode();
 }
 
@@ -144,13 +135,12 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
                                    int& next_coarsened_stage_id) {
   LLVM_DEBUG(llvm::dbgs() << "      Creating nested pipeline for stage "
                           << violating_node->getNodeName() << "\n");
-
   assert(violating_node->isStageNode() && "Expected stage node");
 
   // Get the non-pipeline parent
   OperationTreeNode* parent = violating_node->getParentNode();
   assert(parent && "Stage should have a parent");
-  PipelineTreeNode* parent_pnode = static_cast<PipelineTreeNode*>(parent);
+  auto parent_pnode = static_cast<PipelineTreeNode*>(parent);
   assert(!parent_pnode->isPipelineNode() &&
          "Parent should not be a pipeline since expected violation");
 
@@ -160,7 +150,7 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
   // Get the template from the nearest ancestor pipeline
   OperationTreeNode* ancestor = parent_pnode->getParentNode();
   while (ancestor) {
-    PipelineTreeNode* ancestor_pnode = static_cast<PipelineTreeNode*>(ancestor);
+    auto ancestor_pnode = static_cast<PipelineTreeNode*>(ancestor);
     if (ancestor_pnode->isPipelineNode()) {
       PipelineNode* ancestor_pipeline =
           static_cast<PipelineNode*>(ancestor_pnode);
@@ -183,7 +173,7 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
   llvm::SmallVector<StageNode*> stages_to_move;
   OperationTreeNode* child = parent_pnode->getFirstChild();
   while (child) {
-    PipelineTreeNode* child_pnode = static_cast<PipelineTreeNode*>(child);
+    auto child_pnode = static_cast<PipelineTreeNode*>(child);
     if (child_pnode->isStageNode()) {
       stages_to_move.push_back(static_cast<StageNode*>(child_pnode));
     }
@@ -196,10 +186,9 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
   // Insert the nested pipeline as a child of the parent
   // Get the position before the first stage
   OperationTreeNode* insert_before = nullptr;
-  if (!stages_to_move.empty()) {
-    insert_before = stages_to_move[0]->getPrevSibling();
-  }
-
+  assert(!stages_to_move.empty() &&
+         "expected to find at least the original violating stage node");
+  insert_before = stages_to_move[0]->getPrevSibling();
   parent_pnode->insertChildNode(nested_pipeline, insert_before);
 
   // Move all stages to be children of the nested pipeline
@@ -210,7 +199,6 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
 
   LLVM_DEBUG(
       { llvm::dbgs() << "      Nested pipeline created successfully\n"; });
-
   return true;
 }
 
@@ -232,9 +220,9 @@ bool PrivateMustExistRule::isViolated(PipelineTreeNode* node,
   // Check if any immediate child stages have non-empty dependencies
   OperationTreeNode* child = first_child;
   while (child) {
-    PipelineTreeNode* child_pnode = static_cast<PipelineTreeNode*>(child);
+    auto child_pnode = static_cast<PipelineTreeNode*>(child);
     if (!child_pnode->isStageNode()) continue;
-    StageNode* stage = static_cast<StageNode*>(child_pnode);
+    auto stage = static_cast<StageNode*>(child_pnode);
     if (!stage->getDependencies().empty()) {
       return true;
     }
@@ -285,9 +273,9 @@ int Legalizer::findAndFixViolations(PipelineTree& tree) {
   next_coarsened_stage_id_ = 0;
   OperationTreeNode::walk<OperationTreeNode::kPreOrder>(
       tree.getRoot(), [this](OperationTreeNode* node) {
-        PipelineTreeNode* pnode = static_cast<PipelineTreeNode*>(node);
+        auto pnode = static_cast<PipelineTreeNode*>(node);
         if (pnode->isStageNode()) {
-          StageNode* stage = static_cast<StageNode*>(pnode);
+          auto stage = static_cast<StageNode*>(pnode);
           if (stage->getStageId() >= next_coarsened_stage_id_) {
             next_coarsened_stage_id_ = stage->getStageId() + 1;
           }
@@ -348,7 +336,6 @@ int Legalizer::findAndFixViolations(PipelineTree& tree) {
 
   LLVM_DEBUG(llvm::dbgs() << "  All violations resolved after " << iteration
                           << " iteration(s)\n");
-
   return iteration;
 }
 
@@ -369,7 +356,7 @@ void Legalizer::collectViolations(PipelineTree& tree) {
 
   OperationTreeNode::walk<OperationTreeNode::kPreOrder>(
       tree.getRoot(), [&](OperationTreeNode* node) {
-        PipelineTreeNode* pnode = static_cast<PipelineTreeNode*>(node);
+        auto pnode = static_cast<PipelineTreeNode*>(node);
 
         // Check all rules against this node
         for (const auto& rule : rules_) {

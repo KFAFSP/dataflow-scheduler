@@ -22,7 +22,7 @@ void registerPassesForScheduler() {
   mlir::registerLoopInvariantCodeMotionPass();
 
   // Register MLIR dialect passes as needed
-  mlir::registerSCFPasses();  // Includes -scf-parallel-loop-tiling
+  mlir::registerSCFPasses();
 
   // mlir::registerAllPasses();  // Or register all MLIR passes at once
 }
