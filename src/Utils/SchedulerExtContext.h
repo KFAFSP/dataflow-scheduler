@@ -11,9 +11,10 @@
 #define SCHEDULER_EXT_CONTEXT_H
 
 #include <cstdint>
+#include <string>
 
 #include "mlir/IR/Attributes.h"
-#include "src/Dialects/KTDF/KTDFTypes.hpp"
+#include "src/Dialects/KTDF/KTDFOps.hpp"
 
 namespace scheduler {
 
@@ -27,8 +28,23 @@ struct SchedulerExtContext {
 
   virtual bool isDummy() const { return false; }
 
-  /// Returns the size of a stick in bytes (64 bytes for current architecture)
-  uint64_t getStickSize() const;
+  /// Returns the compute unit type (SFP for current architecture)
+  mlir::ktdf::ComponentType getComputeUnit() const;
+
+  /// Returns the vector length in bytes for a given compute unit
+  /// @param unit The compute unit type
+  /// @return Vector length in bytes
+  uint64_t getVectorLength(mlir::ktdf::ComponentType unit) const;
+
+  /// Returns the maximum FIFO slot size for a given compute unit
+  /// @param unit The compute unit type
+  /// @return Maximum FIFO slot size in elements
+  uint64_t getMaxFifoSlotSize(mlir::ktdf::ComponentType unit) const;
+
+  /// Returns the interface type to the compute unit
+  /// @param unit The compute unit type
+  /// @return Interface type ("FIFO" or "MEM")
+  std::string getInterfaceToComputeUnit(mlir::ktdf::ComponentType unit) const;
 
   /// Returns the FIFO type for load operations
   /// @return FifoType for loads (e.g., LxluToSfp)

@@ -91,7 +91,7 @@ struct ConstructThreeStagePipelinePass
   // Fuse consecutive linalg.generic operations
   LogicalResult fuseLinalgOps(func::FuncOp func_op);
 
-  // Determine tile sizes based on stick_size from linalg operation
+  // Determine tile sizes based on vector_length from linalg operation
   SmallVector<int64_t> determineTileSizes(linalg::LinalgOp linalgOp);
 
   // Create loops from linalg operations by tiling
@@ -278,7 +278,8 @@ LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(
 
 SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
     linalg::LinalgOp linalg_op) {
-  const int64_t stick_size = schedulerExtContext().getStickSize();
+  const int64_t vector_length = schedulerExtContext().getVectorLength(
+      schedulerExtContext().getComputeUnit());
   SmallVector<int64_t> tile_sizes;
 
   assert(linalg_op->getNumResults() == 1 &&
@@ -290,14 +291,14 @@ SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
   ArrayRef<int64_t> shape = shaped_type.getShape();
   int64_t rank = shape.size();
 
-  // Start from rightmost dimension and multiply until we reach stick_size
+  // Start from rightmost dimension and multiply until we reach vector_length
   int64_t product = 1;
   int64_t covered_dims = 0;
 
   for (int64_t i = rank - 1; i >= 0; --i) {
     product *= shape[i];
     covered_dims++;
-    if (product >= stick_size) {
+    if (product >= vector_length) {
       break;
     }
   }
@@ -309,7 +310,7 @@ SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
   }
 
   // For covered dimensions, compute tile sizes that divide evenly
-  int64_t remaining_product = stick_size;
+  int64_t remaining_product = vector_length;
   for (int64_t i = rank - 1; i >= rank - covered_dims; --i) {
     int64_t dim_size = shape[i];
 
@@ -591,6 +592,12 @@ void ConstructThreeStagePipelinePass::createPipeline(
   // Create ktdf.private operation with FIFO slots and tokens
   auto private_op = createPrivateOp(builder, innermost_loop.getLoc());
   assert(private_op && "Private op creation failed");
+
+  // Query the interface type to the compute unit
+  std::string interface_type = schedulerExtContext().getInterfaceToComputeUnit(
+      schedulerExtContext().getComputeUnit());
+  assert(interface_type == "FIFO" && "Expected FIFO interface type");
+
   // Tokens are at the end: fifo_count + 0, fifo_count + 1, fifo_count + 2
   size_t fifo_count = load_ops_.size() + store_ops_.size();
 
@@ -679,6 +686,10 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
 
   // FIFO slot size is the product of tile_sizes (i.e. total_num_elements_)
   SmallVector<int64_t> fifo_sizes = {total_num_elements_};
+
+  assert(total_num_elements_ <= schedulerExtContext().getMaxFifoSlotSize(
+                                    schedulerExtContext().getComputeUnit()) &&
+         "FIFO slot size exceeds maximum allowed size for compute unit");
 
   // Create data_transfer for each operation
   for (size_t i = 0; i < op_count; ++i) {

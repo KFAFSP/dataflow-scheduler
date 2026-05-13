@@ -20,8 +20,32 @@ const SchedulerExtContext& SchedulerExtContext::dummyContext() {
   return dummy_ctx;
 }
 
-uint64_t SchedulerExtContext::getStickSize() const {
-  return 64;  // 64 bytes per stick
+mlir::ktdf::ComponentType SchedulerExtContext::getComputeUnit() const {
+  return mlir::ktdf::ComponentType::SFP;
+}
+
+uint64_t SchedulerExtContext::getVectorLength(
+    mlir::ktdf::ComponentType unit) const {
+  if (unit == mlir::ktdf::ComponentType::SFP) {
+    return 64;  // 64 bytes per vector for SFP
+  }
+  llvm::report_fatal_error("Compute unit not supported");
+}
+
+uint64_t SchedulerExtContext::getMaxFifoSlotSize(
+    mlir::ktdf::ComponentType unit) const {
+  if (unit == mlir::ktdf::ComponentType::SFP) {
+    return 64;
+  }
+  llvm::report_fatal_error("Compute unit not supported");
+}
+
+std::string SchedulerExtContext::getInterfaceToComputeUnit(
+    mlir::ktdf::ComponentType unit) const {
+  if (unit == mlir::ktdf::ComponentType::SFP) {
+    return "FIFO";
+  }
+  return "MEM";
 }
 
 mlir::ktdf::FifoType SchedulerExtContext::getFifoTypeLoad() const {
