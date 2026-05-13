@@ -47,11 +47,11 @@ struct SchedulerExtContext {
   std::string getInterfaceToComputeUnit(mlir::ktdf::ComponentType unit) const;
 
   /// Returns the FIFO type for load operations
-  /// @return FifoType for loads (e.g., LxluToSfp)
+  /// @return FifoType for loads (e.g., HbmToSfp)
   mlir::ktdf::FifoType getFifoTypeLoad() const;
 
   /// Returns the FIFO type for store operations
-  /// @return FifoType for stores (e.g., SfpToLxsu)
+  /// @return FifoType for stores (e.g., SfpToHbm)
   mlir::ktdf::FifoType getFifoTypeStore() const;
 };
 

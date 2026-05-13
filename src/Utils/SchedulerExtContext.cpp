@@ -49,13 +49,13 @@ std::string SchedulerExtContext::getInterfaceToComputeUnit(
 }
 
 mlir::ktdf::FifoType SchedulerExtContext::getFifoTypeLoad() const {
-  // Load operations transfer data from LXLU to SFP
-  return mlir::ktdf::FifoType::LxluToSfp;
+  // Load operations transfer data from HBM to SFP
+  return mlir::ktdf::FifoType::HbmToSfp;
 }
 
 mlir::ktdf::FifoType SchedulerExtContext::getFifoTypeStore() const {
-  // Store operations transfer data from SFP to LXSU
-  return mlir::ktdf::FifoType::SfpToLxsu;
+  // Store operations transfer data from SFP to HBM
+  return mlir::ktdf::FifoType::SfpToHbm;
 }
 
 }  // namespace scheduler

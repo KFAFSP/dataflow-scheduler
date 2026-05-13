@@ -230,36 +230,36 @@ module {
           scf.for %n = %c0 to %c64 step %c64 {ktdf.loop parallel} {                                                                                                       
             ktdf.pipeline {                                                              
               %res_fifo_A, %res_fifo_B, %res_fifo_out, %res_t1, %res_t2, %res_t3 = ktdf.private {                       
-                %fifo_slot_A = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
-                %fifo_slot_B = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
-                %fifo_slot_out = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
+                %fifo_slot_A = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>
+                %fifo_slot_B = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>
+                %fifo_slot_out = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-hbm", 64xf16>
                                                           
                 %t1 = ktdf.create_token : !ktdf.token                                                              
                 %t2 = ktdf.create_token : !ktdf.token                                                               
                 %t3 = ktdf.create_token : !ktdf.token                                                               
                 ktdf.private_yield %fifo_slot_A, %fifo_slot_B, %fifo_slot_out, %t1, %t2, %t3                                          
-                    : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>,              
+                    : !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>, !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>, !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>,
                       !ktdf.token, !ktdf.token, !ktdf.token
               }                                                                                                                                                         
               ktdf.stage depend_in() depend_out(%res_t1) {                                                          
-                ktdf.data_transfer from %A[%m, %n] size [1, 64] to %res_fifo_A size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
-                ktdf.data_transfer from %B[%m, %n] size [1, 64] to %res_fifo_B size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+                ktdf.data_transfer from %A[%m, %n] size [1, 64] to %res_fifo_A size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>
+                ktdf.data_transfer from %B[%m, %n] size [1, 64] to %res_fifo_B size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>
               }                                                                                                     
               
               ktdf.stage depend_in(%res_t1) depend_out(%res_t2) {                 
-                %fifo_read_A = ktdf.read_from_fifo %res_fifo_A : <"lxlu-to-sfp", 64xf16> -> tensor<1x64xf16>
-                %fifo_read_B = ktdf.read_from_fifo %res_fifo_B : <"lxlu-to-sfp", 64xf16> -> tensor<1x64xf16>
+                %fifo_read_A = ktdf.read_from_fifo %res_fifo_A : <"hbm-to-sfp", 64xf16> -> tensor<1x64xf16>
+                %fifo_read_B = ktdf.read_from_fifo %res_fifo_B : <"hbm-to-sfp", 64xf16> -> tensor<1x64xf16>
                 %C_tensor = tensor.empty() : tensor<1x64xf16>
                 %add = linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel", "parallel"]} ins(%fifo_read_A, %fifo_read_B : tensor<1x64xf16>, tensor<1x64xf16>) outs(%C_tensor : tensor<1x64xf16>) {
                 ^bb0(%in: f16, %in_10: f16, %out: f16):
                   %14 = arith.addf %in, %in_10 : f16
                   linalg.yield %14 : f16
                 } -> tensor<1x64xf16>
-                ktdf.write_to_fifo %add, %res_fifo_out : tensor<1x64xf16>, <"sfp-to-lxsu", 64xf16>
+                ktdf.write_to_fifo %add, %res_fifo_out : tensor<1x64xf16>, <"sfp-to-hbm", 64xf16>
               }                                                                                                     
               
               ktdf.stage depend_in(%res_t2) depend_out(%res_t3) {                                                   
-                ktdf.data_transfer from %res_fifo_out size [64] to %reinterpret_cast_9[%arg1, %arg2] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>>                
+                ktdf.data_transfer from %res_fifo_out size [64] to %reinterpret_cast_9[%arg1, %arg2] size [1, 64] : !ktdf.fifo.slot<"sfp-to-hbm", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>>
               }                                                                                                    
             } // ktdf.pipeline depth(0)                                                                            
           } // scf.for n parallel
