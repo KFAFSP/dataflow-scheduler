@@ -10,6 +10,7 @@ add_library(SchedulerTransforms
     PipelineTree/Materializer.cpp
     ReusePromotion/Common/InvarianceCheck.cpp
     ReusePromotion/Common/PipelineScope.cpp
+    ReusePromotion/Common/RegionClonePrune.cpp
     ReusePromotion/Common/WriteSetScan.cpp
     StageCoarsening/BufferExpansion.cpp
     StageCoarsening/ScopeCorrection.cpp
