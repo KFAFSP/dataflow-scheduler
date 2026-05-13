@@ -85,17 +85,17 @@ def StageCoarseningPass : Pass<"stage-coarsening", "mlir::ModuleOp"> {
   let description = [{
     This pass implements a 4-stage stage coarsening algorithm to create
     hierarchical pipeline structures by sinking loops into stages.
-    
+
     Following identification of stage groups (using loop distribution legality rules):
     - Stage 1a: Distribute and sink loops into pipeline
     - Stage 1b: Further sink into stages with single parent loop (expand buffers)
     - Stage 2: Discover and correct illegal structures iteratively
     - Stage 3: Correct stage dependencies that cross pipeline boundaries
-    
+
     The transformation creates nested pipelines where:
     - Outer pipelines operate at tile granularity
     - Inner pipelines operate at hardware execution granularity
-    
+
     This enables better hardware mapping and reduced synchronization overhead.
   }];
   let constructor = "::ktdf::createStageCoarseningPass()";
@@ -104,6 +104,26 @@ def StageCoarseningPass : Pass<"stage-coarsening", "mlir::ModuleOp"> {
            /*default=*/"2",
            "Number of perfectly nested loops to consider for sinking">
   ];
+}
+
+def BroadcastPromotionPass : Pass<"broadcast-promotion", "mlir::ModuleOp"> {
+  let summary = "Hoist invariant ktdf.data_transfer ops as sibling pipelines";
+  let description = [{
+    This pass identifies ktdf.data_transfer ops inside ktdf.stage bodies
+    whose source and destination indices/sizes are invariant w.r.t. at
+    least one enclosing scf.for induction variable, and hoists them
+    outward as a sibling ktdf.pipeline placed before the invariant loop.
+
+    Only broadcast-style hoists (single-transfer, hoist-up) are handled.
+    Reduction hoists (paired pre-load/post-store) and FIFO-destination
+    hoists (requiring co-hoisting of ktdf.fifo.allocate and consumer-side
+    register-promotion rewrites) are handled by separate future passes.
+
+    The pass runs a fixed-point loop: one hoist per iteration, re-scan
+    after each hoist, exit when no candidate remains.
+  }];
+  let constructor = "::ktdf::createBroadcastPromotionPass()";
+  let dependentDialects = ["mlir::ktdf::KTDFDialect", "mlir::scf::SCFDialect"];
 }
 
 #endif // SCHEDULER_TRANSFORM_PASSES

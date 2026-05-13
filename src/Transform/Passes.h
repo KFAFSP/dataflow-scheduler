@@ -24,7 +24,7 @@ std::unique_ptr<mlir::Pass> createTileSCFForLoopsPass();
 std::unique_ptr<mlir::Pass> createStripMineSCFForLoopsPass();
 std::unique_ptr<mlir::Pass> createStageCoarseningPass();
 
-void buildKTDPToDFIRPipeline(
+std::unique_ptr<mlir::Pass> createBroadcastPromotionPass();void buildKTDPToDFIRPipeline(
     mlir::OpPassManager& pm,
     const scheduler::SchedulerExtContext& scheduler_ctx);
 

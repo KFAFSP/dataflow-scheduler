@@ -3,6 +3,7 @@ scheduler_tablegen(Passes.h.inc -gen-pass-decls -name SchedulerTransforms)
 add_public_tablegen_target(SchedulerTransformsPassIncGen)
 
 add_library(SchedulerTransforms
+    BroadcastPromotion.cpp
     ComputeGroupExtraction.cpp
     ConstructThreeStagePipeline.cpp
     PipelineTree/Legalizer.cpp
