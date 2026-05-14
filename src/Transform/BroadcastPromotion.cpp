@@ -16,7 +16,8 @@
 //
 //===----------------------------------------------------------------------===//
 // BroadcastPromotion: hoist invariant ktdf.data_transfer ops as sibling
-// pipelines. See docs/superpowers/specs/2026-05-12-broadcast-promotion-design.md
+// pipelines. See
+// docs/superpowers/specs/2026-05-12-broadcast-promotion-design.md
 //===----------------------------------------------------------------------===//
 
 #include <memory>
@@ -68,16 +69,16 @@ mlir::memref::AllocOp findUnderlyingAlloc(mlir::Value dest) {
 /// Handles the case where `orig_dest` is a result of ktdf.private by
 /// finding the underlying alloc inside the private body.
 mlir::Value cloneDestAllocAbove(mlir::Value orig_dest,
-                                mlir::Operation *insert_before_op) {
+                                mlir::Operation* insert_before_op) {
   mlir::memref::AllocOp alloc = findUnderlyingAlloc(orig_dest);
   assert(alloc && "destination must trace back to a memref.alloc");
   mlir::OpBuilder builder(insert_before_op);
-  mlir::Operation *new_alloc = builder.clone(*alloc.getOperation());
+  mlir::Operation* new_alloc = builder.clone(*alloc.getOperation());
   return new_alloc->getResult(0);
 }
 
 /// Perform one broadcast hoist for `c`.
-void performHoist(const reuse::Candidate &c) {
+void performHoist(const reuse::Candidate& c) {
   mlir::ktdf::DataTransferOp transfer = c.transfer;
   mlir::ktdf::StageOp donor_stage = c.donor_stage;
   mlir::scf::ForOp target_loop = c.target_loop;
@@ -93,27 +94,27 @@ void performHoist(const reuse::Candidate &c) {
   // 2. Sibling pipeline + stage immediately after the new alloc, still
   //    before target_loop.
   mlir::OpBuilder builder(target_loop);
-  auto new_pipeline = mlir::ktdf::PipelineOp::create(
-      builder, target_loop.getLoc());
+  auto new_pipeline =
+      mlir::ktdf::PipelineOp::create(builder, target_loop.getLoc());
   builder.setInsertionPointToStart(new_pipeline.getBodyBlock());
-  auto new_stage = mlir::ktdf::StageOp::create(
-      builder, target_loop.getLoc(),
-      /*depends_in=*/mlir::ValueRange{},
-      /*depends_out=*/mlir::ValueRange{});
+  auto new_stage =
+      mlir::ktdf::StageOp::create(builder, target_loop.getLoc(),
+                                  /*depends_in=*/mlir::ValueRange{},
+                                  /*depends_out=*/mlir::ValueRange{});
 
   // 3. Seed IRMapping: original dest -> new_dest.
   mlir::IRMapping value_map;
   value_map.map(orig_dest, new_dest);
 
   // 4. Clone donor stage body into new stage body; prune to the transfer.
-  mlir::Block *new_stage_body = &new_stage.getBody().front();
-  reuse::cloneRegionAndPruneToAnchor(
-      donor_stage.getBody(), new_stage_body,
-      new_stage_body->end(), transfer.getOperation(), value_map);
+  mlir::Block* new_stage_body = &new_stage.getBody().front();
+  reuse::cloneRegionAndPruneToAnchor(donor_stage.getBody(), new_stage_body,
+                                     new_stage_body->end(),
+                                     transfer.getOperation(), value_map);
 
   // 5. Rewire uses of orig_dest outside donor_stage to new_dest.
-  orig_dest.replaceUsesWithIf(new_dest, [&](mlir::OpOperand &use) {
-    mlir::Operation *user = use.getOwner();
+  orig_dest.replaceUsesWithIf(new_dest, [&](mlir::OpOperand& use) {
+    mlir::Operation* user = use.getOwner();
     return !donor_stage.getOperation()->isAncestor(user);
   });
 

@@ -33,18 +33,17 @@ namespace {
 /// Build the alias set reachable from `seed` via memref view/cast ops
 /// within the IR. This is a fixed-point forward walk through uses of the
 /// seed and any op we consider aliasing-producing.
-void buildAliasSet(mlir::Value seed,
-                   llvm::DenseSet<mlir::Value> &aliases) {
+void buildAliasSet(mlir::Value seed, llvm::DenseSet<mlir::Value>& aliases) {
   llvm::SmallVector<mlir::Value> worklist{seed};
   while (!worklist.empty()) {
     mlir::Value v = worklist.pop_back_val();
     if (!aliases.insert(v).second) continue;
-    for (mlir::OpOperand &use : v.getUses()) {
-      mlir::Operation *user = use.getOwner();
+    for (mlir::OpOperand& use : v.getUses()) {
+      mlir::Operation* user = use.getOwner();
       // Ops that produce an aliased memref from their input.
       if (mlir::isa<mlir::memref::CastOp, mlir::memref::ViewOp,
-                    mlir::memref::SubViewOp,
-                    mlir::memref::ReinterpretCastOp>(user)) {
+                    mlir::memref::SubViewOp, mlir::memref::ReinterpretCastOp>(
+              user)) {
         for (mlir::Value result : user->getResults()) {
           worklist.push_back(result);
         }
@@ -55,8 +54,8 @@ void buildAliasSet(mlir::Value seed,
   }
 }
 
-bool opIsWriter(mlir::Operation *op,
-                const llvm::DenseSet<mlir::Value> &aliases) {
+bool opIsWriter(mlir::Operation* op,
+                const llvm::DenseSet<mlir::Value>& aliases) {
   // ktdf.data_transfer writes to its destination when dest is a memref.
   if (auto transfer = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(op)) {
     if (transfer.isDestMemRef() &&
@@ -72,7 +71,7 @@ bool opIsWriter(mlir::Operation *op,
   // linalg structured ops: any output operand whose type is a memref is a
   // writer.
   if (auto linalg_op = mlir::dyn_cast<mlir::linalg::LinalgOp>(op)) {
-    for (mlir::OpOperand &out : linalg_op.getDpsInitsMutable()) {
+    for (mlir::OpOperand& out : linalg_op.getDpsInitsMutable()) {
       if (aliases.contains(out.get())) {
         return true;
       }
@@ -84,12 +83,12 @@ bool opIsWriter(mlir::Operation *op,
 
 }  // namespace
 
-bool regionWritesTo(mlir::Region &region, mlir::Value memref,
-                    mlir::Operation *ignore) {
+bool regionWritesTo(mlir::Region& region, mlir::Value memref,
+                    mlir::Operation* ignore) {
   llvm::DenseSet<mlir::Value> aliases;
   buildAliasSet(memref, aliases);
   bool found_writer = false;
-  region.walk([&](mlir::Operation *op) {
+  region.walk([&](mlir::Operation* op) {
     if (found_writer) return mlir::WalkResult::interrupt();
     if (op == ignore) return mlir::WalkResult::advance();
     if (opIsWriter(op, aliases)) {

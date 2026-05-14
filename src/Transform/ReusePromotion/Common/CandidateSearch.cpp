@@ -30,12 +30,12 @@ namespace {
 
 /// True iff `v`'s defining op (if any) is located inside `region`
 /// (transitively: at any depth, including nested regions).
-bool definedInsideRegion(mlir::Value v, mlir::Region &region) {
-  mlir::Operation *def = v.getDefiningOp();
+bool definedInsideRegion(mlir::Value v, mlir::Region& region) {
+  mlir::Operation* def = v.getDefiningOp();
   if (!def) {
     return false;
   }
-  mlir::Operation *ancestor = def;
+  mlir::Operation* ancestor = def;
   while (ancestor) {
     if (ancestor->getParentRegion() == &region) {
       return true;
@@ -48,9 +48,8 @@ bool definedInsideRegion(mlir::Value v, mlir::Region &region) {
 /// Walk `scope.loops` innermost-to-outermost. For each loop, check all
 /// five conditions. Return the outermost loop where every condition
 /// still holds. Nullptr if even the innermost loop fails.
-mlir::scf::ForOp findOutermostLegalTarget(
-    mlir::ktdf::DataTransferOp transfer,
-    const PipelineEnclosingScope &scope) {
+mlir::scf::ForOp findOutermostLegalTarget(mlir::ktdf::DataTransferOp transfer,
+                                          const PipelineEnclosingScope& scope) {
   mlir::scf::ForOp best = nullptr;
   for (mlir::scf::ForOp loop : scope.loops) {
     if (!transferIsInvariantWrt(transfer, loop.getInductionVar())) {
@@ -73,15 +72,14 @@ mlir::scf::ForOp findOutermostLegalTarget(
 
 }  // namespace
 
-std::optional<Candidate> findFirstCandidate(
-    mlir::ktdf::PipelineOp pipeline) {
+std::optional<Candidate> findFirstCandidate(mlir::ktdf::PipelineOp pipeline) {
   PipelineEnclosingScope scope = computePipelineEnclosingScope(pipeline);
   if (scope.loops.empty()) {
     return std::nullopt;
   }
 
   std::optional<Candidate> found;
-  for (mlir::Operation &child : pipeline.getBodyBlock()->getOperations()) {
+  for (mlir::Operation& child : pipeline.getBodyBlock()->getOperations()) {
     if (found) {
       break;
     }

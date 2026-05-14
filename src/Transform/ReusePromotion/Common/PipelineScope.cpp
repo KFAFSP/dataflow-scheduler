@@ -28,11 +28,11 @@ namespace {
 
 /// True iff the body of `loop` contains nothing except `child` (and the
 /// loop's required scf.yield terminator).
-bool loopBodyContainsOnly(mlir::scf::ForOp loop, mlir::Operation *child) {
-  mlir::Block &body = loop.getRegion().front();
+bool loopBodyContainsOnly(mlir::scf::ForOp loop, mlir::Operation* child) {
+  mlir::Block& body = loop.getRegion().front();
   int non_terminator_count = 0;
-  mlir::Operation *only_non_terminator = nullptr;
-  for (mlir::Operation &op : body) {
+  mlir::Operation* only_non_terminator = nullptr;
+  for (mlir::Operation& op : body) {
     if (op.hasTrait<mlir::OpTrait::IsTerminator>()) {
       continue;
     }
@@ -47,8 +47,8 @@ bool loopBodyContainsOnly(mlir::scf::ForOp loop, mlir::Operation *child) {
 PipelineEnclosingScope computePipelineEnclosingScope(
     mlir::ktdf::PipelineOp pipeline) {
   PipelineEnclosingScope scope;
-  mlir::Operation *current = pipeline.getOperation();
-  mlir::Operation *parent = current->getParentOp();
+  mlir::Operation* current = pipeline.getOperation();
+  mlir::Operation* parent = current->getParentOp();
   while (parent) {
     auto for_op = mlir::dyn_cast<mlir::scf::ForOp>(parent);
     if (!for_op) {

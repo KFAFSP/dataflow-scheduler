@@ -27,14 +27,14 @@ namespace reuse {
 namespace {
 
 bool dependsOnImpl(mlir::Value v, mlir::Value iv,
-                   llvm::DenseSet<mlir::Value> &visited) {
+                   llvm::DenseSet<mlir::Value>& visited) {
   if (v == iv) {
     return true;
   }
   if (!visited.insert(v).second) {
     return false;
   }
-  mlir::Operation *def = v.getDefiningOp();
+  mlir::Operation* def = v.getDefiningOp();
   if (!def) {
     return false;
   }
