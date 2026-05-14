@@ -1,20 +1,38 @@
 // RUN: scheduler --broadcast-promotion %s -allow-unregistered-dialect | FileCheck %s
 
 // A single DRAM->LX transfer invariant w.r.t. the innermost %n loop.
-// The hoist should lift the transfer into a sibling pipeline placed
-// immediately before `scf.for %n`.
+// The hoist lifts the transfer into a sibling pipeline placed
+// immediately before `scf.for %n`. Full-output check: every line of
+// the post-pass IR is matched by a CHECK directive in order.
 
-// CHECK-LABEL: func.func @single_iv_hoist
-// CHECK: scf.for %[[M:.*]] = %{{.*}} to %{{.*}} step %{{.*}} {
-// CHECK:   %[[NEW_LX:.*]] = memref.alloc() : memref<64xf16, #ktdf.memory_space<LX>>
-// CHECK:   ktdf.pipeline {
-// CHECK:     ktdf.stage depends_in(none) depends_out(none) {
-// CHECK:       ktdf.data_transfer from %{{.*}}[%[[M]]] size [64] to %[[NEW_LX]][%{{.*}}] size [64]
-// CHECK:     }
-// CHECK:   }
-// CHECK:   scf.for %[[N:.*]] = %{{.*}} to %{{.*}} step %{{.*}} {
-// CHECK:     ktdf.pipeline {
-// CHECK-NOT:   ktdf.data_transfer from %{{.*}}[%[[M]]]
+// CHECK-LABEL:   func.func @single_iv_hoist
+// CHECK-SAME:        %[[A:[^,]+]]: memref<?xf16, #ktdf.memory_space<HBM>>, %[[M:[^,]+]]: index, %[[N:[^,]+]]: index) {
+// CHECK-NEXT:     %[[C0:.*]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[C1:.*]] = arith.constant 1 : index
+// CHECK-NEXT:     scf.for %[[IM:.*]] = %[[C0]] to %[[M]] step %[[C1]] {
+// CHECK-NEXT:       %[[NEW_LX:.*]] = memref.alloc() : memref<64xf16, #ktdf.memory_space<LX>>
+// CHECK-NEXT:       ktdf.pipeline {
+// CHECK-NEXT:         ktdf.stage depends_in(none) depends_out(none) {
+// CHECK-NEXT:           ktdf.data_transfer from %[[A]][%[[IM]]] size [64] to %[[NEW_LX]][%[[C0]]] size [64] : memref<?xf16, #ktdf.memory_space<HBM>>, memref<64xf16, #ktdf.memory_space<LX>>
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }
+// CHECK-NEXT:       scf.for %[[IN:.*]] = %[[C0]] to %[[N]] step %[[C1]] {
+// CHECK-NEXT:         ktdf.pipeline {
+// CHECK-NEXT:           %[[PRIV:.*]]:2 = ktdf.private -> (memref<64xf16, #ktdf.memory_space<LX>>, !ktdf.token) {
+// CHECK-NEXT:             %[[ORIG_LX:.*]] = memref.alloc() : memref<64xf16, #ktdf.memory_space<LX>>
+// CHECK-NEXT:             %[[TOK:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:             ktdf.private_yield %[[ORIG_LX]], %[[TOK]] : memref<64xf16, #ktdf.memory_space<LX>>, !ktdf.token
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[PRIV]]#1 : !ktdf.token) {
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(%[[PRIV]]#1 : !ktdf.token) depends_out(none) {
+// CHECK-NEXT:             "test.use"(%[[NEW_LX]]) : (memref<64xf16, #ktdf.memory_space<LX>>) -> ()
+// CHECK-NEXT:           }
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }
+// CHECK-NEXT:     }
+// CHECK-NEXT:     return
+// CHECK-NEXT:   }
 
 module {
   func.func @single_iv_hoist(%A: memref<?xf16, #ktdf.memory_space<HBM>>,

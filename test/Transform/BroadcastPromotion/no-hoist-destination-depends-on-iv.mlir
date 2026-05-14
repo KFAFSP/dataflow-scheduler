@@ -2,14 +2,31 @@
 
 // Source is invariant in %n, but destination indices depend on %n.
 // Under the strict "both source and destination must be invariant" rule,
-// no hoist happens.
+// no hoist happens. IR after pass should be byte-equivalent to input.
 
-// CHECK-LABEL: func.func @no_hoist_dst
-// CHECK: scf.for %[[M:.*]] =
-// CHECK:   scf.for %[[N:.*]] =
-// CHECK:     ktdf.pipeline {
-// CHECK:       ktdf.stage depends_in(none) depends_out(%{{.*}} : !ktdf.token) {
-// CHECK:         ktdf.data_transfer from %{{.*}}[%[[M]]] {{.*}} to %{{.*}}[%[[N]]]
+// CHECK-LABEL:   func.func @no_hoist_dst
+// CHECK-SAME:        %[[A:[^,]+]]: memref<?xf16, #ktdf.memory_space<HBM>>, %[[M:[^,]+]]: index, %[[N:[^,]+]]: index) {
+// CHECK-NEXT:     %[[C0:.*]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[C1:.*]] = arith.constant 1 : index
+// CHECK-NEXT:     scf.for %[[IM:.*]] = %[[C0]] to %[[M]] step %[[C1]] {
+// CHECK-NEXT:       scf.for %[[IN:.*]] = %[[C0]] to %[[N]] step %[[C1]] {
+// CHECK-NEXT:         ktdf.pipeline {
+// CHECK-NEXT:           %[[PRIV:.*]]:2 = ktdf.private -> (memref<?xf16, #ktdf.memory_space<LX>>, !ktdf.token) {
+// CHECK-NEXT:             %[[ORIG_LX:.*]] = memref.alloc(%[[N]]) : memref<?xf16, #ktdf.memory_space<LX>>
+// CHECK-NEXT:             %[[TOK:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:             ktdf.private_yield %[[ORIG_LX]], %[[TOK]] : memref<?xf16, #ktdf.memory_space<LX>>, !ktdf.token
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[PRIV]]#1 : !ktdf.token) {
+// CHECK-NEXT:             ktdf.data_transfer from %[[A]][%[[IM]]] size [64] to %[[PRIV]]#0[%[[IN]]] size [64] : memref<?xf16, #ktdf.memory_space<HBM>>, memref<?xf16, #ktdf.memory_space<LX>>
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(%[[PRIV]]#1 : !ktdf.token) depends_out(none) {
+// CHECK-NEXT:             "test.use"(%[[PRIV]]#0) : (memref<?xf16, #ktdf.memory_space<LX>>) -> ()
+// CHECK-NEXT:           }
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }
+// CHECK-NEXT:     }
+// CHECK-NEXT:     return
+// CHECK-NEXT:   }
 
 module {
   func.func @no_hoist_dst(%A: memref<?xf16, #ktdf.memory_space<HBM>>,

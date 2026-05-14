@@ -1,17 +1,33 @@
 // RUN: scheduler --broadcast-promotion %s -allow-unregistered-dialect | FileCheck %s
 
 // Source is invariant in %n, but a memref.store inside the %n loop
-// writes to the source. Pipeline enclosing scope caps at %n (because
-// the loop body has the pipeline plus the store), so no hoist target
-// qualifies.
+// writes to the source. Pipeline enclosing scope caps at %n (its body
+// holds both the store and the pipeline), so no hoist target qualifies.
 
-// CHECK-LABEL: func.func @no_hoist_src_written
-// CHECK: scf.for %{{.*}} =
-// CHECK:   scf.for %{{.*}} =
-// CHECK:     memref.store
-// CHECK:     ktdf.pipeline {
-// CHECK:       ktdf.stage depends_in(none) depends_out(%{{.*}} : !ktdf.token) {
-// CHECK:         ktdf.data_transfer
+// CHECK-LABEL:   func.func @no_hoist_src_written
+// CHECK-SAME:        %[[A:[^,]+]]: memref<?xf16, #ktdf.memory_space<HBM>>, %[[VAL:[^,]+]]: f16, %[[M:[^,]+]]: index, %[[N:[^,]+]]: index) {
+// CHECK-NEXT:     %[[C0:.*]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[C1:.*]] = arith.constant 1 : index
+// CHECK-NEXT:     scf.for %[[IM:.*]] = %[[C0]] to %[[M]] step %[[C1]] {
+// CHECK-NEXT:       scf.for %[[IN:.*]] = %[[C0]] to %[[N]] step %[[C1]] {
+// CHECK-NEXT:         memref.store %[[VAL]], %[[A]][%[[IN]]] : memref<?xf16, #ktdf.memory_space<HBM>>
+// CHECK-NEXT:         ktdf.pipeline {
+// CHECK-NEXT:           %[[PRIV:.*]]:2 = ktdf.private -> (memref<64xf16, #ktdf.memory_space<LX>>, !ktdf.token) {
+// CHECK-NEXT:             %[[ORIG_LX:.*]] = memref.alloc() : memref<64xf16, #ktdf.memory_space<LX>>
+// CHECK-NEXT:             %[[TOK:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:             ktdf.private_yield %[[ORIG_LX]], %[[TOK]] : memref<64xf16, #ktdf.memory_space<LX>>, !ktdf.token
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[PRIV]]#1 : !ktdf.token) {
+// CHECK-NEXT:             ktdf.data_transfer from %[[A]][%[[IM]]] size [64] to %[[PRIV]]#0[%[[C0]]] size [64] : memref<?xf16, #ktdf.memory_space<HBM>>, memref<64xf16, #ktdf.memory_space<LX>>
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(%[[PRIV]]#1 : !ktdf.token) depends_out(none) {
+// CHECK-NEXT:             "test.use"(%[[PRIV]]#0) : (memref<64xf16, #ktdf.memory_space<LX>>) -> ()
+// CHECK-NEXT:           }
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }
+// CHECK-NEXT:     }
+// CHECK-NEXT:     return
+// CHECK-NEXT:   }
 
 module {
   func.func @no_hoist_src_written(%A: memref<?xf16, #ktdf.memory_space<HBM>>,

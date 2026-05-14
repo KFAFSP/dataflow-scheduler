@@ -1,18 +1,37 @@
 // RUN: scheduler --broadcast-promotion %s -allow-unregistered-dialect | FileCheck %s
 
-// Verify that after a hoist, downstream stages read from the new
-// outer-scope alloc (not the original private-region alloc).
+// After a hoist, downstream stages read from the new outer-scope alloc
+// (not the original private-region alloc). The "test.use" reference in
+// the consumer stage is rewired to the new alloc.
 
-// CHECK-LABEL: func.func @consumer_rewiring
-// CHECK: %[[NEW_LX:.*]] = memref.alloc() : memref<64xf16, #ktdf.memory_space<LX>>
-// CHECK: ktdf.pipeline {
-// CHECK:   ktdf.data_transfer {{.*}} to %[[NEW_LX]][%{{.*}}]
-// CHECK: }
-// Consumer must reference %[[NEW_LX]]:
-// CHECK: ktdf.pipeline {
-// CHECK:   ktdf.private
-// CHECK:   ktdf.stage
-// CHECK:     "test.use"(%[[NEW_LX]])
+// CHECK-LABEL:   func.func @consumer_rewiring
+// CHECK-SAME:        %[[A:[^,]+]]: memref<?xf16, #ktdf.memory_space<HBM>>, %[[M:[^,]+]]: index, %[[N:[^,]+]]: index) {
+// CHECK-NEXT:     %[[C0:.*]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[C1:.*]] = arith.constant 1 : index
+// CHECK-NEXT:     scf.for %[[IM:.*]] = %[[C0]] to %[[M]] step %[[C1]] {
+// CHECK-NEXT:       %[[NEW_LX:.*]] = memref.alloc() : memref<64xf16, #ktdf.memory_space<LX>>
+// CHECK-NEXT:       ktdf.pipeline {
+// CHECK-NEXT:         ktdf.stage depends_in(none) depends_out(none) {
+// CHECK-NEXT:           ktdf.data_transfer from %[[A]][%[[IM]]] size [64] to %[[NEW_LX]][%[[C0]]] size [64] : memref<?xf16, #ktdf.memory_space<HBM>>, memref<64xf16, #ktdf.memory_space<LX>>
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }
+// CHECK-NEXT:       scf.for %[[IN:.*]] = %[[C0]] to %[[N]] step %[[C1]] {
+// CHECK-NEXT:         ktdf.pipeline {
+// CHECK-NEXT:           %[[PRIV:.*]]:2 = ktdf.private -> (memref<64xf16, #ktdf.memory_space<LX>>, !ktdf.token) {
+// CHECK-NEXT:             %[[ORIG_LX:.*]] = memref.alloc() : memref<64xf16, #ktdf.memory_space<LX>>
+// CHECK-NEXT:             %[[TOK:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:             ktdf.private_yield %[[ORIG_LX]], %[[TOK]] : memref<64xf16, #ktdf.memory_space<LX>>, !ktdf.token
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[PRIV]]#1 : !ktdf.token) {
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(%[[PRIV]]#1 : !ktdf.token) depends_out(none) {
+// CHECK-NEXT:             "test.use"(%[[NEW_LX]]) : (memref<64xf16, #ktdf.memory_space<LX>>) -> ()
+// CHECK-NEXT:           }
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }
+// CHECK-NEXT:     }
+// CHECK-NEXT:     return
+// CHECK-NEXT:   }
 
 module {
   func.func @consumer_rewiring(%A: memref<?xf16, #ktdf.memory_space<HBM>>,

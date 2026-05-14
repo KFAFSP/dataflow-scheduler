@@ -1,14 +1,30 @@
 // RUN: scheduler --broadcast-promotion %s -allow-unregistered-dialect | FileCheck %s
 
 // Destination is a FIFO slot. BroadcastPromotion v1 does not handle FIFO
-// destinations; the transfer remains in place.
+// destinations; the transfer remains in place. IR after pass should be
+// byte-equivalent to input.
 
-// CHECK-LABEL: func.func @no_hoist_fifo
-// CHECK: scf.for %{{.*}} =
-// CHECK:   scf.for %{{.*}} =
-// CHECK:     ktdf.pipeline {
-// CHECK:       ktdf.stage
-// CHECK:         ktdf.data_transfer from %{{.*}} size [64] to %{{.*}} size [64] : memref<64xf16, #ktdf.memory_space<LX>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+// CHECK-LABEL:   func.func @no_hoist_fifo
+// CHECK-SAME:        %[[M:[^,]+]]: index, %[[N:[^,]+]]: index) {
+// CHECK-NEXT:     %[[C0:.*]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[C1:.*]] = arith.constant 1 : index
+// CHECK-NEXT:     scf.for %[[IM:.*]] = %[[C0]] to %[[M]] step %[[C1]] {
+// CHECK-NEXT:       scf.for %[[IN:.*]] = %[[C0]] to %[[N]] step %[[C1]] {
+// CHECK-NEXT:         ktdf.pipeline {
+// CHECK-NEXT:           %[[PRIV:.*]]:3 = ktdf.private -> (memref<64xf16, #ktdf.memory_space<LX>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.token) {
+// CHECK-NEXT:             %[[ORIG_LX:.*]] = memref.alloc() : memref<64xf16, #ktdf.memory_space<LX>>
+// CHECK-NEXT:             %[[ORIG_FIFO:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+// CHECK-NEXT:             %[[TOK:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:             ktdf.private_yield %[[ORIG_LX]], %[[ORIG_FIFO]], %[[TOK]] : memref<64xf16, #ktdf.memory_space<LX>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.token
+// CHECK-NEXT:           }
+// CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[PRIV]]#2 : !ktdf.token) {
+// CHECK-NEXT:             ktdf.data_transfer from %[[PRIV]]#0[%[[C0]]] size [64] to %[[PRIV]]#1 size [64] : memref<64xf16, #ktdf.memory_space<LX>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+// CHECK-NEXT:           }
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }
+// CHECK-NEXT:     }
+// CHECK-NEXT:     return
+// CHECK-NEXT:   }
 
 module {
   func.func @no_hoist_fifo(%M: index, %N: index) {
