@@ -98,7 +98,7 @@ def KTDF_ApplicableUnitsCustomAttr : KTDF_Attr<"ApplicableUnitsCustom", "applica
 
     ```
     applicable-units-attr ::= `applicable_units` `<` `[` applicable-units-list `]` `>`
-    applicable-units-list ::= applicable-units-kind (`,` applicable-units-kind)*
+    applicable-units-list ::= component-type (`,` component-type)*
     ```
 
     The applicable units attribute specifies a non-empty list of processing units
@@ -112,13 +112,13 @@ def KTDF_ApplicableUnitsCustomAttr : KTDF_Attr<"ApplicableUnitsCustom", "applica
       // stage body
     }
     
-    ktdf.stage {applicable_units = #ktdf.applicable_units<[SFP, LXLU, L3LU]>} {
-      // stage body that can run on multiple units
+    ktdf.stage {applicable_units = #ktdf.applicable_units<[LXLU, LXSU]>} {
+      // stage body contains child stages for LXLU, LXSU
     }
     ```
   }];
 
-  let parameters = (ins ArrayRefParameter<"::mlir::ktdf::ApplicableUnits">:$value);
+  let parameters = (ins ArrayRefParameter<"::mlir::ktdf::ComponentType">:$value);
 
   let assemblyFormat = "`<` `[` $value `]` `>`";
 }

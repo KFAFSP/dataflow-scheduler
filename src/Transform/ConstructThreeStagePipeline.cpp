@@ -621,6 +621,14 @@ void ConstructThreeStagePipelinePass::createPipeline(
       /*depends_in=*/ValueRange{private_op.getResult(fifo_count + 0)},
       /*depends_out=*/ValueRange{private_op.getResult(fifo_count + 1)});
 
+  // Set applicable_units attribute for stage2 (compute stage)
+  auto compute_unit = schedulerExtContext().getComputeUnit();
+  SmallVector<mlir::ktdf::ComponentType> units;
+  units.push_back(compute_unit);
+  auto applicable_units_attr =
+      mlir::ktdf::ApplicableUnitsCustomAttr::get(builder.getContext(), units);
+  stage2->setAttr("applicable_units", applicable_units_attr);
+
   // Create read_from_fifos, compute operations, write_to_fifos in stage 2
   Region& stage2_region = stage2.getRegion();
   Block* stage2_body = &stage2_region.front();
