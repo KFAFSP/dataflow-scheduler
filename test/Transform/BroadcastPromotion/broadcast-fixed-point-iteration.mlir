@@ -1,24 +1,27 @@
 // RUN: scheduler --broadcast-promotion %s -allow-unregistered-dialect | FileCheck %s
 
-// Two hoistable transfers in one stage. The fixed-point loop should
-// hoist both. Per the spec's pipeline-enclosing-scope rule, once one
-// hoist creates a sibling pipeline inside scf.for %m, the m-loop body
-// no longer satisfies the "alone in body" precondition, so further
-// transfers can only hoist past %n (not past %m). Both hoisted siblings
-// land inside scf.for %m, before scf.for %n.
+// Two hoistable transfers in one stage with different deepest legal
+// targets. The fixed-point loop picks the candidate with the deepest
+// target each iteration (rather than first-in-source-order), so:
+//   - First iteration: B (no IV deps) hoists past both %m and %n,
+//     landing at the function-body scope above scf.for %m.
+//   - Second iteration: A (depends on %m) hoists past %n only,
+//     landing inside scf.for %m, before scf.for %n.
 
 // CHECK-LABEL: func.func @fixed_point
-// CHECK: scf.for %[[M:.*]] = %{{.*}} to %{{.*}} step %{{.*}} {
-// CHECK:   memref.alloc()
-// CHECK:   ktdf.pipeline {
-// CHECK:     ktdf.stage depends_in(none) depends_out(none) {
-// CHECK:       ktdf.data_transfer
-// CHECK:     }
+// B's hoist appears outside scf.for %m, at the function-body level:
+// CHECK: memref.alloc()
+// CHECK: ktdf.pipeline {
+// CHECK:   ktdf.stage depends_in(none) depends_out(none) {
+// CHECK:     ktdf.data_transfer
 // CHECK:   }
+// CHECK: }
+// CHECK: scf.for %[[M:.*]] = %{{.*}} to %{{.*}} step %{{.*}} {
+// A's hoist appears inside scf.for %m, before scf.for %n:
 // CHECK:   memref.alloc()
 // CHECK:   ktdf.pipeline {
 // CHECK:     ktdf.stage depends_in(none) depends_out(none) {
-// CHECK:       ktdf.data_transfer
+// CHECK:       ktdf.data_transfer from %{{.*}}[%[[M]]]
 // CHECK:     }
 // CHECK:   }
 // CHECK:   scf.for %[[N:.*]] =

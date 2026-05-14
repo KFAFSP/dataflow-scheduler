@@ -46,12 +46,15 @@ bool definedInsideRegion(mlir::Value v, mlir::Region& region) {
 }
 
 /// Walk `scope.loops` innermost-to-outermost. For each loop, check all
-/// five conditions. Return the outermost loop where every condition
-/// still holds. Nullptr if even the innermost loop fails.
-mlir::scf::ForOp findOutermostLegalTarget(mlir::ktdf::DataTransferOp transfer,
-                                          const PipelineEnclosingScope& scope) {
-  mlir::scf::ForOp best = nullptr;
-  for (mlir::scf::ForOp loop : scope.loops) {
+/// five conditions. Return the index in `scope.loops` of the outermost
+/// loop where every condition still holds, or -1 if even the innermost
+/// loop fails. The index doubles as a depth metric: higher = farther
+/// out from the pipeline.
+int findOutermostLegalTargetDepth(mlir::ktdf::DataTransferOp transfer,
+                                  const PipelineEnclosingScope& scope) {
+  int best = -1;
+  for (int i = 0; i < static_cast<int>(scope.loops.size()); ++i) {
+    mlir::scf::ForOp loop = scope.loops[i];
     if (!transferIsInvariantWrt(transfer, loop.getInductionVar())) {
       break;
     }
@@ -65,7 +68,7 @@ mlir::scf::ForOp findOutermostLegalTarget(mlir::ktdf::DataTransferOp transfer,
     if (definedInsideRegion(transfer.getSource(), loop.getRegion())) {
       break;
     }
-    best = loop;
+    best = i;
   }
   return best;
 }
@@ -78,31 +81,34 @@ std::optional<Candidate> findFirstCandidate(mlir::ktdf::PipelineOp pipeline) {
     return std::nullopt;
   }
 
-  std::optional<Candidate> found;
+  // Scan every data_transfer in the pipeline, then pick the one whose
+  // legal hoist target is deepest (i.e., farthest out from the pipeline).
+  // Picking source-order-first would let an early shallow-target hoist
+  // poison the pipeline-enclosing-scope chain for later transfers that
+  // could have hoisted further. Picking the deepest target avoids that.
+  std::optional<Candidate> best_candidate;
+  int best_depth = -1;
   for (mlir::Operation& child : pipeline.getBodyBlock()->getOperations()) {
-    if (found) {
-      break;
-    }
     auto stage = mlir::dyn_cast<mlir::ktdf::StageOp>(&child);
     if (!stage) {
       continue;
     }
     stage.walk([&](mlir::ktdf::DataTransferOp transfer) {
-      if (found) {
-        return mlir::WalkResult::interrupt();
-      }
       if (transfer.isDestFifo()) {
         return mlir::WalkResult::advance();
       }
-      mlir::scf::ForOp target = findOutermostLegalTarget(transfer, scope);
-      if (!target) {
+      int depth = findOutermostLegalTargetDepth(transfer, scope);
+      if (depth < 0) {
         return mlir::WalkResult::advance();
       }
-      found = Candidate{transfer, stage, target};
-      return mlir::WalkResult::interrupt();
+      if (depth > best_depth) {
+        best_depth = depth;
+        best_candidate = Candidate{transfer, stage, scope.loops[depth]};
+      }
+      return mlir::WalkResult::advance();
     });
   }
-  return found;
+  return best_candidate;
 }
 
 }  // namespace reuse
