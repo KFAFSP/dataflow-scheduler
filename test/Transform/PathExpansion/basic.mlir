@@ -1,4 +1,4 @@
-#map = affine_map<(d0, d1) -> (d0, d1)>
+#map = affine_map<(d0) -> (d0)>
 #set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 module {
   func.func @local_schedule_1(%arg0: index) {
@@ -17,18 +17,18 @@ module {
     %c0_2 = arith.constant 0 : index
     %c64_3 = arith.constant 64 : index
     %c64_4 = arith.constant 64 : index
-    %3 = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+    %3 = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16, #ktdf.memory_space<HBM>>
     %c64_5 = arith.constant 64 : index
     %4 = arith.muli %2, %c64_5 : index
-    %reinterpret_cast = memref.reinterpret_cast %3 to offset: [%4], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
-    %5 = ktdp.construct_memory_view %c12288, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+    %reinterpret_cast = memref.reinterpret_cast %3 to offset: [%4], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>
+    %5 = ktdp.construct_memory_view %c12288, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16, #ktdf.memory_space<HBM>>
     %c64_6 = arith.constant 64 : index
     %6 = arith.muli %2, %c64_6 : index
-    %reinterpret_cast_7 = memref.reinterpret_cast %5 to offset: [%6], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
-    %7 = ktdp.construct_memory_view %c18432, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+    %reinterpret_cast_7 = memref.reinterpret_cast %5 to offset: [%6], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>
+    %7 = ktdp.construct_memory_view %c18432, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16, #ktdf.memory_space<HBM>>
     %c64_8 = arith.constant 64 : index
     %8 = arith.muli %2, %c64_8 : index
-    %reinterpret_cast_9 = memref.reinterpret_cast %7 to offset: [%8], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16, strided<[64, 1], offset: ?>>
+    %reinterpret_cast_9 = memref.reinterpret_cast %7 to offset: [%8], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>
     scf.for %arg1 = %c0 to %c1_0 step %c1_1 {
       scf.for %arg2 = %c0_2 to %c64_3 step %c64_4 {
         ktdf.pipeline {
@@ -41,22 +41,22 @@ module {
             ktdf.private_yield %10#0, %10#1, %11, %12, %13, %14 : !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>, !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>, !ktdf.fifo.slot<"sfp-to-hbm", 64xf16>, !ktdf.token, !ktdf.token, !ktdf.token
           }
           ktdf.stage depends_in(none) depends_out(%9#3 : !ktdf.token) {
-            ktdf.data_transfer from %reinterpret_cast[%arg1, %arg2] size [1, 64] to %9#0 size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>
-            ktdf.data_transfer from %reinterpret_cast_7[%arg1, %arg2] size [1, 64] to %9#1 size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>>, !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>
+            ktdf.data_transfer from %reinterpret_cast[%arg1, %arg2] size [1, 64] to %9#0 size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>, !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>
+            ktdf.data_transfer from %reinterpret_cast_7[%arg1, %arg2] size [1, 64] to %9#1 size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>, !ktdf.fifo.slot<"hbm-to-sfp", 64xf16>
           }
           ktdf.stage depends_in(%9#3 : !ktdf.token) depends_out(%9#4 : !ktdf.token) {
-            %10 = ktdf.read_from_fifo %9#0 : <"hbm-to-sfp", 64xf16> -> tensor<1x64xf16>
-            %11 = ktdf.read_from_fifo %9#1 : <"hbm-to-sfp", 64xf16> -> tensor<1x64xf16>
-            %12 = tensor.empty() : tensor<1x64xf16>
-            %13 = linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel", "parallel"]} ins(%10, %11 : tensor<1x64xf16>, tensor<1x64xf16>) outs(%12 : tensor<1x64xf16>) {
+            %10 = ktdf.read_from_fifo %9#0 : <"hbm-to-sfp", 64xf16> -> tensor<64xf16>
+            %11 = ktdf.read_from_fifo %9#1 : <"hbm-to-sfp", 64xf16> -> tensor<64xf16>
+            %12 = tensor.empty() : tensor<64xf16>
+            %13 = linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel"]} ins(%10, %11 : tensor<64xf16>, tensor<64xf16>) outs(%12 : tensor<64xf16>) {
             ^bb0(%in: f16, %in_10: f16, %out: f16):
               %14 = arith.addf %in, %in_10 : f16
               linalg.yield %14 : f16
-            } -> tensor<1x64xf16>
-            ktdf.write_to_fifo %13, %9#2 : tensor<1x64xf16>, <"sfp-to-hbm", 64xf16>
+            } -> tensor<64xf16>
+            ktdf.write_to_fifo %13, %9#2 : tensor<64xf16>, <"sfp-to-hbm", 64xf16>
           } {applicable_units = #ktdf.applicable_units<[SFP]>}
           ktdf.stage depends_in(%9#4 : !ktdf.token) depends_out(%9#5 : !ktdf.token) {
-            ktdf.data_transfer from %9#2 size [64] to %reinterpret_cast_9[%arg1, %arg2] size [1, 64] : !ktdf.fifo.slot<"sfp-to-hbm", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>>
+            ktdf.data_transfer from %9#2 size [64] to %reinterpret_cast_9[%arg1, %arg2] size [1, 64] : !ktdf.fifo.slot<"sfp-to-hbm", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>
           }
         }
       } {loop_type = #ktdf.loop_type<parallel_loop>}
