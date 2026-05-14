@@ -33,8 +33,10 @@ struct SchedulerExtContext {
 
   /// Returns the vector length in bytes for a given compute unit
   /// @param unit The compute unit type
+  /// @param elem_type The element type of tensors
   /// @return Vector length in bytes
-  uint64_t getVectorLength(mlir::ktdf::ComponentType unit) const;
+  uint64_t getVectorLength(mlir::ktdf::ComponentType unit,
+                           mlir::Type elem_type) const;
 
   /// Returns the maximum FIFO slot size for a given compute unit
   /// @param unit The compute unit type

@@ -278,16 +278,18 @@ LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(
 
 SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
     linalg::LinalgOp linalg_op) {
-  const int64_t vector_length = schedulerExtContext().getVectorLength(
-      schedulerExtContext().getComputeUnit());
-  SmallVector<int64_t> tile_sizes;
-
   assert(linalg_op->getNumResults() == 1 &&
          "linalg op expected to have exactly one tensor result");
 
   ShapedType shaped_type =
       llvm::dyn_cast<ShapedType>(linalg_op->getResult(0).getType());
   assert(shaped_type && shaped_type.hasRank());
+
+  Type elem_type = shaped_type.getElementType();
+  const int64_t vector_length = schedulerExtContext().getVectorLength(
+      schedulerExtContext().getComputeUnit(), elem_type);
+  SmallVector<int64_t> tile_sizes;
+
   ArrayRef<int64_t> shape = shaped_type.getShape();
   int64_t rank = shape.size();
 

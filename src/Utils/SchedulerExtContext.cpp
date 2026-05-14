@@ -24,12 +24,13 @@ mlir::ktdf::ComponentType SchedulerExtContext::getComputeUnit() const {
   return mlir::ktdf::ComponentType::SFP;
 }
 
-uint64_t SchedulerExtContext::getVectorLength(
-    mlir::ktdf::ComponentType unit) const {
-  if (unit == mlir::ktdf::ComponentType::SFP) {
-    return 64;  // 64 bytes per vector for SFP
+uint64_t SchedulerExtContext::getVectorLength(mlir::ktdf::ComponentType unit,
+                                              mlir::Type elem_type) const {
+  if (unit == mlir::ktdf::ComponentType::SFP && elem_type.isF16()) {
+    return 64;
   }
-  llvm::report_fatal_error("Compute unit not supported");
+  llvm::report_fatal_error(
+      "Compute unit and precision combination not supported");
 }
 
 uint64_t SchedulerExtContext::getMaxFifoSlotSize(
