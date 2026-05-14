@@ -515,7 +515,7 @@ mlir::ktdf::PrivateOp ConstructThreeStagePipelinePass::createPrivateOp(
   auto private_op =
       mlir::ktdf::PrivateOp::create(builder, loc, private_result_types);
   Region& private_region = private_op.getRegion();
-  Block* private_body = builder.createBlock(&private_region);
+  Block* private_body = &private_region.front();
   builder.setInsertionPointToStart(private_body);
 
   // Create ktdf.fifo.allocate operations grouped by FIFO type

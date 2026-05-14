@@ -19,6 +19,7 @@ namespace ktdf {
 std::unique_ptr<mlir::Pass> createComputeGroupExtractionPass();
 std::unique_ptr<mlir::Pass> createConstructThreeStagePipelinePass(
     const scheduler::SchedulerExtContext& scheduler_ctx);
+std::unique_ptr<mlir::Pass> createConstructThreeStagePipelinePass();
 std::unique_ptr<mlir::Pass> createTileSCFForLoopsPass();
 std::unique_ptr<mlir::Pass> createStripMineSCFForLoopsPass();
 std::unique_ptr<mlir::Pass> createStageCoarseningPass();
