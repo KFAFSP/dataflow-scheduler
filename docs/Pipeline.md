@@ -221,10 +221,16 @@ module {
             memory_space = #ktdp.spyre_memory_space<HBM>
         } : memref<96x64xf16>
        
-        %offset = arith.muli %start_row_i, %c64 : index            
-        %A = memref.reinterpret_cast %A_view to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16>, memref<1x64xf16>
-        %B = memref.reinterpret_cast %B_view to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16>, memref<1x64xf16>
-        %C = memref.reinterpret_cast %C_view to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16>, memref<1x64xf16>
+        %offset = arith.muli %start_row_i, %c64 : index
+        
+        // Memory space cast: propagate ktdf memory space from construct_memory_view
+        %A_cast = memref.memory_space_cast %A_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+        %B_cast = memref.memory_space_cast %B_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+        %C_cast = memref.memory_space_cast %C_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+        
+        %A = memref.reinterpret_cast %A_cast to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+        %B = memref.reinterpret_cast %B_cast to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+        %C = memref.reinterpret_cast %C_cast to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
         
         scf.for %m = %c0 to %c1 step %c1 {ktdf.loop parallel} {
           scf.for %n = %c0 to %c64 step %c64 {ktdf.loop parallel} {                                                                                                       
@@ -305,10 +311,16 @@ module {
             memory_space = #ktdp.spyre_memory_space<HBM>
         } : memref<96x64xf16>
        
-        %offset = arith.muli %start_row_i, %c64 : index            
-        %A = memref.reinterpret_cast %A_view to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16>, memref<1x64xf16>
-        %B = memref.reinterpret_cast %B_view to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16>, memref<1x64xf16>
-        %C = memref.reinterpret_cast %C_view to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16>, memref<1x64xf16>
+        %offset = arith.muli %start_row_i, %c64 : index
+        
+        // Memory space cast: propagate ktdf memory space from construct_memory_view
+        %A_cast = memref.memory_space_cast %A_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+        %B_cast = memref.memory_space_cast %B_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+        %C_cast = memref.memory_space_cast %C_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+        
+        %A = memref.reinterpret_cast %A_cast to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+        %B = memref.reinterpret_cast %B_cast to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+        %C = memref.reinterpret_cast %C_cast to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
         
         scf.for %m = %c0 to %c1 step %c1 {ktdf.loop parallel} {
           scf.for %n = %c0 to %c64 step %c64 {ktdf.loop parallel} {                                                                                                       
@@ -411,10 +423,16 @@ module {
             memory_space = #ktdp.spyre_memory_space<HBM>
         } : memref<96x64xf16>
        
-        %offset = arith.muli %start_row_i, %c64 : index            
-        %A = memref.reinterpret_cast %A_view to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16>, memref<1x64xf16>
-        %B = memref.reinterpret_cast %B_view to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16>, memref<1x64xf16>
-        %C = memref.reinterpret_cast %C_view to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16>, memref<1x64xf16>
+        %offset = arith.muli %start_row_i, %c64 : index
+        
+        // Memory space cast: propagate ktdf memory space from construct_memory_view
+        %A_cast = memref.memory_space_cast %A_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+        %B_cast = memref.memory_space_cast %B_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+        %C_cast = memref.memory_space_cast %C_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+        
+        %A = memref.reinterpret_cast %A_cast to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+        %B = memref.reinterpret_cast %B_cast to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+        %C = memref.reinterpret_cast %C_cast to offset: [%offset], sizes: [1,64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
         
         scf.for %m0 = %c0 to %M step %Cm {ktdf.loop parallel} {
           scf.for %n0 = %c0 to %N step %Cn {ktdf.loop parallel} {
@@ -535,9 +553,15 @@ module {
     } : memref<96x64xf16>
 
     %offset = arith.muli %start_row_i, %c64 : index
-    %A = memref.reinterpret_cast %A_view to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16>
-    %B = memref.reinterpret_cast %B_view to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16>
-    %C = memref.reinterpret_cast %C_view to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16>
+    
+    // Memory space cast: propagate ktdf memory space from construct_memory_view
+    %A_cast = memref.memory_space_cast %A_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+    %B_cast = memref.memory_space_cast %B_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+    %C_cast = memref.memory_space_cast %C_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+    
+    %A = memref.reinterpret_cast %A_cast to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+    %B = memref.reinterpret_cast %B_cast to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+    %C = memref.reinterpret_cast %C_cast to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
 
     %lx_A0 = memref.alloc(%Cm, %Cn) : memref<?x?xf16, "LX">
     %lx_A1 = memref.alloc(%Cm, %Cn) : memref<?x?xf16, "LX">
@@ -677,9 +701,15 @@ module {
     } : memref<96x64xf16>
 
     %offset = arith.muli %start_row_i, %c64 : index
-    %A = memref.reinterpret_cast %A_view to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16>
-    %B = memref.reinterpret_cast %B_view to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16>
-    %C = memref.reinterpret_cast %C_view to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16>
+    
+    // Memory space cast: propagate ktdf memory space from construct_memory_view
+    %A_cast = memref.memory_space_cast %A_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+    %B_cast = memref.memory_space_cast %B_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+    %C_cast = memref.memory_space_cast %C_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+    
+    %A = memref.reinterpret_cast %A_cast to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+    %B = memref.reinterpret_cast %B_cast to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+    %C = memref.reinterpret_cast %C_cast to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
 
     %lx_A0 = memref.alloc(%Cm, %Cn) {Addr: A0} : memref<?x?xf16, "LX">
     %lx_A1 = memref.alloc(%Cm, %Cn) {Addr: A1} : memref<?x?xf16, "LX">
@@ -813,9 +843,15 @@ module {
     } : memref<96x64xf16>
 
     %offset = arith.muli %start_row_i, %c64 : index
-    %A = memref.reinterpret_cast %A_view to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16>
-    %B = memref.reinterpret_cast %B_view to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16>
-    %C = memref.reinterpret_cast %C_view to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16> to memref<1x64xf16>
+    
+    // Memory space cast: propagate ktdf memory space from construct_memory_view
+    %A_cast = memref.memory_space_cast %A_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+    %B_cast = memref.memory_space_cast %B_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+    %C_cast = memref.memory_space_cast %C_view : memref<96x64xf16> to memref<96x64xf16, #ktdf.memory_space<HBM>>
+    
+    %A = memref.reinterpret_cast %A_cast to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+    %B = memref.reinterpret_cast %B_cast to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
+    %C = memref.reinterpret_cast %C_cast to offset: [%offset], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, #ktdf.memory_space<HBM>> to memref<1x64xf16, #ktdf.memory_space<HBM>>
 
     %lx_A0 = memref.alloc(%Cm, %Cn) {Addr: A0} : memref<?x?xf16, "LX">
     %lx_A1 = memref.alloc(%Cm, %Cn) {Addr: A1} : memref<?x?xf16, "LX">

@@ -44,7 +44,8 @@ struct SchedulerExtContext {
   /// Returns the interface type to the compute unit
   /// @param unit The compute unit type
   /// @return Interface type ("FIFO" or "MEM")
-  std::string getInterfaceToComputeUnit(mlir::ktdf::ComponentType unit) const;
+  std::string getInterfaceMemToComputeUnit(
+      mlir::ktdf::ComponentType unit) const;
 
   /// Returns the FIFO type for load operations
   /// @return FifoType for loads (e.g., HbmToSfp)

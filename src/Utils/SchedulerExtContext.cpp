@@ -40,7 +40,7 @@ uint64_t SchedulerExtContext::getMaxFifoSlotSize(
   llvm::report_fatal_error("Compute unit not supported");
 }
 
-std::string SchedulerExtContext::getInterfaceToComputeUnit(
+std::string SchedulerExtContext::getInterfaceMemToComputeUnit(
     mlir::ktdf::ComponentType unit) const {
   if (unit == mlir::ktdf::ComponentType::SFP) {
     return "FIFO";

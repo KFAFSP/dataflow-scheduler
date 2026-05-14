@@ -593,9 +593,10 @@ void ConstructThreeStagePipelinePass::createPipeline(
   auto private_op = createPrivateOp(builder, innermost_loop.getLoc());
   assert(private_op && "Private op creation failed");
 
-  // Query the interface type to the compute unit
-  std::string interface_type = schedulerExtContext().getInterfaceToComputeUnit(
-      schedulerExtContext().getComputeUnit());
+  // Query the interface type from memory to the compute unit
+  std::string interface_type =
+      schedulerExtContext().getInterfaceMemToComputeUnit(
+          schedulerExtContext().getComputeUnit());
   assert(interface_type == "FIFO" && "Expected FIFO interface type");
 
   // Tokens are at the end: fifo_count + 0, fifo_count + 1, fifo_count + 2
@@ -988,17 +989,44 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
       reinterpret_strides.push_back(builder.getIndexAttr(stride));
     }
 
+    // Get ktdp memory space from construct_memory_view operation attribute
+    auto construct_mem_view =
+        dyn_cast<ktdp::ConstructMemoryViewOp>(memory_view.getDefiningOp());
+    assert(construct_mem_view &&
+           "Memory view must be defined by construct_memory_view operation");
+    Attribute ktdp_memory_space = construct_mem_view.getMemorySpaceAttr();
+
+    // Convert ktdp.spyre_memory_space to ktdf.memory_space
+    Attribute ktdf_memory_space =
+        scheduler::utils::convertKtdpToKtdfMemorySpace(builder,
+                                                       ktdp_memory_space);
+    if (!ktdf_memory_space) {
+      access_tile.emitError(
+          "Failed to convert ktdp memory space to ktdf memory space");
+      signalPassFailure();
+      return;
+    }
+
+    // Create a memref.memory_space_cast to add the KTDF memory space
+    // This propagates the memory space from construct_mem_view to the
+    // reinterpret_cast
+    MemRefType cast_source_type = MemRefType::get(
+        memory_view_type.getShape(), memory_view_type.getElementType(),
+        memory_view_type.getLayout(), ktdf_memory_space);
+    auto memory_space_cast = memref::MemorySpaceCastOp::create(
+        builder, loc, cast_source_type, memory_view);
+
     SmallVector<int64_t> result_shape(tile_dims.begin(), tile_dims.end());
     StridedLayoutAttr strided_layout = StridedLayoutAttr::get(
         builder.getContext(), ShapedType::kDynamic, strides);
     MemRefType result_type =
         MemRefType::get(result_shape, memory_view_type.getElementType(),
-                        strided_layout, memory_view_type.getMemorySpace());
+                        strided_layout, ktdf_memory_space);
 
     OpFoldResult offset_fold_result(offset);
     auto cast_op = memref::ReinterpretCastOp::create(
-        builder, loc, result_type, memory_view, offset_fold_result, sizes,
-        reinterpret_strides);
+        builder, loc, result_type, memory_space_cast.getResult(),
+        offset_fold_result, sizes, reinterpret_strides);
     // Replace access tile with reinterpret_cast
     access_tile.replaceAllUsesWith(cast_op.getResult());
     ops_to_delete_.push_back(access_tile.getOperation());
