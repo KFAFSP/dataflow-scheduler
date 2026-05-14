@@ -4,6 +4,7 @@
 
 // CHECK-IR-PASS-LABEL:     ComputeGroupExtractionPass
 // CHECK-IR-PASS-NEXT:      SymbolDCE
+// CHECK-IR-PASS-LABEL:     ConstructThreeStagePipelinePass
 
 
 module {

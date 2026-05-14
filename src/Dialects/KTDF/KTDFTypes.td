@@ -82,7 +82,7 @@ def KTDF_FifoSlotType : KTDF_Type<"FifoSlot", "fifo.slot"> {
 
     ```
     fifo.slot-type ::= `fifo.slot` `<` fifo-type-string `,` shaped-element-type `>`
-    fifo-type-string ::= `"sfp-to-lxsu"` | `"lxlu-to-sfp"`
+    fifo-type-string ::= `"sfp-to-lxsu"` | `"lxlu-to-sfp"` | `"hbm-to-sfp"` | `"sfp-to-hbm"`
     shaped-element-type ::= (num-elements `x`)? element-type
     num-elements ::= `?` | decimal-literal
     element-type ::= type

@@ -49,7 +49,26 @@ def KTDF_FifoTypeEnum : I32EnumAttr<"FifoType",
     "FIFO connection type",
     [
       I32EnumAttrCase<"SfpToLxsu", 0, "sfp-to-lxsu">,
-      I32EnumAttrCase<"LxluToSfp", 1, "lxlu-to-sfp">
+      I32EnumAttrCase<"LxluToSfp", 1, "lxlu-to-sfp">,
+      I32EnumAttrCase<"HbmToSfp", 2, "hbm-to-sfp">,
+      I32EnumAttrCase<"SfpToHbm", 3, "sfp-to-hbm">
+    ]> {
+  let cppNamespace = "::mlir::ktdf";
+  let genSpecializedAttr = 0;
+}
+
+//===----------------------------------------------------------------------===//
+// Component Type Enum
+//===----------------------------------------------------------------------===//
+
+def KTDF_ComponentTypeEnum : I32EnumAttr<"ComponentType",
+    "Hardware component type",
+    [
+      I32EnumAttrCase<"SFP", 0, "SFP">,
+      I32EnumAttrCase<"LXLU", 1, "LXLU">,
+      I32EnumAttrCase<"LXSU", 2, "LXSU">,
+      I32EnumAttrCase<"L3LU", 3, "L3LU">,
+      I32EnumAttrCase<"L3SU", 4, "L3SU">
     ]> {
   let cppNamespace = "::mlir::ktdf";
   let genSpecializedAttr = 0;

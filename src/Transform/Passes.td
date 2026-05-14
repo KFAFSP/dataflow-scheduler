@@ -11,6 +11,14 @@ def ComputeGroupExtractionPass : Pass<"compute-group-extraction", "mlir::ModuleO
   let constructor = "::ktdf::createComputeGroupExtractionPass()";
 }
 
+def ConstructThreeStagePipelinePass : Pass<"construct-three-stage-pipeline", "mlir::ModuleOp"> {
+  let summary = "Construct a three-stage pipeline";
+  let description = [{
+    This pass constructs a three-stage pipeline.
+  }];
+  let constructor = "::ktdf::createConstructThreeStagePipelinePass()";
+}
+
 def TileSCFForLoopsPass : Pass<"tile-scf-for-loops", "mlir::ModuleOp"> {
   let summary = "Tile perfectly nested scf.for loops";
   let description = [{

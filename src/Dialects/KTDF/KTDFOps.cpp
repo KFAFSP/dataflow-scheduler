@@ -531,29 +531,23 @@ LogicalResult ReadFromFifoOp::verify() {
            << fifo_slot_type.getElementType() << ")";
   }
 
-  // Verify rank is 1 (FIFO slots are 1D)
-  if (result_type.getRank() != 1) {
-    return emitOpError("result tensor must be rank 1, got rank ")
-           << result_type.getRank();
-  }
-
-  // Verify shape matches FIFO slot size
+  // Verify total number of elements matches FIFO slot size
   int64_t fifo_num_elements = fifo_slot_type.getNumElements();
-  int64_t tensor_dim = result_type.getDimSize(0);
+  int64_t tensor_num_elements = result_type.getNumElements();
 
   // Both must be dynamic or both must be static with matching values
   bool fifo_dynamic = ShapedType::isDynamic(fifo_num_elements);
-  bool tensor_dynamic = ShapedType::isDynamic(tensor_dim);
+  bool tensor_dynamic = ShapedType::isDynamic(tensor_num_elements);
 
   if (fifo_dynamic != tensor_dynamic) {
     return emitOpError(
         "FIFO slot and result tensor must both be dynamic or both be static");
   }
 
-  if (!fifo_dynamic && fifo_num_elements != tensor_dim) {
-    return emitOpError("result tensor dimension (")
-           << tensor_dim << ") must match FIFO slot size (" << fifo_num_elements
-           << ")";
+  if (!fifo_dynamic && fifo_num_elements != tensor_num_elements) {
+    return emitOpError("result tensor total elements (")
+           << tensor_num_elements << ") must match FIFO slot size ("
+           << fifo_num_elements << ")";
   }
 
   return success();
@@ -579,29 +573,23 @@ LogicalResult WriteToFifoOp::verify() {
            << fifo_slot_type.getElementType() << ")";
   }
 
-  // Verify rank is 1 (FIFO slots are 1D)
-  if (data_type.getRank() != 1) {
-    return emitOpError("data tensor must be rank 1, got rank ")
-           << data_type.getRank();
-  }
-
-  // Verify shape matches FIFO slot size
+  // Verify total number of elements matches FIFO slot size
   int64_t fifo_num_elements = fifo_slot_type.getNumElements();
-  int64_t tensor_dim = data_type.getDimSize(0);
+  int64_t tensor_num_elements = data_type.getNumElements();
 
   // Both must be dynamic or both must be static with matching values
   bool fifo_dynamic = ShapedType::isDynamic(fifo_num_elements);
-  bool tensor_dynamic = ShapedType::isDynamic(tensor_dim);
+  bool tensor_dynamic = ShapedType::isDynamic(tensor_num_elements);
 
   if (fifo_dynamic != tensor_dynamic) {
     return emitOpError(
         "FIFO slot and data tensor must both be dynamic or both be static");
   }
 
-  if (!fifo_dynamic && fifo_num_elements != tensor_dim) {
-    return emitOpError("data tensor dimension (")
-           << tensor_dim << ") must match FIFO slot size (" << fifo_num_elements
-           << ")";
+  if (!fifo_dynamic && fifo_num_elements != tensor_num_elements) {
+    return emitOpError("data tensor total elements (")
+           << tensor_num_elements << ") must match FIFO slot size ("
+           << fifo_num_elements << ")";
   }
 
   return success();
