@@ -35,6 +35,11 @@ void populateOriginMap(
     mlir::Operation *orig, mlir::Operation *clone,
     llvm::DenseMap<mlir::Operation *, mlir::Operation *> &origin_map) {
   origin_map[orig] = clone;
+  // Assumes the clone was produced by OpBuilder::clone, which preserves
+  // the structural shape (region count, block count, op count per block).
+  // The llvm::zip below would silently truncate if shapes differed, but
+  // that would manifest later as a missing origin_map lookup and a clear
+  // assert in cloneRegionAndPruneToAnchor.
   for (auto region_pair :
        llvm::zip(orig->getRegions(), clone->getRegions())) {
     mlir::Region &orig_region = std::get<0>(region_pair);
