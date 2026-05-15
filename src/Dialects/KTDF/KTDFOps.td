@@ -878,12 +878,10 @@ def KTDF_ParallelYieldOp : KTDF_Op<"parallel_yield", [
   let arguments = (ins);
 
   let assemblyFormat = "attr-dict";
-
-  let builders = [
-    OpBuilder<(ins), [{
-      build($_builder, $_state);
-    }]>
-  ];
+  // No custom builder: the auto-generated `build(OpBuilder&, OperationState&)`
+  // is sufficient for a no-operand, no-result op. A previously-defined custom
+  // OpBuilder<(ins), [{ build($_builder, $_state); }]> recursed into itself
+  // and crashed when invoked via `ParallelYieldOp::create(builder, loc)`.
 }
 
 #endif // KTDF_SRC_DIALECTS_KTDF_OPS_TD
