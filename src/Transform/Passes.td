@@ -126,4 +126,27 @@ def BroadcastPromotionPass : Pass<"broadcast-promotion", "mlir::ModuleOp"> {
   let dependentDialects = ["mlir::ktdf::KTDFDialect", "mlir::scf::SCFDialect"];
 }
 
+def ParallelizeLoopsAcrossInstancesPass
+    : Pass<"parallelize-loops-across-instances", "mlir::ModuleOp"> {
+  let summary = "Map parallel loops onto hardware instances via ktdf.parallel";
+  let description = [{
+    For each ktdf.pipeline whose work is corelet-local (no core-shared
+    units in the union of its immediate stages' applicable_units), find
+    the outermost parallel-annotated scf.for in the pipeline's enclosing
+    scope whose statically-known trip count permits a split across
+    `num_instances` (preferring divisible trips; falling back to imbalanced
+    when none qualifies), and rewrite that scf.for into a ktdf.parallel op
+    with `distribute(num_instances = N)`. `N` is sourced from
+    SchedulerExtContext::getNumCorelets() at pass construction; the
+    pass itself is target-neutral.
+
+    Body legality (cross-iteration dependencies, LX sharing) is trusted
+    via the loop_type=parallel_loop annotation set by upstream lowering.
+    Reduction loops (loop_type=reduction_loop or unannotated) are not
+    candidates.
+  }];
+  let constructor = "::ktdf::createParallelizeLoopsAcrossInstancesPass()";
+  let dependentDialects = ["mlir::ktdf::KTDFDialect", "mlir::scf::SCFDialect"];
+}
+
 #endif // SCHEDULER_TRANSFORM_PASSES
