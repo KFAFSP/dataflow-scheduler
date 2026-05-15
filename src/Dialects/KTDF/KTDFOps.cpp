@@ -635,3 +635,207 @@ void DataTransferOp::build(OpBuilder& builder, OperationState& result,
   build(builder, result, source, source_indices, source_size_values,
         destination, dest_indices, dest_size_values);
 }
+
+//===----------------------------------------------------------------------===//
+// ParallelOp
+//===----------------------------------------------------------------------===//
+
+void ParallelOp::build(::mlir::OpBuilder& builder,
+                       ::mlir::OperationState& state,
+                       ::mlir::ValueRange lower_bounds,
+                       ::mlir::ValueRange upper_bounds,
+                       ::mlir::ValueRange steps,
+                       int64_t num_instances) {
+  state.addOperands(lower_bounds);
+  state.addOperands(upper_bounds);
+  state.addOperands(steps);
+  state.addAttribute("operandSegmentSizes",
+                     builder.getDenseI32ArrayAttr({
+                         static_cast<int32_t>(lower_bounds.size()),
+                         static_cast<int32_t>(upper_bounds.size()),
+                         static_cast<int32_t>(steps.size())}));
+  state.addAttribute("num_instances", builder.getI64IntegerAttr(num_instances));
+
+  // Create the body region with a single block. The block has one index
+  // argument per induction variable plus one trailing instance-id argument.
+  Region* body = state.addRegion();
+  Block& block = body->emplaceBlock();
+  Type index_ty = builder.getIndexType();
+  unsigned num_loops = lower_bounds.size();
+  SmallVector<Type> arg_types(num_loops + 1, index_ty);
+  SmallVector<Location> arg_locs(num_loops + 1, state.location);
+  block.addArguments(arg_types, arg_locs);
+}
+
+ParseResult ParallelOp::parse(OpAsmParser& parser, OperationState& result) {
+  auto& builder = parser.getBuilder();
+  Type index_ty = builder.getIndexType();
+
+  // Parse the block-argument list: `(` %iv1, %iv2, ..., %inst `)`.
+  SmallVector<OpAsmParser::Argument> region_args;
+  if (parser.parseLParen()) {
+    return failure();
+  }
+  if (parser.parseCommaSeparatedList([&]() -> ParseResult {
+        OpAsmParser::Argument arg;
+        if (parser.parseArgument(arg)) {
+          return failure();
+        }
+        arg.type = index_ty;
+        region_args.push_back(arg);
+        return success();
+      })) {
+    return failure();
+  }
+  if (parser.parseRParen()) {
+    return failure();
+  }
+
+  if (region_args.size() < 2) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected at least one induction variable plus an "
+                            "instance id (got ")
+           << region_args.size() << " block arguments)";
+  }
+  unsigned num_loops = region_args.size() - 1;
+
+  // Parse `=` `(` lower_bounds `)`.
+  SmallVector<OpAsmParser::UnresolvedOperand> lbs;
+  if (parser.parseEqual() || parser.parseLParen() ||
+      parser.parseOperandList(lbs, num_loops) || parser.parseRParen()) {
+    return failure();
+  }
+
+  // Parse `to` `(` upper_bounds `)`.
+  SmallVector<OpAsmParser::UnresolvedOperand> ubs;
+  if (parser.parseKeyword("to") || parser.parseLParen() ||
+      parser.parseOperandList(ubs, num_loops) || parser.parseRParen()) {
+    return failure();
+  }
+
+  // Parse `step` `(` steps `)`.
+  SmallVector<OpAsmParser::UnresolvedOperand> steps;
+  if (parser.parseKeyword("step") || parser.parseLParen() ||
+      parser.parseOperandList(steps, num_loops) || parser.parseRParen()) {
+    return failure();
+  }
+
+  // Parse `distribute` `(` `num_instances` `=` integer-literal `)`.
+  if (parser.parseKeyword("distribute") || parser.parseLParen() ||
+      parser.parseKeyword("num_instances") || parser.parseEqual()) {
+    return failure();
+  }
+  int64_t num_instances = 0;
+  if (parser.parseInteger(num_instances)) {
+    return failure();
+  }
+  if (parser.parseRParen()) {
+    return failure();
+  }
+  result.addAttribute("num_instances",
+                      builder.getI64IntegerAttr(num_instances));
+
+  // Resolve operands.
+  if (parser.resolveOperands(lbs, index_ty, result.operands) ||
+      parser.resolveOperands(ubs, index_ty, result.operands) ||
+      parser.resolveOperands(steps, index_ty, result.operands)) {
+    return failure();
+  }
+
+  result.addAttribute("operandSegmentSizes",
+                      builder.getDenseI32ArrayAttr({
+                          static_cast<int32_t>(lbs.size()),
+                          static_cast<int32_t>(ubs.size()),
+                          static_cast<int32_t>(steps.size())}));
+
+  // Parse the region using the named block arguments.
+  Region* body = result.addRegion();
+  if (parser.parseRegion(*body, region_args)) {
+    return failure();
+  }
+
+  // Optional trailing attribute dictionary.
+  if (parser.parseOptionalAttrDict(result.attributes)) {
+    return failure();
+  }
+
+  return success();
+}
+
+void ParallelOp::print(OpAsmPrinter& p) {
+  // Print block-argument list: `(` %iv1, ..., %inst `)`. Block args are all
+  // index-typed by construction (see verify), so we only print the SSA names
+  // here — the parser binds them as index without type annotations, matching
+  // the spec's surface form.
+  p << " (";
+  llvm::interleaveComma(getBody().front().getArguments(), p,
+                        [&](BlockArgument arg) { p.printOperand(arg); });
+  p << ")";
+
+  // Print `= (lbs) to (ubs) step (steps)`.
+  p << " = (";
+  p.printOperands(getLowerBounds());
+  p << ") to (";
+  p.printOperands(getUpperBounds());
+  p << ") step (";
+  p.printOperands(getSteps());
+  p << ")";
+
+  // Print `distribute(num_instances = N)`.
+  p << " distribute(num_instances = " << getNumInstances() << ")";
+
+  // Print the region.
+  p << " ";
+  p.printRegion(getBody(), /*printEntryBlockArgs=*/false,
+                /*printBlockTerminators=*/true);
+
+  // Print remaining attributes (suppress the ones already printed inline).
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes",
+                                           "num_instances"});
+}
+
+LogicalResult ParallelOp::verify() {
+  unsigned num_lbs = getLowerBounds().size();
+  unsigned num_ubs = getUpperBounds().size();
+  unsigned num_steps = getSteps().size();
+
+  if (num_lbs != num_ubs || num_lbs != num_steps) {
+    return emitOpError(
+               "expected matching numbers of lower bounds, upper bounds, and "
+               "steps; got ")
+           << num_lbs << ", " << num_ubs << ", and " << num_steps;
+  }
+
+  if (num_lbs < 1) {
+    return emitOpError("expected at least one induction variable");
+  }
+
+  if (getNumInstances() < 1) {
+    return emitOpError("expected num_instances >= 1, got ") << getNumInstances();
+  }
+
+  Block& block = getBody().front();
+  unsigned expected_args = num_lbs + 1;
+  if (block.getNumArguments() != expected_args) {
+    return emitOpError("expected ")
+           << expected_args
+           << " block arguments (one per induction variable plus the instance "
+              "id), got "
+           << block.getNumArguments();
+  }
+  for (BlockArgument arg : block.getArguments()) {
+    if (!arg.getType().isIndex()) {
+      return emitOpError(
+          "all block arguments (induction variables and instance id) must be "
+          "of type index");
+    }
+  }
+
+  if (block.empty() || !isa<ParallelYieldOp>(block.back())) {
+    return emitOpError(
+        "region must be terminated by a ktdf.parallel_yield operation");
+  }
+
+  return success();
+}

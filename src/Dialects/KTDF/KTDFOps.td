@@ -766,4 +766,124 @@ def KTDF_PrivateOp : KTDF_Op<"private", [
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// Parallel Operation
+//===----------------------------------------------------------------------===//
+
+def KTDF_ParallelOp : KTDF_Op<"parallel", [
+    SingleBlock,
+    AttrSizedOperandSegments
+  ]> {
+  let summary = "N-dim parallel iteration space distributed across hardware instances";
+  let description = [{
+    The `ktdf.parallel` operation expresses an N-dimensional parallel
+    iteration space together with a pure-block distribution of those
+    iterations across `num_instances` hardware instances. It is target
+    agnostic — it does not say whether the instances are corelets, cores,
+    or anything else; lowering binds the distribution axis to a concrete
+    hardware axis.
+
+    The body is a single block whose arguments are, in order:
+      - N induction variables (the iteration coordinates), all `index`.
+      - One trailing instance id, `index`-typed, ranging over
+        `[0, num_instances)`.
+
+    The op produces no SSA results. Control flow falls through after every
+    instance has finished its assigned chunk (implicit barrier).
+
+    ## Distribution semantics
+
+    Iterations enumerate the Cartesian product
+    `[lb_0, ub_0) x ... x [lb_{N-1}, ub_{N-1})` in lex order. With `T`
+    total iterations and `N = num_instances`, the lex enumeration is split
+    into `N` contiguous chunks of size `ceil(T / N)` (with the last chunk
+    holding any leftover). Instance `i` runs chunk `i`. Distribution is
+    always pure block — no cyclic or block-cyclic policy.
+
+    ## Example
+
+    ```mlir
+    ktdf.parallel (%m, %n, %inst) = (%c0, %c0) to (%c32, %c1) step (%c1, %c1)
+                                    distribute(num_instances = 2) {
+      // Body uses %m, %n as induction vars and %inst as the instance id.
+      ktdf.pipeline { /* ... */ }
+      ktdf.parallel_yield
+    }
+    ```
+  }];
+
+  let arguments = (ins
+    Variadic<Index>:$lower_bounds,
+    Variadic<Index>:$upper_bounds,
+    Variadic<Index>:$steps,
+    I64Attr:$num_instances
+  );
+
+  let regions = (region SizedRegion<1>:$body);
+
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+  let skipDefaultBuilders = 1;
+
+  let builders = [
+    OpBuilder<(ins
+      "::mlir::ValueRange":$lowerBounds,
+      "::mlir::ValueRange":$upperBounds,
+      "::mlir::ValueRange":$steps,
+      "int64_t":$numInstances)>
+  ];
+
+  let extraClassDeclaration = [{
+    /// Number of induction variables (== rank of the iteration space).
+    unsigned getNumLoops() {
+      return getLowerBounds().size();
+    }
+
+    /// Block argument for induction variable `dim`.
+    ::mlir::BlockArgument getInductionVar(unsigned dim) {
+      return getBody().front().getArgument(dim);
+    }
+
+    /// Block argument for the trailing instance id.
+    ::mlir::BlockArgument getInstanceId() {
+      return getBody().front().getArgument(getNumLoops());
+    }
+
+    /// The single block forming the body.
+    ::mlir::Block *getBodyBlock() { return &getBody().front(); }
+  }];
+}
+
+def KTDF_ParallelYieldOp : KTDF_Op<"parallel_yield", [
+    Pure,
+    ReturnLike,
+    Terminator,
+    HasParent<"ParallelOp">
+  ]> {
+  let summary = "Terminator for ktdf.parallel regions";
+  let description = [{
+    The `ktdf.parallel_yield` operation is a terminator for `ktdf.parallel`
+    regions. It takes no operands and yields no values; the parent
+    `ktdf.parallel` op produces no SSA results.
+
+    Example:
+    ```mlir
+    ktdf.parallel (%m, %inst) = (%c0) to (%c64) step (%c1)
+                                distribute(num_instances = 2) {
+      ktdf.parallel_yield
+    }
+    ```
+  }];
+
+  let arguments = (ins);
+
+  let assemblyFormat = "attr-dict";
+
+  let builders = [
+    OpBuilder<(ins), [{
+      build($_builder, $_state);
+    }]>
+  ];
+}
+
 #endif // KTDF_SRC_DIALECTS_KTDF_OPS_TD
