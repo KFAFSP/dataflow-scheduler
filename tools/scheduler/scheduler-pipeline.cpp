@@ -46,6 +46,7 @@ void buildKTDPToDFIRPipeline(
   pm.addPass(createComputeGroupExtractionPass());
   pm.addPass(mlir::createSymbolDCEPass());
   pm.addPass(createConstructThreeStagePipelinePass(scheduler_ctx));
+  pm.addPass(createParallelizeLoopsAcrossInstancesPass(scheduler_ctx));
   // todo: pm.addPass(createTileSCFForLoopsPass());
 }
 
