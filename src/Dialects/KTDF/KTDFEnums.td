@@ -65,10 +65,11 @@ def KTDF_ComponentTypeEnum : I32EnumAttr<"ComponentType",
     "Hardware component type",
     [
       I32EnumAttrCase<"SFP", 0, "SFP">,
-      I32EnumAttrCase<"LXLU", 1, "LXLU">,
-      I32EnumAttrCase<"LXSU", 2, "LXSU">,
-      I32EnumAttrCase<"L3LU", 3, "L3LU">,
-      I32EnumAttrCase<"L3SU", 4, "L3SU">
+      I32EnumAttrCase<"PE", 1, "PE">,
+      I32EnumAttrCase<"LXLU", 2, "LXLU">,
+      I32EnumAttrCase<"LXSU", 3, "LXSU">,
+      I32EnumAttrCase<"L3LU", 4, "L3LU">,
+      I32EnumAttrCase<"L3SU", 5, "L3SU">
     ]> {
   let cppNamespace = "::mlir::ktdf";
   let genSpecializedAttr = 0;
