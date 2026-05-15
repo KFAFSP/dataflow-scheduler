@@ -56,6 +56,15 @@ struct SchedulerExtContext {
   /// Returns the FIFO type for store operations
   /// @return FifoType for stores (e.g., SfpToHbm)
   mlir::ktdf::FifoType getFifoTypeStore() const;
+
+  /// Number of hardware instances iterations should be distributed across
+  /// when emitting ktdf.parallel. Spyre = 2 (per corelet).
+  virtual unsigned getNumCorelets() const;
+
+  /// True iff `unit` is a per-corelet unit (LXLU, LXSU, SFP). False for
+  /// core-shared units (L3LU, L3SU). Used to decide whether a pipeline's
+  /// work is corelet-local.
+  virtual bool isPerCoreletUnit(mlir::ktdf::ComponentType unit) const;
 };
 
 /// @brief Construct a DummySchedulerExtContext. In general prefer

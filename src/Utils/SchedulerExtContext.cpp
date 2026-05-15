@@ -59,4 +59,22 @@ mlir::ktdf::FifoType SchedulerExtContext::getFifoTypeStore() const {
   return mlir::ktdf::FifoType::SfpToHbm;
 }
 
+unsigned SchedulerExtContext::getNumCorelets() const {
+  return 2;
+}
+
+bool SchedulerExtContext::isPerCoreletUnit(
+    mlir::ktdf::ComponentType unit) const {
+  switch (unit) {
+    case mlir::ktdf::ComponentType::SFP:
+    case mlir::ktdf::ComponentType::LXLU:
+    case mlir::ktdf::ComponentType::LXSU:
+      return true;
+    case mlir::ktdf::ComponentType::L3LU:
+    case mlir::ktdf::ComponentType::L3SU:
+      return false;
+  }
+  llvm::report_fatal_error("Unknown ComponentType in isPerCoreletUnit");
+}
+
 }  // namespace scheduler
