@@ -463,6 +463,34 @@ Recommended conceptual plan contents:
 - new private resource specifications
 - final rewritten stage DAG
 
+The planner and materializer should have a clear division of responsibilities:
+
+- the planner owns semantic intent
+- the materializer owns SSA creation and IR construction
+
+This means the planner should not create detached or unlinked MLIR operations for future synthetic stages. Instead:
+
+- synthetic stages should first be represented structurally as unmaterialized nodes in the modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp)
+- the planner should attach semantic records that describe how each such stage must be materialized later
+- the materializer should consume those records and create the actual IR in a later step
+
+### Stage modification plans
+
+The planner should maintain an explicit per-stage modification record, referred to here as a `StageModificationPlan`.
+
+Recommended conceptual fields include:
+
+- corresponding final [`StageNode`](../src/Analysis/PipelineTree.hpp:179)
+- modification kind:
+  - preserve original stage body
+  - preserve but adapt transfer endpoints or FIFO kinds
+  - fully synthetic transfer stage
+- optional original template stage op
+- transfer materialization records for stages that contain transfer changes or synthetic transfer bodies
+- any applicable-unit policy needed by materialization
+
+The final [`PipelineTree`](../src/Analysis/PipelineTree.hpp) remains the source of truth for stage order and stage dependencies. The `StageModificationPlan` provides the semantic recipe for what each final stage means.
+
 ### Stage Summaries
 
 Each original stage should have a summary record containing the information needed by the planner.
@@ -485,9 +513,15 @@ Suggested summary contents:
 
 After deciding which stages are preserved, replaced, or inserted, the planner should produce the final stage DAG explicitly on a modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp).
 
-This final DAG is the single source of truth for synchronization during materialization.
+This final DAG is the single source of truth for:
+
+- final stage ordering
+- synchronization during materialization
+- which stages are structurally present in the rewritten pipeline
 
 Old token identities are ignored.
+
+The planner should not duplicate dependency ownership in parallel side structures if the final [`PipelineTree`](../src/Analysis/PipelineTree.hpp) already captures it.
 
 ---
 
@@ -508,7 +542,7 @@ Therefore phase 1 should:
 
 If the chosen path includes additional memory resources not represented by the existing set of stages, the pass must allocate buffers in those intermediate resources.
 
-For the baseline example, path expansion creates new `LX` buffers. 
+For the baseline example, path expansion creates new `LX` buffers.
 
 Expected pattern:
 
@@ -526,6 +560,8 @@ The type, shape and size should be derived from:
 
 For example the `HBM` memref in the `HBM` -> `SFP` data transfer specifies the size/shape/type of the `LX` buffer that is being introduced in the middle.
 
+Planner records for such resources should be symbolic rather than SSA-based. A planned intermediate buffer should be referred to through a planner-owned identifier until materialization creates the corresponding [`ktdf.private`](../src/Dialects/KTDF/KTDFOps.td) result value.
+
 ### FIFO allocation
 
 FIFO slots are allocated only for hops whose graph edge metadata requires them.
@@ -536,6 +572,8 @@ Examples:
 
 - `LX -> SFP` uses `lxlu-to-sfp`
 - `SFP -> LX` uses `sfp-to-lxsu`
+
+As with planned intermediate buffers, planned FIFO resources should be referred to symbolically by the planner until the new [`ktdf.private`](../src/Dialects/KTDF/KTDFOps.td) is materialized and concrete SSA values exist.
 
 ### Tokens
 
@@ -609,23 +647,44 @@ This has two advantages:
 
 The path expansion materializer should:
 
-1. traverse the modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp)
+1. traverse the modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp) in pre-order
 2. recreate the pipeline structure
-3. materialize a new private region
-4. build a mapping from planned private resources to new SSA values
-5. generate fresh tokens from the final stage DAG and link them to depends_in/out clauses of applicable stages.
+3. materialize the new [`ktdf.private`](../src/Dialects/KTDF/KTDFOps.td) when visiting the corresponding private node
+4. record a mapping from planned private-resource identifiers to the newly created SSA values
+5. generate fresh tokens from the final stage DAG and link them to depends_in/out clauses of applicable stages
 6. materialize preserved stage bodies where possible
 7. synthesize new stage bodies for inserted transfer stages
 8. rewrite stage bodies that must change endpoints or FIFO types
 9. erase or replace the original pipeline after the new one is constructed
 
+Because the tree is traversed in pre-order, the private node is visited before later sibling stages in the same pipeline. Therefore stage materialization does not need a separate private-materialization phase. It only needs access to the mappings that were recorded when the private node was materialized.
+
+### Symbolic references before materialization
+
+Some planned stage operands refer to values that do not yet have IR-level SSA form at planning time, such as:
+
+- newly introduced `LX` buffers
+- newly introduced FIFO slots
+- token results created for the rewritten dependency DAG
+
+These should not be represented by detached MLIR operations. Instead the planner should use symbolic references with sufficient semantic information, for example:
+
+- references to existing SSA values when a value already exists in the input IR
+- references to planned private resources when the value will come from the rematerialized [`ktdf.private`](../src/Dialects/KTDF/KTDFOps.td)
+- symbolic references to loop IVs or other dynamic index operands when needed
+
+The materializer then resolves these symbolic references to actual SSA values using the value mappings it has built while walking the tree.
+
 ### Template usage
 
 Unlike stage coarsening, the new materializer may rely less on template operations for some inserted stages.
 
-Inserted stages may require synthetic stage bodies built from plan records rather than pure cloning.
+However, template-derived transfer metadata should be preferred whenever possible. In particular:
 
-However, preserved stages should still be cloned from the original where practical.
+- if a synthetic or modified transfer can be expressed by adapting an existing [`ktdf.data_transfer`](../src/Dialects/KTDF/KTDFOps.td) template, the planner should record that relationship and reuse the template-derived indexing, sizing, and typing information
+- explicit symbolic transfer specifications should only be used when the needed transfer cannot be expressed cleanly as an adaptation of an existing template
+
+Indices and sizes captured for transfer materialization must not assume compile-time constants. The design should support dynamic SSA-defined operands as well.
 
 ---
 
@@ -717,9 +776,10 @@ Note, no need to track new tokens since they will be materialized based on stage
 
 Use the new path-expansion-specific materializer to:
 
-- rematerialize pipeline
-- rematerialize private
+- rematerialize the rewritten pipeline by walking the modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp)
+- materialize the private node when it is visited and record mappings from planned private resources to new SSA values
 - rebuild stage bodies and dependencies
+- resolve planner-owned symbolic references to concrete SSA values during later stage materialization
 
 ---
 
