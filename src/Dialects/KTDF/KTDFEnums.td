@@ -88,21 +88,4 @@ def KTDF_LoopTypeEnum : I32EnumAttr<"LoopType",
   let genSpecializedAttr = 0;
 }
 
-//===----------------------------------------------------------------------===//
-// Applicable Units Enum
-//===----------------------------------------------------------------------===//
-
-def KTDF_ApplicableUnitsEnum : I32EnumAttr<"ApplicableUnits",
-    "KTDF applicable units",
-    [
-      I32EnumAttrCase<"SFP", 0, "SFP">,
-      I32EnumAttrCase<"LXLU", 1, "LXLU">,
-      I32EnumAttrCase<"LXSU", 2, "LXSU">,
-      I32EnumAttrCase<"L3LU", 3, "L3LU">,
-      I32EnumAttrCase<"L3SU", 4, "L3SU">
-    ]> {
-  let cppNamespace = "::mlir::ktdf";
-  let genSpecializedAttr = 0;
-}
-
 #endif // KTDF_ENUMS
