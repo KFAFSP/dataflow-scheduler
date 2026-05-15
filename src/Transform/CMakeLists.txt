@@ -4,6 +4,7 @@ add_public_tablegen_target(SchedulerTransformsPassIncGen)
 
 add_library(SchedulerTransforms
     BroadcastPromotion.cpp
+    Common/ApplicableUnits.cpp
     Common/PipelineScope.cpp
     ComputeGroupExtraction.cpp
     ConstructThreeStagePipeline.cpp
