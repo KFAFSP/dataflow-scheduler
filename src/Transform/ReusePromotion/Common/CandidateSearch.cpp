@@ -19,8 +19,8 @@
 #include "src/Transform/ReusePromotion/Common/CandidateSearch.hpp"
 
 #include "mlir/IR/Operation.h"
+#include "src/Transform/Common/PipelineScope.hpp"
 #include "src/Transform/ReusePromotion/Common/InvarianceCheck.hpp"
-#include "src/Transform/ReusePromotion/Common/PipelineScope.hpp"
 #include "src/Transform/ReusePromotion/Common/WriteSetScan.hpp"
 
 namespace ktdf {
@@ -51,7 +51,7 @@ bool definedInsideRegion(mlir::Value v, mlir::Region& region) {
 /// loop fails. The index doubles as a depth metric: higher = farther
 /// out from the pipeline.
 int findOutermostLegalTargetDepth(mlir::ktdf::DataTransferOp transfer,
-                                  const PipelineEnclosingScope& scope) {
+                                  const ktdf::common::PipelineEnclosingScope& scope) {
   int best = -1;
   for (int i = 0; i < static_cast<int>(scope.loops.size()); ++i) {
     mlir::scf::ForOp loop = scope.loops[i];
@@ -76,7 +76,8 @@ int findOutermostLegalTargetDepth(mlir::ktdf::DataTransferOp transfer,
 }  // namespace
 
 std::optional<Candidate> findFirstCandidate(mlir::ktdf::PipelineOp pipeline) {
-  PipelineEnclosingScope scope = computePipelineEnclosingScope(pipeline);
+  ktdf::common::PipelineEnclosingScope scope =
+      ktdf::common::computePipelineEnclosingScope(pipeline);
   if (scope.loops.empty()) {
     return std::nullopt;
   }

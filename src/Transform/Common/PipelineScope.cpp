@@ -16,13 +16,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "src/Transform/ReusePromotion/Common/PipelineScope.hpp"
+#include "src/Transform/Common/PipelineScope.hpp"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
 
 namespace ktdf {
-namespace reuse {
+namespace common {
 
 namespace {
 
@@ -60,5 +60,5 @@ PipelineEnclosingScope computePipelineEnclosingScope(
   return scope;
 }
 
-}  // namespace reuse
+}  // namespace common
 }  // namespace ktdf

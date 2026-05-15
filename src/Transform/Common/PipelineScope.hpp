@@ -15,18 +15,18 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
-// Pipeline Enclosing Scope computation for reuse-promotion passes.
+// Pipeline Enclosing Scope computation, shared across transform passes.
 //===----------------------------------------------------------------------===//
 
-#ifndef KTIR_SCHEDULER_TRANSFORM_REUSEPROMOTION_PIPELINESCOPE_HPP
-#define KTIR_SCHEDULER_TRANSFORM_REUSEPROMOTION_PIPELINESCOPE_HPP
+#ifndef KTIR_SCHEDULER_TRANSFORM_COMMON_PIPELINESCOPE_HPP
+#define KTIR_SCHEDULER_TRANSFORM_COMMON_PIPELINESCOPE_HPP
 
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 
 namespace ktdf {
-namespace reuse {
+namespace common {
 
 /// The set of scf.for loops enclosing a pipeline, up to the scope boundary.
 /// Elements are ordered innermost-to-outermost (index 0 is the loop directly
@@ -50,7 +50,7 @@ struct PipelineEnclosingScope {
 PipelineEnclosingScope computePipelineEnclosingScope(
     mlir::ktdf::PipelineOp pipeline);
 
-}  // namespace reuse
+}  // namespace common
 }  // namespace ktdf
 
-#endif  // KTIR_SCHEDULER_TRANSFORM_REUSEPROMOTION_PIPELINESCOPE_HPP
+#endif  // KTIR_SCHEDULER_TRANSFORM_COMMON_PIPELINESCOPE_HPP

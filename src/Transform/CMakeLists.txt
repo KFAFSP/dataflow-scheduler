@@ -4,13 +4,13 @@ add_public_tablegen_target(SchedulerTransformsPassIncGen)
 
 add_library(SchedulerTransforms
     BroadcastPromotion.cpp
+    Common/PipelineScope.cpp
     ComputeGroupExtraction.cpp
     ConstructThreeStagePipeline.cpp
     PipelineTree/Legalizer.cpp
     PipelineTree/Materializer.cpp
     ReusePromotion/Common/CandidateSearch.cpp
     ReusePromotion/Common/InvarianceCheck.cpp
-    ReusePromotion/Common/PipelineScope.cpp
     ReusePromotion/Common/RegionClonePrune.cpp
     ReusePromotion/Common/WriteSetScan.cpp
     StageCoarsening/BufferExpansion.cpp
