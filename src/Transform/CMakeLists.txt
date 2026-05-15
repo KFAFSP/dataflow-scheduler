@@ -13,12 +13,12 @@ add_ktir_dialect_library(KTIRSchedulerTransforms
     DoubleBuffering.cpp
     ParallelizeLoopsAcrossInstances.cpp
     PipelineTree/Legalizer.cpp
-    PipelineTree/Materializer.cpp
     ReusePromotion/Common/CandidateSearch.cpp
     ReusePromotion/Common/InvarianceCheck.cpp
     ReusePromotion/Common/RegionClonePrune.cpp
     ReusePromotion/Common/WriteSetScan.cpp
     StageCoarsening/BufferExpansion.cpp
+    StageCoarsening/Materializer.cpp
     StageCoarsening/ScopeCorrection.cpp
     StageCoarsening.cpp
     StripMineSCFForLoops.cpp

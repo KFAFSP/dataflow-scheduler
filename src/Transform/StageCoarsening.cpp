@@ -49,8 +49,8 @@
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
 #include "src/Transform/PipelineTree/Legalizer.hpp"
-#include "src/Transform/PipelineTree/Materializer.hpp"
 #include "src/Transform/StageCoarsening/BufferExpansion.hpp"
+#include "src/Transform/StageCoarsening/Materializer.hpp"
 #include "src/Transform/StageCoarsening/ScopeCorrection.hpp"
 #include "src/Utils/OperationUtils.hpp"
 
@@ -638,9 +638,9 @@ void StageCoarseningPass::GenerateTransformedIR(
     buffer_cloner = &cloner_storage.value();
   }
 
-  // Use the materializer to generate IR from the tree
-  scheduler::PipelineTreeMaterializer materializer(builder, value_map,
-                                                   buffer_cloner);
+  // Use the stage-coarsening materializer to generate IR from the tree
+  scheduler::StageCoarseningMaterializer materializer(builder, value_map,
+                                                      buffer_cloner);
   mlir::Operation* new_outer_pipeline =
       materializer.materialize(*outer_pipeline);
 

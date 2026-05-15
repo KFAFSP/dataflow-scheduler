@@ -35,7 +35,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Value.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
-#include "src/Transform/PipelineTree/Materializer.hpp"
+#include "src/Transform/StageCoarsening/Materializer.hpp"
 
 // Forward declaration
 namespace ktdf {

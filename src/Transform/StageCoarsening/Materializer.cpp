@@ -15,7 +15,7 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
-// Pipeline Tree Materializer Implementation
+// Stage Coarsening Pipeline Tree Materializer Implementation
 //===----------------------------------------------------------------------===//
 
 #include "Materializer.hpp"
@@ -26,10 +26,10 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 
-#define DEBUG_TYPE "pipeline-tree-materializer"
+#define DEBUG_TYPE "stage-coarsening-materializer"
 namespace scheduler {
 
-mlir::Operation* PipelineTreeMaterializer::materialize(
+mlir::Operation* StageCoarseningMaterializer::materialize(
     const PipelineTreeNode& root_node) {
   // Clear any previous materialization state
   node_to_materialized_op_.clear();
@@ -41,13 +41,13 @@ mlir::Operation* PipelineTreeMaterializer::materialize(
   return getMaterializedOp(root_node);
 }
 
-mlir::Operation* PipelineTreeMaterializer::getMaterializedOp(
+mlir::Operation* StageCoarseningMaterializer::getMaterializedOp(
     const PipelineTreeNode& node) const {
   auto it = node_to_materialized_op_.find(&node);
   return it != node_to_materialized_op_.end() ? it->second : nullptr;
 }
 
-void PipelineTreeMaterializer::materializeTreeNode(
+void StageCoarseningMaterializer::materializeTreeNode(
     const PipelineTreeNode& node) {
   // Handle different node types
   if (node.isLoopNode()) {
@@ -67,7 +67,7 @@ void PipelineTreeMaterializer::materializeTreeNode(
   }
 }
 
-void PipelineTreeMaterializer::materializeChildren(
+void StageCoarseningMaterializer::materializeChildren(
     const PipelineTreeNode& parent_node) {
   OperationTreeNode* child = parent_node.getFirstChild();
   while (child) {
@@ -76,7 +76,8 @@ void PipelineTreeMaterializer::materializeChildren(
   }
 }
 
-void PipelineTreeMaterializer::cloneStageBody(mlir::ktdf::StageOp orig_stage) {
+void StageCoarseningMaterializer::cloneStageBody(
+    mlir::ktdf::StageOp orig_stage) {
   mlir::Block* orig_body = &orig_stage.getBody().front();
   for (mlir::Operation& op : *orig_body) {
     if (op.hasTrait<mlir::OpTrait::IsTerminator>()) continue;
@@ -100,12 +101,12 @@ void PipelineTreeMaterializer::cloneStageBody(mlir::ktdf::StageOp orig_stage) {
 /// Helper function to materialize a value by cloning its defining operation
 /// if it's not already in the value map. This handles cases where loop bounds
 /// are computed by arith or affine operations between nested loops.
-mlir::Value PipelineTreeMaterializer::materializeValue(
+mlir::Value StageCoarseningMaterializer::materializeValue(
     mlir::Value value, mlir::Operation* template_op) {
   return value_map_.lookupOrDefault(value);
 }
 
-mlir::scf::ForOp PipelineTreeMaterializer::materializeLoopNode(
+mlir::scf::ForOp StageCoarseningMaterializer::materializeLoopNode(
     const LoopNode& loop_node) {
   // Get the template operation to copy loop bounds from
   mlir::Operation* template_op = loop_node.getOperationOrTemplate();
@@ -144,7 +145,7 @@ mlir::scf::ForOp PipelineTreeMaterializer::materializeLoopNode(
   return new_loop;
 }
 
-mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
+mlir::ktdf::StageOp StageCoarseningMaterializer::materializeStageNode(
     const StageNode& stage_node) {
   // Get the original stage operation (or template for unmaterialized stages)
   mlir::Operation* orig_stage_op = stage_node.getOperationOrTemplate();
@@ -291,7 +292,7 @@ mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
   return new_stage;
 }
 
-mlir::ktdf::PipelineOp PipelineTreeMaterializer::materializePipelineNode(
+mlir::ktdf::PipelineOp StageCoarseningMaterializer::materializePipelineNode(
     const PipelineNode& pipeline_node) {
   // Get the original or template pipeline operation
   mlir::Operation* template_op = pipeline_node.getOperationOrTemplate();
@@ -316,7 +317,7 @@ mlir::ktdf::PipelineOp PipelineTreeMaterializer::materializePipelineNode(
   return new_pipeline;
 }
 
-void PipelineTreeMaterializer::materializePrivateNode(
+void StageCoarseningMaterializer::materializePrivateNode(
     const PrivateNode& private_node) {
   // FIXME: For now, we clone the entire private clause into the parent
   // pipeline. This makes all SSA values from the private clause accessible to
@@ -361,7 +362,7 @@ void PipelineTreeMaterializer::materializePrivateNode(
                                      private_node);
 }
 
-void PipelineTreeMaterializer::materializePrivateNodeFromScratch(
+void StageCoarseningMaterializer::materializePrivateNodeFromScratch(
     const llvm::SmallVector<StageNode*>& stages_with_deps,
     llvm::SmallVector<mlir::Value>& new_tokens) {
   LLVM_DEBUG(llvm::dbgs()
@@ -407,7 +408,7 @@ void PipelineTreeMaterializer::materializePrivateNodeFromScratch(
   builder_.setInsertionPointAfter(new_private);
 }
 
-void PipelineTreeMaterializer::materializePrivateNodeFromTemplate(
+void StageCoarseningMaterializer::materializePrivateNodeFromTemplate(
     mlir::ktdf::PrivateOp orig_private,
     const llvm::SmallVector<StageNode*>& stages_with_deps,
     llvm::SmallVector<mlir::Value>& new_tokens,
@@ -527,7 +528,7 @@ void PipelineTreeMaterializer::materializePrivateNodeFromTemplate(
   node_to_materialized_op_[&private_node] = new_private.getOperation();
 }
 
-void PipelineTreeMaterializer::buildStageToTokenMapping(
+void StageCoarseningMaterializer::buildStageToTokenMapping(
     const llvm::SmallVector<StageNode*>& stages_with_deps,
     mlir::ktdf::PrivateOp new_private, size_t non_token_result_count) {
   // Token results come after non-token results in the new private op

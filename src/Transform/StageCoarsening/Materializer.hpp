@@ -15,15 +15,16 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
-// Pipeline Tree Materializer
+// Stage Coarsening Pipeline Tree Materializer
 //
-// This file defines a materializer for generating MLIR IR from a PipelineTree.
-// The materializer traverses the tree and creates corresponding MLIR operations
-// (loops, pipelines, stages) while maintaining value mappings for SSA values.
+// This file defines a stage-coarsening-specific materializer for generating
+// MLIR IR from a PipelineTree. The materializer traverses the tree and creates
+// corresponding MLIR operations (loops, pipelines, stages) while maintaining
+// value mappings for SSA values.
 //===----------------------------------------------------------------------===//
 
-#ifndef KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_MATERIALIZER_HPP
-#define KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_MATERIALIZER_HPP
+#ifndef KTIR_SCHEDULER_TRANSFORM_STAGECOARSENING_MATERIALIZER_HPP
+#define KTIR_SCHEDULER_TRANSFORM_STAGECOARSENING_MATERIALIZER_HPP
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -80,17 +81,18 @@ class BufferCloner {
 }  // namespace materializer
 
 //===----------------------------------------------------------------------===//
-// Pipeline Tree Materializer
+// Stage Coarsening Pipeline Tree Materializer
 //===----------------------------------------------------------------------===//
 
-/// Materializer class for generating MLIR IR from a PipelineTree
-class PipelineTreeMaterializer {
+/// Materializer class for generating MLIR IR from a PipelineTree for the
+/// stage-coarsening transform.
+class StageCoarseningMaterializer {
  public:
   /// Constructor
   /// \param builder The MLIR builder for creating operations
   /// \param value_map The value mapping for SSA values
   /// \param buffer_cloner Optional cloner for customizing buffer operations
-  PipelineTreeMaterializer(mlir::OpBuilder& builder, mlir::IRMapping& value_map,
+  StageCoarseningMaterializer(mlir::OpBuilder& builder, mlir::IRMapping& value_map,
                            materializer::BufferCloner* buffer_cloner = nullptr)
       : builder_(builder),
         value_map_(value_map),
@@ -178,6 +180,6 @@ class PipelineTreeMaterializer {
 
 }  // namespace scheduler
 
-#endif  // KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_MATERIALIZER_HPP
+#endif  // KTIR_SCHEDULER_TRANSFORM_STAGECOARSENING_MATERIALIZER_HPP
 
 // Made with Bob
