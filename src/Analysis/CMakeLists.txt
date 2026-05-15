@@ -1,4 +1,5 @@
 add_ktir_dialect_library(KTIRSchedulerAnalysis
+  ArchitectureGraph.cpp
   OperationTree.cpp
   PipelineTree.cpp
   StageGrouping.cpp
