@@ -1,9 +1,10 @@
 // RUN: scheduler -allow-unregistered-dialect %s -parallelize-loops-across-instances -debug-only=parallelize-loops-across-instances 2>&1 | FileCheck %s --check-prefix=DEBUG
 
-// DEBUG: imbalanced (fallback)
-// DEBUG-SAME: trip=5
-// DEBUG-SAME: num_instances=2
-// DEBUG-SAME: chunks=3,2
+// Verify debug log emits the imbalanced-fallback line with the exact
+// trip count, num_instances, and the per-instance chunk sizes.
+
+// DEBUG:      [parallelize-loops-across-instances] num_instances=2
+// DEBUG-NEXT: [parallelize-loops-across-instances] imbalanced (fallback) at loc({{.*}}): trip=5, num_instances=2, chunks=3,2
 
 func.func @debug_imbalanced() {
   %c0 = arith.constant 0 : index

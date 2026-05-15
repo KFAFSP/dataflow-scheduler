@@ -3,9 +3,20 @@
 // Pipeline contains only a ktdf.private (no stages). Effective
 // applicable_units is empty. Pipeline is rejected.
 
-// CHECK-LABEL: func.func @no_stages
-// CHECK:         scf.for
-// CHECK-NOT:    ktdf.parallel
+// CHECK-LABEL:   func.func @no_stages() {
+// CHECK-NEXT:      %[[C0:.+]] = arith.constant 0 : index
+// CHECK-NEXT:      %[[C1:.+]] = arith.constant 1 : index
+// CHECK-NEXT:      %[[C4:.+]] = arith.constant 4 : index
+// CHECK-NEXT:      scf.for %[[IV:[a-zA-Z0-9_]+]] = %[[C0]] to %[[C4]] step %[[C1]] {
+// CHECK-NEXT:        ktdf.pipeline {
+// CHECK-NEXT:          %[[YIELDED:[a-zA-Z0-9_]+]] = ktdf.private -> (!ktdf.token) {
+// CHECK-NEXT:            %[[T:[a-zA-Z0-9_]+]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:            ktdf.private_yield %[[T]] : !ktdf.token
+// CHECK-NEXT:          }
+// CHECK-NEXT:        }
+// CHECK-NEXT:      } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK-NEXT:      return
+// CHECK-NEXT:    }
 
 func.func @no_stages() {
   %c0 = arith.constant 0 : index

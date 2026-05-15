@@ -2,10 +2,14 @@
 
 // Pipeline at function top-level, no scf.for parents. No candidate.
 
-// CHECK-LABEL: func.func @no_scope
-// CHECK:         ktdf.pipeline {
-// CHECK-NOT:    ktdf.parallel
-// CHECK:         }
+// CHECK-LABEL:   func.func @no_scope() {
+// CHECK-NEXT:      ktdf.pipeline {
+// CHECK-NEXT:        ktdf.stage depends_in(none) depends_out(none) {
+// CHECK-NEXT:          "test.body"() : () -> ()
+// CHECK-NEXT:        } {applicable_units = #ktdf.applicable_units<[SFP]>}
+// CHECK-NEXT:      }
+// CHECK-NEXT:      return
+// CHECK-NEXT:    }
 
 func.func @no_scope() {
   ktdf.pipeline {

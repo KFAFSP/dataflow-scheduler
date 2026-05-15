@@ -1,8 +1,10 @@
 // RUN: scheduler -allow-unregistered-dialect %s -parallelize-loops-across-instances -debug-only=parallelize-loops-across-instances 2>&1 | FileCheck %s --check-prefix=DEBUG
 
-// DEBUG: balanced candidate
-// DEBUG-SAME: trip=4
-// DEBUG-SAME: num_instances=2
+// Verify debug log emits the balanced-candidate line with the exact
+// trip count and num_instances.
+
+// DEBUG:      [parallelize-loops-across-instances] num_instances=2
+// DEBUG-NEXT: [parallelize-loops-across-instances] balanced candidate at loc({{.*}}): trip=4, num_instances=2
 
 func.func @debug_balanced() {
   %c0 = arith.constant 0 : index

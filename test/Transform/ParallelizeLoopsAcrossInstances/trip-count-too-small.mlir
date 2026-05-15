@@ -2,10 +2,18 @@
 
 // Trip count 1 (less than num_instances=2). No candidate.
 
-// CHECK-LABEL: func.func @trip_too_small
-// CHECK:         scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
-// CHECK-NOT:    ktdf.parallel
-// CHECK:         } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK-LABEL:   func.func @trip_too_small() {
+// CHECK-NEXT:      %[[C0:.+]] = arith.constant 0 : index
+// CHECK-NEXT:      %[[C1:.+]] = arith.constant 1 : index
+// CHECK-NEXT:      scf.for %[[IV:[a-zA-Z0-9_]+]] = %[[C0]] to %[[C1]] step %[[C1]] {
+// CHECK-NEXT:        ktdf.pipeline {
+// CHECK-NEXT:          ktdf.stage depends_in(none) depends_out(none) {
+// CHECK-NEXT:            "test.body"(%[[IV]]) : (index) -> ()
+// CHECK-NEXT:          } {applicable_units = #ktdf.applicable_units<[SFP]>}
+// CHECK-NEXT:        }
+// CHECK-NEXT:      } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK-NEXT:      return
+// CHECK-NEXT:    }
 
 func.func @trip_too_small() {
   %c0 = arith.constant 0 : index

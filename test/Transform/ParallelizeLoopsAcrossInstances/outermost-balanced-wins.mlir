@@ -3,13 +3,23 @@
 // Two parallel loops in scope, both divisible by 2. Outermost (trip 4) wins;
 // inner (trip 8) remains an scf.for inside the parallel body.
 
-// CHECK-LABEL: func.func @outermost_wins
-// CHECK:         ktdf.parallel (%[[OUT:[a-zA-Z0-9_]+]], %[[INST:[a-zA-Z0-9_]+]]) = (%{{.*}}) to (%{{.*}}) step (%{{.*}}) distribute(num_instances = 2) {
-// CHECK:           scf.for %[[IN:[a-zA-Z0-9_]+]] = %{{.*}} to %{{.*}} step %{{.*}} {
-// CHECK:             "test.body"(%[[OUT]], %[[IN]]) : (index, index) -> ()
-// CHECK:           } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK:           ktdf.parallel_yield
-// CHECK:         }
+// CHECK-LABEL:   func.func @outermost_wins() {
+// CHECK-NEXT:      %[[C0:.+]] = arith.constant 0 : index
+// CHECK-NEXT:      %[[C1:.+]] = arith.constant 1 : index
+// CHECK-NEXT:      %[[C4:.+]] = arith.constant 4 : index
+// CHECK-NEXT:      %[[C8:.+]] = arith.constant 8 : index
+// CHECK-NEXT:      ktdf.parallel (%[[OUT:[a-zA-Z0-9_]+]], %[[INST:[a-zA-Z0-9_]+]]) = (%[[C0]]) to (%[[C4]]) step (%[[C1]]) distribute(num_instances = 2) {
+// CHECK-NEXT:        scf.for %[[IN:[a-zA-Z0-9_]+]] = %[[C0]] to %[[C8]] step %[[C1]] {
+// CHECK-NEXT:          ktdf.pipeline {
+// CHECK-NEXT:            ktdf.stage depends_in(none) depends_out(none) {
+// CHECK-NEXT:              "test.body"(%[[OUT]], %[[IN]]) : (index, index) -> ()
+// CHECK-NEXT:            } {applicable_units = #ktdf.applicable_units<[SFP]>}
+// CHECK-NEXT:          }
+// CHECK-NEXT:        } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK-NEXT:        ktdf.parallel_yield
+// CHECK-NEXT:      }
+// CHECK-NEXT:      return
+// CHECK-NEXT:    }
 
 func.func @outermost_wins() {
   %c0 = arith.constant 0 : index

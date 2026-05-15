@@ -2,13 +2,22 @@
 
 // Two runs back-to-back. Second run finds no scf.for to transform (the
 // new ktdf.parallel is not an scf.for), so output is identical to a single
-// run. Verify exactly one ktdf.parallel header appears (the open-paren
-// suffix disambiguates from ktdf.parallel_yield in the body).
+// run.
 
-// CHECK-LABEL: func.func @idempotent
-// CHECK:         ktdf.parallel (
-// CHECK-NOT:    ktdf.parallel (
-// CHECK:         return
+// CHECK-LABEL:   func.func @idempotent() {
+// CHECK-NEXT:      %[[C0:.+]] = arith.constant 0 : index
+// CHECK-NEXT:      %[[C1:.+]] = arith.constant 1 : index
+// CHECK-NEXT:      %[[C4:.+]] = arith.constant 4 : index
+// CHECK-NEXT:      ktdf.parallel (%[[IV:[a-zA-Z0-9_]+]], %[[INST:[a-zA-Z0-9_]+]]) = (%[[C0]]) to (%[[C4]]) step (%[[C1]]) distribute(num_instances = 2) {
+// CHECK-NEXT:        ktdf.pipeline {
+// CHECK-NEXT:          ktdf.stage depends_in(none) depends_out(none) {
+// CHECK-NEXT:            "test.body"(%[[IV]]) : (index) -> ()
+// CHECK-NEXT:          } {applicable_units = #ktdf.applicable_units<[SFP]>}
+// CHECK-NEXT:        }
+// CHECK-NEXT:        ktdf.parallel_yield
+// CHECK-NEXT:      }
+// CHECK-NEXT:      return
+// CHECK-NEXT:    }
 
 func.func @idempotent() {
   %c0 = arith.constant 0 : index
