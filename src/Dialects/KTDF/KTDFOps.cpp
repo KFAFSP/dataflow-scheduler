@@ -832,6 +832,9 @@ LogicalResult ParallelOp::verify() {
     }
   }
 
+  // The custom parser's parseRegion already enforces a terminator, so this
+  // check fires only when the op is constructed via the generic op form or
+  // programmatically without a terminator.
   if (block.empty() || !isa<ParallelYieldOp>(block.back())) {
     return emitOpError(
         "region must be terminated by a ktdf.parallel_yield operation");
