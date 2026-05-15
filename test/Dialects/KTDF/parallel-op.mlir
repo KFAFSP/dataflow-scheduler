@@ -102,3 +102,67 @@ func.func @parallel_inside_coarsened_stage() {
   }
   return
 }
+
+// CHECK-LABEL:   func.func @parallel_with_loops_body
+// CHECK:           ktdf.parallel (%[[M:[a-zA-Z0-9_]+]], %[[INST:[a-zA-Z0-9_]+]]) = (%{{.*}}) to (%{{.*}}) step (%{{.*}}) distribute(num_instances = 2) {
+// CHECK-NEXT:        scf.for %[[I:[a-zA-Z0-9_]+]] = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK-NEXT:          scf.for %[[J:[a-zA-Z0-9_]+]] = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK-NEXT:            "test.body"(%[[M]], %[[I]], %[[J]], %[[INST]]) : (index, index, index, index) -> ()
+// CHECK-NEXT:          }
+// CHECK-NEXT:        }
+// CHECK-NEXT:        ktdf.parallel_yield
+// CHECK-NEXT:      }
+
+func.func @parallel_with_loops_body() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %c8 = arith.constant 8 : index
+  %c32 = arith.constant 32 : index
+  ktdf.parallel (%m, %inst) = (%c0) to (%c32) step (%c1)
+                              distribute(num_instances = 2) {
+    scf.for %i = %c0 to %c4 step %c1 {
+      scf.for %j = %c0 to %c8 step %c1 {
+        "test.body"(%m, %i, %j, %inst) : (index, index, index, index) -> ()
+      }
+    }
+    ktdf.parallel_yield
+  }
+  return
+}
+
+// CHECK-LABEL:   func.func @parallel_with_pipeline_body
+// CHECK:           %[[T:[a-zA-Z0-9_]+]] = ktdf.create_token : !ktdf.token
+// CHECK:           ktdf.parallel (%[[M:[a-zA-Z0-9_]+]], %[[INST:[a-zA-Z0-9_]+]]) = (%{{.*}}) to (%{{.*}}) step (%{{.*}}) distribute(num_instances = 2) {
+// CHECK-NEXT:        ktdf.pipeline {
+// CHECK-NEXT:          ktdf.stage depends_in(none) depends_out(%[[T]] : !ktdf.token) {
+// CHECK-NEXT:            "test.stage_a_body"(%[[M]], %[[INST]]) : (index, index) -> ()
+// CHECK-NEXT:          }
+// CHECK-NEXT:          ktdf.stage depends_in(%[[T]] : !ktdf.token) depends_out(none) {
+// CHECK-NEXT:            "test.stage_b_body"() : () -> ()
+// CHECK-NEXT:          }
+// CHECK-NEXT:        }
+// CHECK-NEXT:        ktdf.parallel_yield
+// CHECK-NEXT:      }
+
+func.func @parallel_with_pipeline_body() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c32 = arith.constant 32 : index
+
+  %t = ktdf.create_token : !ktdf.token
+
+  ktdf.parallel (%m, %inst) = (%c0) to (%c32) step (%c1)
+                              distribute(num_instances = 2) {
+    ktdf.pipeline {
+      ktdf.stage depends_in(none) depends_out(%t : !ktdf.token) {
+        "test.stage_a_body"(%m, %inst) : (index, index) -> ()
+      }
+      ktdf.stage depends_in(%t : !ktdf.token) depends_out(none) {
+        "test.stage_b_body"() : () -> ()
+      }
+    }
+    ktdf.parallel_yield
+  }
+  return
+}
