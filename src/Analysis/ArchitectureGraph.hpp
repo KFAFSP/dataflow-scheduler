@@ -29,6 +29,7 @@
 #include <optional>
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
@@ -38,7 +39,9 @@ namespace scheduler {
 
 class ArchitectureGraph {
  public:
-  enum class ResourceNodeKind {
+  using NodeId = unsigned;
+
+  enum class ResourceKind {
     Memory,
     Compute,
   };
@@ -56,13 +59,13 @@ class ArchitectureGraph {
   };
 
   struct ResourceNode {
+    NodeId id;
     Resource resource;
-    ResourceNodeKind node_kind;
   };
 
   struct EdgeInfo {
-    Resource source;
-    Resource target;
+    NodeId source;
+    NodeId target;
     EdgeKind edge_kind;
     std::optional<mlir::ktdf::ComponentType>
         transfer_unit;  // load-store unit if applicable
@@ -70,35 +73,36 @@ class ArchitectureGraph {
     unsigned cost = 1;
   };
 
-  using Path = llvm::SmallVector<Resource>;
-  using NeighborList = llvm::SmallVector<Resource>;
+  using Path = llvm::SmallVector<NodeId>;
+  using NeighborList = llvm::SmallVector<NodeId>;
   using EdgeList = llvm::SmallVector<EdgeInfo>;
 
   ArchitectureGraph() = default;
 
   static ArchitectureGraph createBuiltInSpyre();
 
-  void addNode(const ResourceNode &node);
+  NodeId addNode(Resource resource);
   void addEdge(const EdgeInfo &edge_info);
 
-  bool hasNode(Resource resource) const;
-  std::optional<ResourceNode> getNode(Resource resource) const;
+  bool hasNode(NodeId node_id) const;
+  std::optional<ResourceNode> getNode(NodeId node_id) const;
 
-  NeighborList getNeighbors(Resource resource) const;
-  std::optional<EdgeInfo> getEdgeInfo(Resource source, Resource target) const;
-  std::optional<Path> findShortestPath(Resource source,
-                                       Resource target) const;
+  NeighborList getNeighbors(NodeId node_id) const;
+  std::optional<EdgeInfo> getEdgeInfo(NodeId source, NodeId target) const;
+  std::optional<Path> findShortestPath(NodeId source, NodeId target) const;
 
   void dump(llvm::raw_ostream &os) const;
 
   static llvm::StringRef stringifyResource(Resource resource);
-  static llvm::StringRef stringifyNodeKind(ResourceNodeKind node_kind);
+  static llvm::StringRef stringifyResourceKind(ResourceKind kind);
   static llvm::StringRef stringifyEdgeKind(EdgeKind edge_kind);
 
  private:
-  llvm::SmallVector<ResourceNode> nodes_;
-  llvm::DenseMap<Resource, ResourceNodeKind> node_kinds_;
-  llvm::DenseMap<Resource, EdgeList> adjacency_;
+  static ResourceKind getResourceKind(Resource resource);
+
+  NodeId next_node_id_ = 0;
+  llvm::MapVector<NodeId, ResourceNode> nodes_;
+  llvm::DenseMap<NodeId, EdgeList> adjacency_;
 };
 
 }  // namespace scheduler

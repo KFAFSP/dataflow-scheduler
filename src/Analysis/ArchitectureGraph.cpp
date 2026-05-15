@@ -44,39 +44,35 @@ namespace scheduler {
 ArchitectureGraph ArchitectureGraph::createBuiltInSpyre() {
   ArchitectureGraph graph;
 
-  graph.addNode({Resource::HBM, ResourceNodeKind::Memory});
-  graph.addNode({Resource::LX, ResourceNodeKind::Memory});
-  graph.addNode({Resource::SFP, ResourceNodeKind::Compute});
-  graph.addNode({Resource::PE, ResourceNodeKind::Compute});
+  NodeId hbm_node = graph.addNode(Resource::HBM);
+  NodeId lx_node = graph.addNode(Resource::LX);
+  NodeId sfp_node = graph.addNode(Resource::SFP);
+  NodeId pe_node = graph.addNode(Resource::PE);
 
-  graph.addEdge({Resource::HBM, Resource::LX, EdgeKind::StorageTransfer,
+  graph.addEdge({hbm_node, lx_node, EdgeKind::StorageTransfer,
                  mlir::ktdf::ComponentType::L3LU, std::nullopt, 1});
-  graph.addEdge({Resource::LX, Resource::HBM, EdgeKind::StorageTransfer,
+  graph.addEdge({lx_node, hbm_node, EdgeKind::StorageTransfer,
                  mlir::ktdf::ComponentType::L3SU, std::nullopt, 1});
-  graph.addEdge({Resource::LX, Resource::SFP, EdgeKind::StreamingTransfer,
+  graph.addEdge({lx_node, sfp_node, EdgeKind::StreamingTransfer,
                  mlir::ktdf::ComponentType::LXLU,
                  mlir::ktdf::FifoType::LxluToSfp, 1});
-  graph.addEdge({Resource::SFP, Resource::LX, EdgeKind::StreamingTransfer,
+  graph.addEdge({sfp_node, lx_node, EdgeKind::StreamingTransfer,
                  mlir::ktdf::ComponentType::LXSU,
                  mlir::ktdf::FifoType::SfpToLxsu, 1});
 
   // Longer alternate route retained for future shortest-path testing.
-  graph.addEdge({Resource::SFP, Resource::PE, EdgeKind::StreamingTransfer,
-                 std::nullopt,
-                 std::nullopt,  // todo: add fifo type
-                 1});
-  graph.addEdge({Resource::PE, Resource::LX, EdgeKind::StreamingTransfer,
-                 std::nullopt,
-                 std::nullopt,  // todo: add fifo type
-                 1});
+  graph.addEdge({sfp_node, pe_node, EdgeKind::StreamingTransfer, std::nullopt,
+                 std::nullopt, 1});
+  graph.addEdge({pe_node, lx_node, EdgeKind::StreamingTransfer, std::nullopt,
+                 std::nullopt, 1});
 
   return graph;
 }
 
-void ArchitectureGraph::addNode(const ResourceNode& node) {
-  if (hasNode(node.resource)) return;
-  nodes_.push_back(node);
-  node_kinds_[node.resource] = node.node_kind;
+ArchitectureGraph::NodeId ArchitectureGraph::addNode(Resource resource) {
+  NodeId node_id = next_node_id_++;
+  nodes_.insert({node_id, {node_id, resource}});
+  return node_id;
 }
 
 void ArchitectureGraph::addEdge(const EdgeInfo& edge_info) {
@@ -97,24 +93,21 @@ void ArchitectureGraph::addEdge(const EdgeInfo& edge_info) {
   adjacency_[edge_info.source].push_back(edge_info);
 }
 
-bool ArchitectureGraph::hasNode(Resource resource) const {
-  return node_kinds_.contains(resource);
+bool ArchitectureGraph::hasNode(NodeId node_id) const {
+  return nodes_.count(node_id) != 0;
 }
 
 std::optional<ArchitectureGraph::ResourceNode> ArchitectureGraph::getNode(
-    Resource resource) const {
-  auto it = std::find_if(nodes_.begin(), nodes_.end(),
-                         [resource](const ResourceNode& node) {
-                           return node.resource == resource;
-                         });
+    NodeId node_id) const {
+  auto it = nodes_.find(node_id);
   if (it == nodes_.end()) return std::nullopt;
-  return *it;
+  return it->second;
 }
 
 ArchitectureGraph::NeighborList ArchitectureGraph::getNeighbors(
-    Resource resource) const {
+    NodeId node_id) const {
   NeighborList neighbors;
-  auto it = adjacency_.find(resource);
+  auto it = adjacency_.find(node_id);
   if (it == adjacency_.end()) return neighbors;
 
   for (const EdgeInfo& edge : it->second) {
@@ -124,7 +117,7 @@ ArchitectureGraph::NeighborList ArchitectureGraph::getNeighbors(
 }
 
 std::optional<ArchitectureGraph::EdgeInfo> ArchitectureGraph::getEdgeInfo(
-    Resource source, Resource target) const {
+    NodeId source, NodeId target) const {
   auto it = adjacency_.find(source);
   if (it == adjacency_.end()) return std::nullopt;
 
@@ -135,24 +128,24 @@ std::optional<ArchitectureGraph::EdgeInfo> ArchitectureGraph::getEdgeInfo(
 }
 
 std::optional<ArchitectureGraph::Path> ArchitectureGraph::findShortestPath(
-    Resource source, Resource target) const {
+    NodeId source, NodeId target) const {
   if (!hasNode(source) || !hasNode(target)) return std::nullopt;
 
-  std::queue<Resource> worklist;
-  llvm::DenseMap<Resource, Resource> predecessor;
-  llvm::DenseMap<Resource, bool> visited;
+  std::queue<NodeId> worklist;
+  llvm::DenseMap<NodeId, NodeId> predecessor;
+  llvm::DenseMap<NodeId, bool> visited;
 
   worklist.push(source);
   visited[source] = true;
 
   while (!worklist.empty()) {
-    Resource current = worklist.front();
+    NodeId current = worklist.front();
     worklist.pop();
 
     if (current == target) break;
 
     auto neighbors = getNeighbors(current);
-    for (Resource neighbor : neighbors) {
+    for (NodeId neighbor : neighbors) {
       if (visited.lookup(neighbor)) continue;
       visited[neighbor] = true;
       predecessor[neighbor] = current;
@@ -163,7 +156,7 @@ std::optional<ArchitectureGraph::Path> ArchitectureGraph::findShortestPath(
   if (!visited.lookup(target)) return std::nullopt;
 
   Path reversed_path;
-  Resource current = target;
+  NodeId current = target;
   reversed_path.push_back(current);
 
   while (current != source) {
@@ -184,18 +177,25 @@ std::optional<ArchitectureGraph::Path> ArchitectureGraph::findShortestPath(
 void ArchitectureGraph::dump(llvm::raw_ostream& os) const {
   os << "ArchitectureGraph {\n";
   os << "  Nodes:\n";
-  for (const ResourceNode& node : nodes_) {
-    os << "    - " << stringifyResource(node.resource) << " ["
-       << stringifyNodeKind(node.node_kind) << "]\n";
+  for (const auto& [node_id, node] : nodes_) {
+    os << "    - " << node_id << ": " << stringifyResource(node.resource)
+       << " [" << stringifyResourceKind(getResourceKind(node.resource))
+       << "]\n";
   }
 
   os << "  Edges:\n";
-  for (const ResourceNode& node : nodes_) {
-    auto it = adjacency_.find(node.resource);
+  for (const auto& [node_id, node] : nodes_) {
+    auto it = adjacency_.find(node_id);
     if (it == adjacency_.end()) continue;
     for (const EdgeInfo& edge : it->second) {
-      os << "    - " << stringifyResource(edge.source) << " -> "
-         << stringifyResource(edge.target) << " ["
+      auto source_node = getNode(edge.source);
+      auto target_node = getNode(edge.target);
+      assert(source_node && target_node &&
+             "edge endpoint must reference a node");
+
+      os << "    - " << edge.source << ": "
+         << stringifyResource(source_node->resource) << " -> " << edge.target
+         << ": " << stringifyResource(target_node->resource) << " ["
          << stringifyEdgeKind(edge.edge_kind);
       if (edge.transfer_unit) {
         os << ", transfer_unit="
@@ -224,15 +224,27 @@ llvm::StringRef ArchitectureGraph::stringifyResource(Resource resource) {
   llvm_unreachable("unknown ArchitectureGraph::Resource");
 }
 
-llvm::StringRef ArchitectureGraph::stringifyNodeKind(
-    ResourceNodeKind node_kind) {
-  switch (node_kind) {
-    case ResourceNodeKind::Memory:
+ArchitectureGraph::ResourceKind ArchitectureGraph::getResourceKind(
+    Resource resource) {
+  switch (resource) {
+    case Resource::HBM:
+    case Resource::LX:
+      return ResourceKind::Memory;
+    case Resource::SFP:
+    case Resource::PE:
+      return ResourceKind::Compute;
+  }
+  llvm_unreachable("unknown ArchitectureGraph::Resource");
+}
+
+llvm::StringRef ArchitectureGraph::stringifyResourceKind(ResourceKind kind) {
+  switch (kind) {
+    case ResourceKind::Memory:
       return "Memory";
-    case ResourceNodeKind::Compute:
+    case ResourceKind::Compute:
       return "Compute";
   }
-  llvm_unreachable("unknown ArchitectureGraph::ResourceNodeKind");
+  llvm_unreachable("unknown ArchitectureGraph::ResourceKind");
 }
 
 llvm::StringRef ArchitectureGraph::stringifyEdgeKind(EdgeKind edge_kind) {
