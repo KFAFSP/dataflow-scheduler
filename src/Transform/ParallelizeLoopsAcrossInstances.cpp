@@ -140,8 +140,7 @@ std::optional<std::pair<scf::ForOp, int64_t>> selectLoop(
     unsigned num_instances) {
   // Pass 1: trip >= N and trip % N == 0.
   auto balanced = firstMatching(
-      scope_loops_innermost_first,
-      [num_instances](scf::ForOp, int64_t trip) {
+      scope_loops_innermost_first, [num_instances](scf::ForOp, int64_t trip) {
         return trip >= static_cast<int64_t>(num_instances) &&
                trip % static_cast<int64_t>(num_instances) == 0;
       });
@@ -149,11 +148,10 @@ std::optional<std::pair<scf::ForOp, int64_t>> selectLoop(
     return balanced;
   }
   // Pass 2: trip >= N (drop divisibility).
-  return firstMatching(
-      scope_loops_innermost_first,
-      [num_instances](scf::ForOp, int64_t trip) {
-        return trip >= static_cast<int64_t>(num_instances);
-      });
+  return firstMatching(scope_loops_innermost_first,
+                       [num_instances](scf::ForOp, int64_t trip) {
+                         return trip >= static_cast<int64_t>(num_instances);
+                       });
 }
 
 std::optional<Candidate> findCandidate(
@@ -161,18 +159,18 @@ std::optional<Candidate> findCandidate(
     const scheduler::SchedulerExtContext& ctx) {
   // Step 1+2: applicable_units.
   if (!allUnitsAreCoreletLocal(pipeline, ctx)) {
-    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] skip pipeline at "
-                            << pipeline.getLoc()
-                            << ": empty or non-corelet applicable_units\n");
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()
+               << ": empty or non-corelet applicable_units\n");
     return std::nullopt;
   }
 
   // Step 3: enclosing scope.
   auto scope = ::ktdf::common::computePipelineEnclosingScope(pipeline);
   if (scope.loops.empty()) {
-    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] skip pipeline at "
-                            << pipeline.getLoc()
-                            << ": no enclosing scf.for scope\n");
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()
+               << ": no enclosing scf.for scope\n");
     return std::nullopt;
   }
 
@@ -180,10 +178,10 @@ std::optional<Candidate> findCandidate(
   unsigned num_instances = ctx.getNumCorelets();
   auto picked = selectLoop(scope.loops, num_instances);
   if (!picked.has_value()) {
-    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] skip pipeline at "
-                            << pipeline.getLoc()
-                            << ": no parallel loop in scope satisfies trip >= "
-                            << num_instances << "\n");
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()
+               << ": no parallel loop in scope satisfies trip >= "
+               << num_instances << "\n");
     return std::nullopt;
   }
   scf::ForOp loop = picked->first;
@@ -194,9 +192,8 @@ std::optional<Candidate> findCandidate(
     int64_t chunk = (trip + num_instances - 1) / num_instances;
     int64_t leftover = trip - (num_instances - 1) * chunk;
     LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "] imbalanced (fallback) at "
-               << loop.getLoc() << ": trip=" << trip
-               << ", num_instances=" << num_instances
+               << "[" PASS_NAME "] imbalanced (fallback) at " << loop.getLoc()
+               << ": trip=" << trip << ", num_instances=" << num_instances
                << ", chunks=" << chunk << "," << leftover << "\n");
   } else {
     LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] balanced candidate at "
@@ -234,9 +231,9 @@ void rewrite(const Candidate& c, unsigned num_instances) {
 
   // Splice the old body (excluding the trailing scf.yield terminator) into
   // the new ktdf.parallel body.
-  new_body->getOperations().splice(
-      new_body->begin(), old_body->getOperations(), old_body->begin(),
-      std::prev(old_body->end()));
+  new_body->getOperations().splice(new_body->begin(), old_body->getOperations(),
+                                   old_body->begin(),
+                                   std::prev(old_body->end()));
 
   // RAUW the original IV with the new parallel's first block argument.
   Value new_iv = parallel.getInductionVar(0);
@@ -272,11 +269,12 @@ struct ParallelizeLoopsAcrossInstancesPass
     ModuleOp module = getOperation();
     unsigned num_instances = scheduler_ctx_.getNumCorelets();
 
-    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] num_instances="
-                            << num_instances << "\n");
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "] num_instances=" << num_instances << "\n");
 
     if (num_instances < 2) {
-      LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] num_instances < 2; "
+      LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME
+                                 "] num_instances < 2; "
                                  "no-op\n");
       return;
     }

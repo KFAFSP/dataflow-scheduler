@@ -59,9 +59,7 @@ mlir::ktdf::FifoType SchedulerExtContext::getFifoTypeStore() const {
   return mlir::ktdf::FifoType::SfpToHbm;
 }
 
-unsigned SchedulerExtContext::getNumCorelets() const {
-  return 2;
-}
+unsigned SchedulerExtContext::getNumCorelets() const { return 2; }
 
 bool SchedulerExtContext::isPerCoreletUnit(
     mlir::ktdf::ComponentType unit) const {

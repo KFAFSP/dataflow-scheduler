@@ -50,8 +50,9 @@ bool definedInsideRegion(mlir::Value v, mlir::Region& region) {
 /// loop where every condition still holds, or -1 if even the innermost
 /// loop fails. The index doubles as a depth metric: higher = farther
 /// out from the pipeline.
-int findOutermostLegalTargetDepth(mlir::ktdf::DataTransferOp transfer,
-                                  const ktdf::common::PipelineEnclosingScope& scope) {
+int findOutermostLegalTargetDepth(
+    mlir::ktdf::DataTransferOp transfer,
+    const ktdf::common::PipelineEnclosingScope& scope) {
   int best = -1;
   for (int i = 0; i < static_cast<int>(scope.loops.size()); ++i) {
     mlir::scf::ForOp loop = scope.loops[i];
