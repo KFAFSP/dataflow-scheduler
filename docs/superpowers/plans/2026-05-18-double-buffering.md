@@ -51,9 +51,8 @@
 
 | Path | Action | Responsibility |
 |---|---|---|
-| `src/Dialects/KTDF/KTDFAttributes.td` | Modify | Add `KTDF_ModuloAttr` (struct attribute, `size : i64`). |
-| `src/Dialects/KTDF/KTDFOps.td` | Modify | Add `OptionalAttr<KTDF_ModuloAttr>:$modulo` on `KTDF_PipelineOp`. Add `KTDF_BufferPhaseOp` and `KTDF_SelectMemrefOp`. |
-| `src/Dialects/KTDF/KTDFOps.cpp` | Modify | Verifier extensions for `PipelineOp` (modulo size check). New verifier bodies for `BufferPhaseOp` and `SelectMemrefOp`. |
+| `src/Dialects/KTDF/KTDFOps.td` | Modify | Add `OptionalAttr<I64Attr>:$modulo` on `KTDF_PipelineOp`. Add `KTDF_BufferPhaseOp` and `KTDF_SelectMemrefOp`. |
+| `src/Dialects/KTDF/KTDFOps.cpp` | Modify | Verifier extension for `PipelineOp` (modulo size >= 2 check). New verifier bodies for `BufferPhaseOp` and `SelectMemrefOp`. |
 | `src/Utils/SchedulerExtContext.h` | Modify | Declare `virtual bool isEligibleForDoubleBuffering(mlir::ktdf::MemorySpace) const;`. |
 | `src/Utils/SchedulerExtContext.cpp` | Modify | Implement default body returning `mspace == MemorySpace::LX`. |
 | `src/Transform/Passes.td` | Modify | Add `def DoubleBufferingPass`. |
@@ -68,108 +67,20 @@
 
 ---
 
-## Task 1: Add `KTDF_ModuloAttr` (struct attribute) to the KTDF dialect
+## Task 1: Add `modulo` (I64Attr) as optional attribute on `ktdf.pipeline`
 
-**Goal:** Define a custom struct attribute `#ktdf.modulo<size = N>` with one `i64` field, addable as an `OptionalAttr` on `ktdf.pipeline`. No op uses it yet — we just want the attribute to parse, print, and round-trip.
+**Goal:** Add `OptionalAttr<I64Attr>:$modulo` to `ktdf.pipeline`, with a declarative assembly format that wraps the integer in `modulo(size: N)` syntax. Add a verifier check (`size >= 2`). Add round-trip + verifier-failure tests. Existing pipelines without `modulo` must round-trip identically.
 
-**Files:**
-- Modify: `src/Dialects/KTDF/KTDFAttributes.td`
-- Test: `test/Dialects/KTDF/pipeline-modulo-attr.mlir` (created in Task 2)
-
-- [ ] **Step 1: Open `src/Dialects/KTDF/KTDFAttributes.td` and append the new attribute definition**
-
-Append immediately before `#endif // KTDF_SRC_DIALECTS_KTDF_ATTRIBUTES_TD` (i.e., after `KTDF_ApplicableUnitsCustomAttr`):
-
-```tablegen
-//===----------------------------------------------------------------------===//
-// ModuloAttr
-//===----------------------------------------------------------------------===//
-
-def KTDF_ModuloAttr : KTDF_Attr<"Modulo", "modulo"> {
-  let summary = "KTDF pipeline rolling-window depth";
-  let description = [{
-    The `modulo` attribute declares the rolling-window depth of a
-    `ktdf.pipeline`. A pipeline with `modulo(size: N)` rotates through `N`
-    physical resource sets (e.g., double-buffered LX memrefs) per `N`
-    consecutive iterations, allowing producer of iteration `k+1` and
-    consumer of iteration `k` to reference different physical buffers and
-    run concurrently.
-
-    Syntax:
-    ```
-    modulo-attr ::= `modulo` `<` `size` `=` integer-literal `>`
-    ```
-
-    Example:
-    ```mlir
-    ktdf.pipeline modulo(size: 2) { ... }
-    ```
-  }];
-
-  let parameters = (ins "int64_t":$size);
-
-  let assemblyFormat = "`<` `size` `=` $size `>`";
-
-  let genVerifyDecl = 1;
-}
-```
-
-- [ ] **Step 2: Add the verifier body to `KTDFOps.cpp`**
-
-Append at the end of `src/Dialects/KTDF/KTDFOps.cpp`, after the `ParallelOp::verify` body. Add the include for the attribute storage if needed (already included via the dialect's generated `.cpp.inc`).
-
-```cpp
-//===----------------------------------------------------------------------===//
-// ModuloAttr
-//===----------------------------------------------------------------------===//
-
-::mlir::LogicalResult ModuloAttr::verify(
-    ::llvm::function_ref<::mlir::InFlightDiagnostic()> emit_error,
-    int64_t size) {
-  if (size < 2) {
-    return emit_error() << "modulo size must be >= 2, got " << size;
-  }
-  return ::mlir::success();
-}
-```
-
-- [ ] **Step 3: Build to confirm it compiles**
-
-```bash
-ninja -C build
-```
-
-Expected: clean build. The attribute is generated under `mlir::ktdf::ModuloAttr` but is not yet attached to any op. Compilation success means the TableGen ran cleanly.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add src/Dialects/KTDF/KTDFAttributes.td src/Dialects/KTDF/KTDFOps.cpp
-git commit -m "$(cat <<'EOF'
-Add ktdf.modulo attribute for pipeline rolling-window depth
-
-Defines KTDF_ModuloAttr with a single int64 size field and a verifier
-requiring size >= 2. Will be attached to ktdf.pipeline as an optional
-attribute in a follow-up commit.
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
-EOF
-)"
-```
-
----
-
-## Task 2: Attach `modulo` as an optional attribute on `ktdf.pipeline`
-
-**Goal:** Add `OptionalAttr<KTDF_ModuloAttr>:$modulo` to `KTDF_PipelineOp`. Existing IR (no `modulo`) must round-trip identically; new IR (with `modulo`) must round-trip and reject `size < 2`.
+We're using a plain `I64Attr` (not a custom struct attribute) because the wrapper syntax `modulo(size: N)` is supplied by the op's assembly format — there's no need for a separate attribute type. This keeps the dialect simpler and avoids attribute-printing mismatches between standalone and op-wrapped forms.
 
 **Files:**
 - Modify: `src/Dialects/KTDF/KTDFOps.td`
+- Modify: `src/Dialects/KTDF/KTDFOps.cpp`
 - Test: `test/Dialects/KTDF/pipeline-modulo-attr.mlir`
 
 - [ ] **Step 1: Modify `KTDF_PipelineOp` in `KTDFOps.td`**
 
-Locate `def KTDF_PipelineOp` (around line 347 in `KTDFOps.td`). Replace the `let regions = ...` line and the `let assemblyFormat = "$body attr-dict";` line with the modulo-aware versions. The full op definition becomes:
+Locate `def KTDF_PipelineOp` (around line 347 in `KTDFOps.td`). Replace the op definition with the modulo-aware version. The full definition becomes:
 
 ```tablegen
 def KTDF_PipelineOp : KTDF_Op<"pipeline", [
@@ -206,7 +117,7 @@ def KTDF_PipelineOp : KTDF_Op<"pipeline", [
   }];
 
   let arguments = (ins
-    OptionalAttr<KTDF_ModuloAttr>:$modulo
+    OptionalAttr<I64Attr>:$modulo
   );
 
   let regions = (region SizedRegion<1>:$body);
@@ -232,60 +143,65 @@ def KTDF_PipelineOp : KTDF_Op<"pipeline", [
 
     StageRange getStages();
     unsigned getNumStages();
-  }];
-}
-```
-
-Note: the assembly form `modulo(size: <attr>)` uses TableGen's `^` to mark `$modulo` as the trigger for the optional group. The attribute prints/parses as just its `int64_t` value inside that wrapper, not the full `<size = N>` form (TableGen prints the parameter directly when the assembly format provides surrounding syntax).
-
-If TableGen's optional-group printing requires the bare attribute (not its custom assembly), we may instead need a custom assembly format. As a fallback, replace the `assemblyFormat` line with:
-
-```tablegen
-  let hasCustomAssemblyFormat = 1;
-```
-
-…and add custom `parse`/`print` static members in the `extraClassDeclaration` plus their bodies in `KTDFOps.cpp`. **Try the declarative form first**; only fall back if the build fails with a TableGen error about the optional-group format.
-
-- [ ] **Step 2: Build to confirm**
-
-```bash
-ninja -C build
-```
-
-Expected: clean build. If TableGen complains about the optional group, switch to `hasCustomAssemblyFormat = 1` and implement `PipelineOp::parse` / `PipelineOp::print` in `KTDFOps.cpp` mirroring the pattern used by `StageOp::parse` / `StageOp::print` (KTDFOps.cpp lines 194–288).
-
-- [ ] **Step 3: Add a `getModuloSize()` helper**
-
-Edit the `extraClassDeclaration` in `KTDF_PipelineOp` to add the helper. Replace:
-
-```tablegen
-    StageRange getStages();
-    unsigned getNumStages();
-```
-
-with:
-
-```tablegen
-    StageRange getStages();
-    unsigned getNumStages();
 
     /// Returns the modulo size if the modulo attribute is set, otherwise
     /// returns std::nullopt.
     std::optional<int64_t> getModuloSize() {
       if (auto m = getModuloAttr()) {
-        return m.getSize();
+        return m.getInt();
       }
       return std::nullopt;
     }
+  }];
+}
 ```
 
-- [ ] **Step 4: Update `PipelineOp::verify` to be unchanged**
+Notes:
+- `getModuloAttr()` is auto-generated by ODS and returns `mlir::IntegerAttr` (since the underlying type is `I64Attr`). Hence `m.getInt()` returns the `int64_t` value.
+- The assembly format uses TableGen's `^` to mark `$modulo` as the trigger for the optional group. Inside the group, the integer prints as just its bare value (`2`), not as a typed attribute (`2 : i64`) — TableGen's optional-group syntax handles this for `I64Attr`. If the build fails because of an optional-group printing issue, see the fallback below.
 
-The `PipelineOp::verify` body in `KTDFOps.cpp` (lines 175-188) already only checks immediate children. The optional `modulo` attribute's own verifier (Task 1, Step 2) handles `size >= 2`. No changes here.
+**Fallback (only if the declarative format fails to compile or produces unexpected output):** switch to `let hasCustomAssemblyFormat = 1;` and implement `PipelineOp::parse` and `PipelineOp::print` in `KTDFOps.cpp`, mirroring the StageOp parse/print pattern (`KTDFOps.cpp` ~lines 194–288). The printer emits ` modulo(size: N)` only when `getModuloAttr()` is set; the parser accepts an optional `modulo(size: <int>)` clause then the body region. The verifier (Step 2) handles size validation regardless of which path you choose — do NOT duplicate the size check inside `parse`.
 
-- [ ] **Step 5: Write round-trip + negative test**
+- [ ] **Step 2: Add the `size >= 2` verifier check to `PipelineOp::verify` in `KTDFOps.cpp`**
 
-Create `test/Dialects/KTDF/pipeline-modulo-attr.mlir`:
+Locate `LogicalResult PipelineOp::verify()` in `KTDFOps.cpp` (around line 175). Append the modulo check before `return success();`. The full body becomes:
+
+```cpp
+LogicalResult PipelineOp::verify() {
+  // Verify that all immediate children are StageOp or PrivateOp
+  Block* body = getBodyBlock();
+  for (Operation& op : body->getOperations()) {
+    if (!isa<StageOp, PrivateOp>(op)) {
+      return emitOpError(
+                 "immediate children of pipeline must be ktdf.stage or "
+                 "ktdf.private operations, found '")
+             << op.getName() << "'";
+    }
+  }
+
+  // If the optional modulo attribute is present, its size must be >= 2.
+  if (auto m = getModuloAttr()) {
+    int64_t size = m.getInt();
+    if (size < 2) {
+      return emitOpError("modulo size must be >= 2, got ") << size;
+    }
+  }
+
+  return success();
+}
+```
+
+- [ ] **Step 3: Build to confirm**
+
+```bash
+ninja -C build
+```
+
+Expected: clean build. If TableGen complains about the optional group's printing of `I64Attr`, fall back to `hasCustomAssemblyFormat = 1` per Step 1's fallback note.
+
+- [ ] **Step 4: Create the round-trip + verifier-failure test**
+
+Create `test/Dialects/KTDF/pipeline-modulo-attr.mlir`. The stage bodies need a non-empty region (an empty `{}` after `depends_in/depends_out` causes the verifier to reject the stage with "region with 1 blocks"). Put a trivial op inside each — `arith.constant 0 : index` works.
 
 ```mlir
 // RUN: scheduler %s | scheduler | FileCheck %s
@@ -295,12 +211,14 @@ Create `test/Dialects/KTDF/pipeline-modulo-attr.mlir`:
 // CHECK-LABEL:   func.func @pipeline_no_modulo
 // CHECK:           ktdf.pipeline {
 // CHECK-NEXT:        ktdf.stage depends_in(none) depends_out(none) {
+// CHECK-NEXT:          arith.constant 0 : index
 // CHECK-NEXT:        }
 // CHECK-NEXT:      }
 
 func.func @pipeline_no_modulo() {
   ktdf.pipeline {
     ktdf.stage depends_in(none) depends_out(none) {
+      %c0 = arith.constant 0 : index
     }
   }
   return
@@ -312,12 +230,14 @@ func.func @pipeline_no_modulo() {
 // CHECK-LABEL:   func.func @pipeline_modulo_2
 // CHECK:           ktdf.pipeline modulo(size : 2) {
 // CHECK-NEXT:        ktdf.stage depends_in(none) depends_out(none) {
+// CHECK-NEXT:          arith.constant 0 : index
 // CHECK-NEXT:        }
 // CHECK-NEXT:      }
 
 func.func @pipeline_modulo_2() {
   ktdf.pipeline modulo(size: 2) {
     ktdf.stage depends_in(none) depends_out(none) {
+      %c0 = arith.constant 0 : index
     }
   }
   return
@@ -325,14 +245,14 @@ func.func @pipeline_modulo_2() {
 
 // -----
 
-// Round-trip: pipeline with modulo(size: 4) — N>2 still parses (the dialect
-// op does not reject this; only the transformation pass hardcodes 2).
+// Round-trip: pipeline with modulo(size: 4) — N>2 still parses.
 // CHECK-LABEL:   func.func @pipeline_modulo_4
 // CHECK:           ktdf.pipeline modulo(size : 4) {
 
 func.func @pipeline_modulo_4() {
   ktdf.pipeline modulo(size: 4) {
     ktdf.stage depends_in(none) depends_out(none) {
+      %c0 = arith.constant 0 : index
     }
   }
   return
@@ -345,42 +265,48 @@ func.func @pipeline_modulo_too_small() {
   // expected-error @+1 {{modulo size must be >= 2}}
   ktdf.pipeline modulo(size: 1) {
     ktdf.stage depends_in(none) depends_out(none) {
+      %c0 = arith.constant 0 : index
     }
   }
   return
 }
 ```
 
-If your `assemblyFormat` for the optional group prints `modulo(size : N)` with a space, the `CHECK` lines above are correct. If it prints `modulo(size: N)`, change those `CHECK` lines accordingly. Run the file once after build to discover the actual printer output, then commit the matching expectations.
+**Important** — the `CHECK` lines anticipate that the printer might emit `modulo(size : 2)` (with a space before `:`) or `modulo(size: 2)` (no space). After running the test, if FileCheck fails because the actual printer output uses different spacing, regenerate the affected `CHECK:` lines from `build/scheduler/bin/scheduler test/Dialects/KTDF/pipeline-modulo-attr.mlir`. Do NOT change the input MLIR's spacing (keep it as `modulo(size: 2)` in the input — the parser must accept both).
 
-- [ ] **Step 6: Run the test**
+- [ ] **Step 5: Run the tests**
 
 ```bash
 build/scheduler/bin/scheduler test/Dialects/KTDF/pipeline-modulo-attr.mlir | /Users/prasanth-work/Documents/code/external/llvm-standalone-3/build/bin/FileCheck test/Dialects/KTDF/pipeline-modulo-attr.mlir
 build/scheduler/bin/scheduler -split-input-file -verify-diagnostics test/Dialects/KTDF/pipeline-modulo-attr.mlir
 ```
 
-Expected: both pass. If the printer's spacing differs, regenerate the `CHECK` lines from `build/scheduler/bin/scheduler test/Dialects/KTDF/pipeline-modulo-attr.mlir` output and re-commit.
+Expected: both pass.
 
-- [ ] **Step 7: Run the full lit suite to confirm no existing test broke**
+If the round-trip fails because of printer spacing mismatch, use `build/scheduler/bin/scheduler test/Dialects/KTDF/pipeline-modulo-attr.mlir` to inspect actual output, regenerate matching CHECK lines, and re-run. (The input MLIR uses `modulo(size: 2)`; the printer may emit `modulo(size : 2)` — both are valid as long as the round-trip is stable.)
+
+If the verify-diagnostics test fails because the size check is being raised at parse time (not verify time), make sure the size check lives ONLY in `PipelineOp::verify` (Step 2) and NOT inside any custom `parse` you wrote. Parse must accept `size: 1` syntactically; the verifier rejects it semantically.
+
+- [ ] **Step 6: Run the full lit suite**
 
 ```bash
 ninja -C build check-scheduler
 ```
 
-Expected: all green. Existing tests that don't set `modulo` on `ktdf.pipeline` must still parse and print identically (no `modulo(size: ...)` injected by the printer when the attribute is absent).
+Expected: all green. Existing tests that don't set `modulo` on `ktdf.pipeline` must continue to parse, print, and verify identically.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/Dialects/KTDF/KTDFOps.td src/Dialects/KTDF/KTDFOps.cpp test/Dialects/KTDF/pipeline-modulo-attr.mlir
 git commit -m "$(cat <<'EOF'
-Attach optional modulo attribute to ktdf.pipeline
+Add optional modulo attribute on ktdf.pipeline
 
-Existing pipelines without modulo continue to round-trip identically.
-With modulo(size: N), the pipeline declares a rolling-window depth of
-N. The dialect op accepts any N >= 2; the upcoming -double-buffering
-pass uses N = 2.
+Uses a plain I64Attr (not a custom struct attribute) — the wrapper
+syntax modulo(size: N) is supplied by the op's assembly format. The
+verifier rejects size < 2. Existing pipelines without modulo continue
+to round-trip identically. The dialect op accepts any size >= 2; the
+upcoming -double-buffering pass uses size = 2.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF

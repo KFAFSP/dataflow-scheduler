@@ -69,9 +69,9 @@ The optimization unlocks asynchrony that the access-execute-decoupled hardware a
 ktdf.pipeline modulo(size: 2) { ... }
 ```
 
-- New custom attribute `ModuloAttr` with one named field `size : i64`.
-- Attached to `ktdf.pipeline` as `OptionalAttr<ModuloAttr>`.
-- **Verifier (when present):** `size >= 2`.
+- Attached to `ktdf.pipeline` as `OptionalAttr<I64Attr>:$modulo` (a plain integer attribute — no custom struct attribute is introduced).
+- The op's assembly format wraps the integer in `modulo(size: N)` syntax; absent ⇒ no clause is printed.
+- **Verifier (when present):** `size >= 2`. Implemented in `PipelineOp::verify`.
 - **Semantics:** declares the pipeline's rolling-window depth. With `size: N`, the pipeline rotates through N physical resource sets per N consecutive iterations.
 - **Optional**: existing IR and tests without `modulo` parse, print, and verify identically — no migration required.
 
