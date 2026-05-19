@@ -907,16 +907,16 @@ def KTDF_BufferPhaseOp : KTDF_Op<"buffer_phase", [Pure]> {
     iteration count modulo `num_phases`.
 
     The operation takes one or more `index` operands; each operand must be the
-    induction variable of an enclosing `scf.for`. The bounds and step of those
-    loops are obtained by walking each operand to its `scf.for` parent.
+    induction variable of an `scf.for` (the verifier enforces this).
 
-    Semantics:
+    Intended semantics (to be enforced by the lowering pass that consumes
+    this op):
     ```
     phase = linearized_pipeline_iteration_count % num_phases
     ```
     where the linearized count is the global iteration index of the pipeline
-    over its enclosing loop nest (computed from each operand IV's
-    `(iv - lb) / step` and the trip counts of inner loops).
+    over its enclosing loop nest. The lowering pass is responsible for
+    deriving each operand IV's bounds and step from its enclosing `scf.for`.
 
     Example:
     ```mlir

@@ -872,12 +872,8 @@ LogicalResult BufferPhaseOp::verify() {
       return emitOpError("operand #")
              << idx << " is not an scf.for induction variable";
     }
-    Block* owner_block = block_arg.getOwner();
-    if (!owner_block) {
-      return emitOpError("operand #") << idx << " has no owning block";
-    }
     auto for_op =
-        llvm::dyn_cast_or_null<scf::ForOp>(owner_block->getParentOp());
+        llvm::dyn_cast_or_null<scf::ForOp>(block_arg.getOwner()->getParentOp());
     if (!for_op || for_op.getInductionVar() != iv) {
       return emitOpError("operand #")
              << idx << " is not an scf.for induction variable";
