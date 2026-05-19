@@ -678,6 +678,95 @@ void ConstructThreeStagePipelinePass::cleanupOperations() {
   }
 }
 
+// Find the linalg operand fed by `tensor_value` (directly or through a
+// tensor.extract_slice) and return its matching indexing_map. Returns
+// std::nullopt if no such operand is found.
+static std::optional<AffineMap> findIndexingMapForLoadResult(
+    linalg::LinalgOp linalg_op, Value tensor_value) {
+  for (Value v : {tensor_value}) {
+    for (Operation* user : v.getUsers()) {
+      if (user == linalg_op.getOperation()) {
+        for (OpOperand& operand : user->getOpOperands()) {
+          if (operand.get() == v)
+            return linalg_op.getMatchingIndexingMap(&operand);
+        }
+      }
+      if (auto extract = dyn_cast<tensor::ExtractSliceOp>(user)) {
+        for (Operation* eu : extract.getResult().getUsers()) {
+          if (eu == linalg_op.getOperation()) {
+            for (OpOperand& operand : eu->getOpOperands()) {
+              if (operand.get() == extract.getResult())
+                return linalg_op.getMatchingIndexingMap(&operand);
+            }
+          }
+        }
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+// For a store, find the linalg DPS init operand whose value flows into the
+// store's tensor input (directly or through a tensor.insert_slice) and return
+// its matching indexing_map. Returns std::nullopt if not found.
+static std::optional<AffineMap> findIndexingMapForStoreSource(
+    linalg::LinalgOp linalg_op, Value tensor_value) {
+  Value v = tensor_value;
+  if (auto insert = v.getDefiningOp<tensor::InsertSliceOp>())
+    v = insert.getSource();
+  for (int64_t i = 0, e = linalg_op->getNumResults(); i < e; ++i) {
+    if (linalg_op->getResult(i) == v) {
+      OpOperand* init = linalg_op.getDpsInitOperand(i);
+      return linalg_op.getMatchingIndexingMap(init);
+    }
+  }
+  return std::nullopt;
+}
+
+// Project loop_ivs and tile_sizes through indexing_map to produce one entry
+// per result dim of the map. Indices are computed via affine::expandAffineMap
+// (handles arbitrary affine expressions). Sizes are taken directly from
+// tile_sizes when the map result is a single AffineDimExpr (a projection); on
+// non-projection results emits an error and returns failure.
+static LogicalResult projectIvsAndSizesThroughIndexingMap(
+    OpBuilder& builder, Location loc, AffineMap indexing_map,
+    ValueRange loop_ivs, ArrayRef<int64_t> tile_sizes,
+    SmallVectorImpl<Value>& projected_indices,
+    SmallVectorImpl<int64_t>& projected_sizes,
+    function_ref<InFlightDiagnostic()> emit_error) {
+  assert(indexing_map.getNumSymbols() == 0 &&
+         "linalg indexing maps are expected to have no symbols");
+  assert(indexing_map.getNumDims() == loop_ivs.size() &&
+         indexing_map.getNumDims() == tile_sizes.size() &&
+         "indexing map dims must match the iteration-space rank");
+
+  std::optional<SmallVector<Value, 8>> expanded =
+      affine::expandAffineMap(builder, loc, indexing_map, loop_ivs);
+  if (!expanded) {
+    std::string buf;
+    llvm::raw_string_ostream os(buf);
+    indexing_map.print(os);
+    emit_error() << "failed to expand operand indexing map " << buf;
+    return failure();
+  }
+  projected_indices.assign(expanded->begin(), expanded->end());
+
+  for (AffineExpr result : indexing_map.getResults()) {
+    auto dim = dyn_cast<AffineDimExpr>(result);
+    if (!dim) {
+      std::string buf;
+      llvm::raw_string_ostream os(buf);
+      result.print(os);
+      emit_error()
+          << "operand indexing map has a non-projection result expression ("
+          << buf << "); only single-dim projections are supported";
+      return failure();
+    }
+    projected_sizes.push_back(tile_sizes[dim.getPosition()]);
+  }
+  return success();
+}
+
 void ConstructThreeStagePipelinePass::createDataTransfers(
     OpBuilder& builder, Location loc, mlir::ktdf::PrivateOp private_op,
     ArrayRef<int64_t> tile_sizes, bool is_load, size_t private_result_offset) {
@@ -703,26 +792,57 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
                                     schedulerExtContext().getComputeUnit()) &&
          "FIFO slot size exceeds maximum allowed size for compute unit");
 
+  // The post-fusion linalg op whose indexing_maps describe how each load/store
+  // operand maps onto the iteration space.
+  assert(compute_ops_.size() == 1 &&
+         "expected exactly one linalg compute op after fusion");
+  linalg::LinalgOp linalg_op = compute_ops_[0];
+
   // Create data_transfer for each operation
   for (size_t i = 0; i < op_count; ++i) {
-    // Get the access_tile value (operand of load/store op)
+    // Get the access_tile value (operand of load/store op) and the linalg
+    // indexing map for the matching operand.
     Value access_tile_value;
-
+    std::optional<AffineMap> indexing_map;
+    Operation* err_anchor;
     if (is_load) {
       ktdp::LoadOp load_op = load_ops_[i];
       access_tile_value = load_op.getOperand();
+      err_anchor = load_op.getOperation();
+      indexing_map =
+          findIndexingMapForLoadResult(linalg_op, load_op.getResult());
     } else {
       ktdp::StoreOp store_op = store_ops_[i];
       access_tile_value = store_op.getOperation()->getOperand(1);
+      err_anchor = store_op.getOperation();
+      indexing_map = findIndexingMapForStoreSource(
+          linalg_op, store_op.getOperation()->getOperand(0));
+    }
+
+    if (!indexing_map) {
+      err_anchor->emitError(
+          "could not locate matching linalg operand to project loop IVs and "
+          "tile sizes through; the data_transfer rank would not match the "
+          "underlying memref");
+      signalPassFailure();
+      return;
+    }
+
+    // Project loop IVs and tile_sizes through the operand's indexing map so
+    // that the resulting data_transfer indices/sizes have one entry per
+    // source-memref dimension instead of one per iteration-space dimension.
+    SmallVector<Value> access_tile_indices;
+    SmallVector<int64_t> access_tile_sizes;
+    if (failed(projectIvsAndSizesThroughIndexingMap(
+            builder, loc, *indexing_map, loop_ivs, tile_sizes,
+            access_tile_indices, access_tile_sizes,
+            [&]() { return err_anchor->emitError(); }))) {
+      signalPassFailure();
+      return;
     }
 
     // Get the FIFO slot from ktdf.private results
     Value fifo_slot = private_op.getResult(private_result_offset + i);
-
-    // Prepare indices and sizes for access_tile
-    SmallVector<Value> access_tile_indices(loop_ivs.begin(), loop_ivs.end());
-    SmallVector<int64_t> access_tile_sizes(tile_sizes.begin(),
-                                           tile_sizes.end());
 
     // Create data_transfer with direction based on is_load
     // Use access_tile_value which will be replaced with reinterpret_cast later
