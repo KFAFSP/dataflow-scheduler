@@ -76,23 +76,23 @@ It answers:
 
 ### 2. Plan first, materialize last
 
-The transformation should separate analysis from IR transformation:
+The transformation separates analysis from IR mutation:
 
-- collect sufficient analysis and rewrite intent first
-- mutate or rebuild IR only after the full plan is known
+- **Analyze**: inspect original stages, infer endpoints and paths
+- **Plan**: update [`PipelineTree`](../src/Analysis/PipelineTree.hpp) structure and attach side information
+- **Materialize**: create new IR from the modified tree
 
-This is particularly important because [`ktdf.private`](../src/Dialects/KTDF/KTDFOps.td) cannot simply be expanded in place when result count and result types change.
+This is essential because [`ktdf.private`](../src/Dialects/KTDF/KTDFOps.td) cannot be expanded in place when result count and types change.
 
-### 3. Use structural planning separately from resource inference
+### 3. PipelineTree is the structural plan
 
-[`PipelineTree`](../src/Analysis/PipelineTree.hpp) should be used for structural reasoning:
+[`PipelineTree`](../src/Analysis/PipelineTree.hpp) is both the analysis structure and the planning output:
 
-- stage DAG discovery
-- topological ordering
-- source and sink identification
-- explicit rewritten dependency graph after inserted stages are added
+- **Analysis phase**: discover stage DAG, topological ordering, source/sink identification
+- **Planning phase**: directly modify the tree (add/remove nodes, update dependencies)
+- **Materialization phase**: walk the modified tree to create new IR
 
-However, resource inference and FIFO validation should still inspect MLIR stage contents directly. Note that the PipelineTree provides mapping from IR elements to tree nodes and vice-versa.
+Resource inference and FIFO validation inspect MLIR stage contents directly during analysis. The tree provides bidirectional mapping between IR operations and tree nodes.
 
 ### 4. Keep future refactoring easy
 
@@ -449,79 +449,67 @@ In this case the pass should only expand the side that still requires legalizati
 
 ## Rewrite Planning Model
 
-The pass should build a modification plan before IR rematerialization.
+The planning layer is intentionally lightweight and centered around the [`PipelineTree`](../src/Analysis/PipelineTree.hpp) as the single source of truth.
 
-Recommended conceptual plan contents:
+### Core Principle: PipelineTree is Central
 
-- pipeline being modified
-- original stage order
-- source stage, sink stage, anchor stages
-- inferred stage summaries
-- original resource path
-- selected architecture path
-- stage insertion and replacement plan
-- new private resource specifications
-- final rewritten stage DAG
+The [`PipelineTree`](../src/Analysis/PipelineTree.hpp) is not just an analysis structure—it is the primary data structure that the planner modifies directly:
 
-The planner and materializer should have a clear division of responsibilities:
+- The planner updates the [`PipelineTree`](../src/Analysis/PipelineTree.hpp) in-place by adding, removing, or modifying stage nodes
+- Stage dependencies are tracked directly in the tree via [`StageNode::addDependency`](../src/Analysis/PipelineTree.hpp:193)
+- The modified tree represents the final rewritten stage DAG
+- No parallel or redundant abstractions duplicate this structural information
 
-- the planner owns semantic intent
-- the materializer owns SSA creation and IR construction
+### Lightweight Side Information
 
-This means the planner should not create detached or unlinked MLIR operations for future synthetic stages. Instead:
+The planner stores only minimal side information needed by the materializer:
 
-- synthetic stages should first be represented structurally as unmaterialized nodes in the modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp)
-- the planner should attach semantic records that describe how each such stage must be materialized later
-- the materializer should consume those records and create the actual IR in a later step
+1. **Stage Materialization Info** - attached to each [`StageNode`](../src/Analysis/PipelineTree.hpp:179):
+   - Materialization kind (preserve original, adapt FIFO kinds, or synthetic transfer)
+   - Transfer materialization details (template ops and architecture hops)
+   - Applicable units if needed
 
-### Stage modification plans
+2. **Private Resource Specs** - list of new resources to allocate:
+   - Resource type (e.g., LX)
+   - Element type and shape
 
-The planner should maintain an explicit per-stage modification record, referred to here as a `StageModificationPlan`.
+This side information is stored in simple maps and vectors, not in a separate tree-like structure.
 
-Recommended conceptual fields include:
+### Analysis-Only Structures
 
-- corresponding final [`StageNode`](../src/Analysis/PipelineTree.hpp:179)
-- modification kind:
-  - preserve original stage body
-  - preserve but adapt transfer endpoints or FIFO kinds
-  - fully synthetic transfer stage
-- optional original template stage op
-- transfer materialization records for stages that contain transfer changes or synthetic transfer bodies
-- any applicable-unit policy needed by materialization
+Some structures are used only during analysis and discarded after planning:
 
-The final [`PipelineTree`](../src/Analysis/PipelineTree.hpp) remains the source of truth for stage order and stage dependencies. The `StageModificationPlan` provides the semantic recipe for what each final stage means.
+- **StageSummary** - temporary analysis of each original stage's endpoints and properties
+- **Original path inference** - used to compare with architecture graph, then discarded
 
-### Stage Summaries
+These are not part of the final plan output.
 
-Each original stage should have a summary record containing the information needed by the planner.
+### Planning Algorithm
 
-Suggested summary contents:
+The planner operates in clear phases:
 
-- original stage op
-- corresponding [`StageNode`](../src/Analysis/PipelineTree.hpp:179)
-- whether [`applicable_units`](../src/Dialects/KTDF/KTDFAttributes.td:94) exists
-- inferred anchor resource if any
-- inferred input endpoints
-- inferred output endpoints
-- transfer operations in source order
-- FIFO validation findings
-- stage classification:
-  - transfer only
-  - compute containing
+1. **Analyze** - inspect original stages, infer endpoints and paths (creates temporary `StageSummary` records)
+2. **Compare** - check original path against architecture graph's shortest path
+3. **Decide** - determine if changes are needed
+4. **Update PipelineTree** - directly modify the tree structure:
+   - Add new unmaterialized stage nodes for inserted stages
+   - Update stage dependencies
+   - Mark nodes with materialization info
+5. **Record side info** - store minimal materialization details in side maps
 
-### Final DAG as source of truth
+The output is:
+- Modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp) with final stage DAG
+- Side information map for materialization
+- List of new private resources
 
-After deciding which stages are preserved, replaced, or inserted, the planner should produce the final stage DAG explicitly on a modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp).
+### No Redundant Abstractions
 
-This final DAG is the single source of truth for:
+The design explicitly avoids:
+- Separate "stage modification plan" trees parallel to PipelineTree
+- Duplicate tracking of stage order or dependencies
+- Complex planning-specific node hierarchies
 
-- final stage ordering
-- synchronization during materialization
-- which stages are structurally present in the rewritten pipeline
-
-Old token identities are ignored.
-
-The planner should not duplicate dependency ownership in parallel side structures if the final [`PipelineTree`](../src/Analysis/PipelineTree.hpp) already captures it.
+The [`PipelineTree`](../src/Analysis/PipelineTree.hpp) already provides everything needed for structural representation. The planner simply updates it and attaches minimal semantic annotations.
 
 ---
 
@@ -589,197 +577,165 @@ Instead:
 
 ## Materialization Design
 
-### Overall decision
+### Overall Decision
 
-Phase 1 uses a new path-expansion-specific materializer.
+Phase 1 uses a new path-expansion-specific materializer that consumes the modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp) and side information from the planner.
 
-It should not reuse the current materializer class directly, and phase 1 should not attempt a broad shared-materializer refactor.
+The materializer should not reuse the current stage-coarsening materializer directly. However, it should be intentionally shaped similarly to enable future refactoring and code sharing.
 
-However, the new materializer should be intentionally shaped similarly to the existing implementation so that future refactoring is straightforward.
+### Required Preparatory Rename
 
-### Required preparatory rename
+The current materializer should be renamed to clarify its purpose:
 
-The current generic-looking materializer in:
-
+From:
 - [`src/Transform/PipelineTree/Materializer.hpp`](../src/Transform/PipelineTree/Materializer.hpp)
 - [`src/Transform/PipelineTree/Materializer.cpp`](../src/Transform/PipelineTree/Materializer.cpp)
 
-should be renamed to a stage-coarsening-specific name.
+To:
+- `src/Transform/StageCoarsening/Materializer.hpp`
+- `src/Transform/StageCoarsening/Materializer.cpp`
 
-For example:
+This clarifies that it's specific to stage coarsening, not a general-purpose materializer.
 
-- `src/Transform/StageCoarsening/StageCoarseningMaterializer.hpp`
-- `src/Transform/StageCoarsening/StageCoarseningMaterializer.cpp`
-- class `StageCoarseningMaterializer`
+### Path Expansion Materializer Location
 
-This rename is a clarifying refactor in support of path expansion and future comparison. It is not a broader redesign of shared materialization.
+New files:
+- [`src/Transform/PathExpansion/Materializer.hpp`](../src/Transform/PathExpansion/Materializer.hpp)
+- [`src/Transform/PathExpansion/Materializer.cpp`](../src/Transform/PathExpansion/Materializer.cpp)
 
-### Path expansion materializer location
+### Structural Similarity
 
-Recommended new files:
+The new materializer should mirror the stage-coarsening materializer structure:
 
-- [`src/Transform/PathExpansion/PathExpansionMaterializer.hpp`](../src/Transform/PathExpansion/PathExpansionMaterializer.hpp)
-- [`src/Transform/PathExpansion/PathExpansionMaterializer.cpp`](../src/Transform/PathExpansion/PathExpansionMaterializer.cpp)
+- Similar function names: `materialize`, `materializeTreeNode`, `materializeLoopNode`, `materializePipelineNode`, `materializeStageNode`, `materializePrivateNode`
+- Similar class member organization
+- Similar tree-walking approach
 
-### Structural similarity requirement
+This enables easier comparison and future extraction of common functionality.
 
-The new materializer should mirror the stage-coarsening materializer structure as much as practical.
+### Materialization Algorithm
 
-Use similar function names and call flow, such as:
+The materializer operates on the modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp):
 
-- `materialize`
-- `getMaterializedOp`
-- `materializeTreeNode`
-- `materializeChildren`
-- `materializeLoopNode`
-- `materializePipelineNode`
-- `materializeStageNode`
-- `materializePrivateNode`
+1. **Walk the tree** in pre-order
+2. **Materialize private node** first:
+   - Create new [`ktdf.private`](../src/Dialects/KTDF/KTDFOps.td) with all resources
+   - Build mapping from `PrivateResourceSpec` to SSA values
+3. **Materialize each stage**:
+   - Look up `StageMaterializationInfo` from the side map
+   - Based on the kind:
+     - `kPreserveOriginal`: clone the original stage body
+     - `kAdaptFifoKinds`: clone body but update FIFO types using transfer info
+     - `kSyntheticTransfer`: generate new transfer stage from transfer info
+   - Wire up dependencies using tokens from the tree's dependency edges
+4. **Replace original pipeline** with the new one
 
-Class member naming and order should also be kept similar where practical.
+### Input to Materializer
 
-This has two advantages:
+The materializer receives:
 
-- easier implementation comparison
-- easier future extraction of common base functionality
+- Modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp) (contains final stage DAG structure)
+- `llvm::DenseMap<StageNode*, StageMaterializationInfo>` (how to materialize each stage)
+- `llvm::SmallVector<PrivateResourceSpec>` (what resources to allocate)
 
-### Materialization algorithm
+No symbolic references or complex planning structures—just the tree and simple side information.
 
-The path expansion materializer should:
+### Template Usage
 
-1. traverse the modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp) in pre-order
-2. recreate the pipeline structure
-3. materialize the new [`ktdf.private`](../src/Dialects/KTDF/KTDFOps.td) when visiting the corresponding private node
-4. record a mapping from planned private-resource identifiers to the newly created SSA values
-5. generate fresh tokens from the final stage DAG and link them to depends_in/out clauses of applicable stages
-6. materialize preserved stage bodies where possible
-7. synthesize new stage bodies for inserted transfer stages
-8. rewrite stage bodies that must change endpoints or FIFO types
-9. erase or replace the original pipeline after the new one is constructed
+The materializer reuses template operations where possible:
 
-Because the tree is traversed in pre-order, the private node is visited before later sibling stages in the same pipeline. Therefore stage materialization does not need a separate private-materialization phase. It only needs access to the mappings that were recorded when the private node was materialized.
-
-### Symbolic references before materialization
-
-Some planned stage operands refer to values that do not yet have IR-level SSA form at planning time, such as:
-
-- newly introduced `LX` buffers
-- newly introduced FIFO slots
-- token results created for the rewritten dependency DAG
-
-These should not be represented by detached MLIR operations. Instead the planner should use symbolic references with sufficient semantic information, for example:
-
-- references to existing SSA values when a value already exists in the input IR
-- references to planned private resources when the value will come from the rematerialized [`ktdf.private`](../src/Dialects/KTDF/KTDFOps.td)
-- symbolic references to loop IVs or other dynamic index operands when needed
-
-The materializer then resolves these symbolic references to actual SSA values using the value mappings it has built while walking the tree.
-
-### Template usage
-
-Unlike stage coarsening, the new materializer may rely less on template operations for some inserted stages.
-
-However, template-derived transfer metadata should be preferred whenever possible. In particular:
-
-- if a synthetic or modified transfer can be expressed by adapting an existing [`ktdf.data_transfer`](../src/Dialects/KTDF/KTDFOps.td) template, the planner should record that relationship and reuse the template-derived indexing, sizing, and typing information
-- explicit symbolic transfer specifications should only be used when the needed transfer cannot be expressed cleanly as an adaptation of an existing template
-
-Indices and sizes captured for transfer materialization must not assume compile-time constants. The design should support dynamic SSA-defined operands as well.
+- `TransferMaterializationInfo` contains a `template_op` field
+- For adapted or synthetic transfers, the materializer clones and modifies the template
+- This preserves indexing, sizing, and typing information
+- Supports dynamic SSA-defined operands (not just compile-time constants)
 
 ---
 
 ## Pass Algorithm
 
-The phase-1 pass algorithm should look like this.
+The phase-1 pass algorithm follows a clear analyze-plan-materialize flow.
 
-### Step 1: Identify candidate pipelines
+### Step 1: Build PipelineTree
 
-Walk pipelines in the module.
+For each [`ktdf.pipeline`](../src/Dialects/KTDF/KTDFOps.td) in the module:
 
-For each [`ktdf.pipeline`](../src/Dialects/KTDF/KTDFOps.td):
-
-- build a [`PipelineTree`](../src/Analysis/PipelineTree.hpp)
+- build a [`PipelineTree`](../src/Analysis/PipelineTree.hpp) from the existing IR
 - derive the stage dependency DAG
-- reject non-linear topologies for rewriting
+- reject non-linear topologies for rewriting (phase 1 limitation)
 
-### Step 2: Discover structural anchors
+### Step 2: Analyze Stages (Pure Analysis)
 
-Using the stage DAG:
+Create temporary `StageSummary` records by analyzing each stage:
 
-- identify source stages
-- identify sink stages
-- identify explicit anchor stages with [`applicable_units`](../src/Dialects/KTDF/KTDFAttributes.td:94)
-
-### Step 3: Infer stage resources
-
-For each stage:
-
+- identify source stages (no incoming dependencies)
+- identify sink stages (no outgoing dependencies)
+- identify anchor stages with [`applicable_units`](../src/Dialects/KTDF/KTDFAttributes.td:94)
 - inspect [`ktdf.data_transfer`](../src/Dialects/KTDF/KTDFOps.td) endpoints
 - inspect memref memory spaces
-- inspect stage body to classify transfer-only versus compute-containing
-- infer anchor resource if no explicit [`applicable_units`](../src/Dialects/KTDF/KTDFAttributes.td:94) is present and inference is possible
+- classify as transfer-only or compute-containing
+- infer anchor resource if no explicit [`applicable_units`](../src/Dialects/KTDF/KTDFAttributes.td:94)
 
-### Step 4: Validate with FIFO semantics
+### Step 3: Validate with FIFO Semantics
 
-Inspect:
-
-- [`ktdf.read_from_fifo`](../src/Dialects/KTDF/KTDFOps.td:146)
-- [`ktdf.write_to_fifo`](../src/Dialects/KTDF/KTDFOps.td:197)
-
-Use them to validate:
+Use [`ktdf.read_from_fifo`](../src/Dialects/KTDF/KTDFOps.td:146) and [`ktdf.write_to_fifo`](../src/Dialects/KTDF/KTDFOps.td:197) to validate:
 
 - endpoint consistency
 - stage order consistency with the DAG
 - compute anchor compatibility
 
-### Step 5: Infer original path
+### Step 4: Infer Original Path
 
-Derive the currently realized resource-hop chain from the source stage through anchor stages to the sink stage.
+From the stage summaries, derive the currently realized resource-hop sequence from source through anchors to sink.
 
-### Step 6: Query architecture graph
+### Step 5: Query Architecture Graph
 
-For each required segment between inferred endpoints:
+For the inferred endpoints:
 
-- query legal route
+- query the architecture graph for legal paths
 - choose shortest path using BFS
 - fail if no legal path exists
 
-### Step 7: Compare and decide
+### Step 6: Compare and Decide
 
-If original path already matches chosen path:
+Compare original path with selected architecture path:
 
-- do nothing
+- if they match: skip this pipeline (already legal)
+- if they differ: proceed to rewrite
 
-Otherwise:
+### Step 7: Update PipelineTree Directly
 
-- build a legalization plan
+Modify the [`PipelineTree`](../src/Analysis/PipelineTree.hpp) in-place:
 
-### Step 8: Build Modified PipelineTree
+- **Preserve** stages that remain valid (mark with `kPreserveOriginal`)
+- **Adapt** stages whose FIFO kinds must change (mark with `kAdaptFifoKinds`, attach transfer info)
+- **Insert** new intermediate transfer stages:
+  - Create unmaterialized [`StageNode`](../src/Analysis/PipelineTree.hpp:179) instances
+  - Set template op if adapting from existing stage
+  - Mark with `kSyntheticTransfer` and attach transfer info
+- **Update dependencies** directly via [`StageNode::addDependency`](../src/Analysis/PipelineTree.hpp:193)
 
-Create a modified structural plan by manipulating or rebuilding [`PipelineTree`](../src/Analysis/PipelineTree.hpp):
+The modified tree now represents the final stage DAG.
 
-- preserve stages that remain valid
-- replace stages whose endpoints must change (unmaterialized nodes with the replaced stage acting as the template op)
-- insert new intermediate stages (a side map could link these new stages with stage summaries created earlier if needed for materialization)
-- rebuild stage dependency edges as the final explicit DAG
+### Step 8: Record Side Information
 
-### Step 9: Build private-resource plan
+Store minimal materialization info:
 
-Determine:
+- Map each modified/inserted [`StageNode`](../src/Analysis/PipelineTree.hpp:179) to its `StageMaterializationInfo`
+- Record new private resources (intermediate buffers, FIFO slots)
 
-- new intermediate memrefs
-- new FIFO slots
+Discard temporary `StageSummary` records—they're no longer needed.
 
-Note, no need to track new tokens since they will be materialized based on stage dependency edges.
+### Step 9: Materialize New IR
 
-### Step 10: Materialize new IR
+Use the path-expansion-specific materializer:
 
-Use the new path-expansion-specific materializer to:
-
-- rematerialize the rewritten pipeline by walking the modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp)
-- materialize the private node when it is visited and record mappings from planned private resources to new SSA values
-- rebuild stage bodies and dependencies
-- resolve planner-owned symbolic references to concrete SSA values during later stage materialization
+- Walk the modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp) in pre-order
+- Materialize the private node first, creating new SSA values for resources
+- For each stage node:
+  - Look up its `StageMaterializationInfo`
+  - Preserve, adapt, or synthesize the stage body accordingly
+  - Wire up dependencies using tokens from the tree's dependency edges
+- Replace the original pipeline with the new one
 
 ---
 
