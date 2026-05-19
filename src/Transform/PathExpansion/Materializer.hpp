@@ -1,0 +1,155 @@
+//===----------------------------------------------------------------------===//
+//
+// Copyright 2026 The KTIR Scheduler Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+// Path Expansion Pipeline Tree Materializer
+//
+// This file defines a path-expansion-specific materializer for generating
+// MLIR IR from a modified PipelineTree. The materializer traverses the tree
+// in pre-order, materializes the private node first to create SSA values for
+// resources, then materializes each stage according to its materialization
+// kind (preserve, adapt, or synthesize).
+//
+// This materializer is intentionally structured similarly to the stage
+// coarsening materializer to enable future refactoring and code sharing.
+//===----------------------------------------------------------------------===//
+
+#ifndef KTIR_SCHEDULER_TRANSFORM_PATHEXPANSION_MATERIALIZER_HPP
+#define KTIR_SCHEDULER_TRANSFORM_PATHEXPANSION_MATERIALIZER_HPP
+
+#include "Planner.hpp"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/OpDefinition.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
+#include "src/Analysis/PipelineTree.hpp"
+#include "src/Dialects/KTDF/KTDFOps.hpp"
+
+namespace scheduler {
+
+//===----------------------------------------------------------------------===//
+// Path Expansion Pipeline Tree Materializer
+//===----------------------------------------------------------------------===//
+
+/// Materializer class for generating MLIR IR from a PipelineTree for the
+/// path-expansion transform.
+class PathExpansionMaterializer {
+ public:
+  /// Constructor
+  /// \param builder The MLIR builder for creating operations
+  /// \param value_map The value mapping for SSA values
+  /// \param stage_info Map from StageNode to materialization info
+  /// \param new_resources List of new private resources to allocate
+  PathExpansionMaterializer(
+      mlir::OpBuilder& builder,
+      mlir::IRMapping& value_map,
+      const llvm::DenseMap<StageNode*, StageMaterializationInfo>& stage_info,
+      const llvm::SmallVector<PrivateResourceSpec>& new_resources)
+      : builder_(builder),
+        value_map_(value_map),
+        stage_info_(stage_info),
+        new_resources_(new_resources) {}
+
+  /// Materialize the entire tree starting from the given node
+  /// Returns the root operation created
+  mlir::Operation* materialize(const PipelineTreeNode& root_node);
+
+  /// Get the materialized operation for a given tree node
+  /// Returns nullptr if the node hasn't been materialized yet
+  mlir::Operation* getMaterializedOp(const PipelineTreeNode& node) const;
+
+ private:
+  /// Helper to materialize a value by looking it up in the value map
+  mlir::Value materializeValue(mlir::Value value);
+
+  /// Materialize a loop node by creating an scf.for operation
+  mlir::scf::ForOp materializeLoopNode(const LoopNode& loop_node);
+
+  /// Materialize a stage node by creating a ktdf.stage operation
+  mlir::ktdf::StageOp materializeStageNode(const StageNode& stage_node);
+
+  /// Materialize a pipeline node by creating a ktdf.pipeline operation
+  mlir::ktdf::PipelineOp materializePipelineNode(const PipelineNode& pipeline_node);
+
+  /// Materialize a private node by creating new ktdf.private with all resources
+  void materializePrivateNode(const PrivateNode& private_node,
+                              const PipelineNode& pipeline_node);
+
+  /// Recursively materialize a tree node and its children
+  void materializeTreeNode(const PipelineTreeNode& node);
+
+  /// Helper to materialize all children of a node
+  void materializeChildren(const PipelineTreeNode& parent_node);
+
+  /// Helper to clone stage body operations (for kPreserveOriginal)
+  void cloneStageBody(mlir::ktdf::StageOp orig_stage);
+
+  /// Helper to adapt stage body with new FIFO kinds (for kAdaptFifoKinds)
+  void adaptStageBodyFifoKinds(mlir::ktdf::StageOp orig_stage,
+                               const StageMaterializationInfo& info);
+
+  /// Helper to synthesize a new transfer stage (for kSyntheticTransfer)
+  void synthesizeTransferStage(const StageMaterializationInfo& info);
+
+  /// Helper to build stage-to-token mapping from private results
+  void buildStageToTokenMapping(
+      const llvm::SmallVector<StageNode*>& stages_with_deps,
+      mlir::ktdf::PrivateOp new_private,
+      size_t non_token_result_count);
+
+  /// Helper to get or create FIFO type from edge info
+  mlir::ktdf::FifoSlotType getFifoTypeFromEdge(
+      const ArchitectureGraph::EdgeInfo& edge,
+      ArchitectureGraph::Resource source_resource,
+      ArchitectureGraph::Resource dest_resource,
+      mlir::Type element_type,
+      llvm::ArrayRef<int64_t> shape);
+
+  /// Helper to get memory space attribute from resource
+  mlir::Attribute getMemorySpaceFromResource(ArchitectureGraph::Resource resource);
+
+  /// MLIR builder for creating operations
+  mlir::OpBuilder& builder_;
+  
+  /// Value mapping for SSA values
+  mlir::IRMapping& value_map_;
+  
+  /// Map from StageNode to materialization info
+  const llvm::DenseMap<StageNode*, StageMaterializationInfo>& stage_info_;
+  
+  /// List of new private resources to allocate
+  const llvm::SmallVector<PrivateResourceSpec>& new_resources_;
+  
+  /// Tracking map from tree nodes to their materialized operations
+  llvm::DenseMap<const PipelineTreeNode*, mlir::Operation*> node_to_materialized_op_;
+  
+  /// Mapping from stages to their corresponding token values (results of ktdf.private op)
+  /// This is used to fill in depends_in/depends_out when materializing stages
+  llvm::DenseMap<StageNode*, mlir::Value> stage_to_token_map_;
+  
+  /// Mapping from PrivateResourceSpec index to SSA value
+  /// Used to resolve references to private resources during stage materialization
+  llvm::DenseMap<size_t, mlir::Value> resource_index_to_value_;
+};
+
+}  // namespace scheduler
+
+#endif  // KTIR_SCHEDULER_TRANSFORM_PATHEXPANSION_MATERIALIZER_HPP
+
+// Made with Bob

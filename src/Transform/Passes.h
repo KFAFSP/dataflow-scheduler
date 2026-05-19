@@ -23,6 +23,7 @@ std::unique_ptr<mlir::Pass> createConstructThreeStagePipelinePass();
 std::unique_ptr<mlir::Pass> createTileSCFForLoopsPass();
 std::unique_ptr<mlir::Pass> createStripMineSCFForLoopsPass();
 std::unique_ptr<mlir::Pass> createStageCoarseningPass();
+std::unique_ptr<mlir::Pass> createPathExpansionPass();
 
 std::unique_ptr<mlir::Pass> createBroadcastPromotionPass();
 std::unique_ptr<mlir::Pass> createParallelizeLoopsAcrossInstancesPass();

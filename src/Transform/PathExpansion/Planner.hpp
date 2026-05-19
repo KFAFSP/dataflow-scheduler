@@ -75,6 +75,8 @@ struct StageSummary {
 struct TransferMaterializationInfo {
   mlir::ktdf::DataTransferOp template_op;  // Template to derive from
   ArchitectureGraph::EdgeInfo hop;         // Architecture hop this implements
+  ArchitectureGraph::Resource source_resource;  // Source resource for this hop
+  ArchitectureGraph::Resource dest_resource;    // Destination resource for this hop
 };
 
 /// Side information attached to a StageNode for materialization
@@ -86,7 +88,7 @@ struct StageMaterializationInfo {
     kSyntheticTransfer,     // Generate new transfer stage
   };
 
-  Kind kind = Kind::PreserveOriginal;
+  Kind kind = Kind::kPreserveOriginal;
   
   // For AdaptFifoKinds and SyntheticTransfer:
   llvm::SmallVector<TransferMaterializationInfo> transfers;
@@ -120,6 +122,17 @@ struct PathExpansionPlan {
   
   // Whether any changes were made
   bool changed = false;
+  
+  // Default constructor
+  PathExpansionPlan() = default;
+  
+  // Delete copy operations since PipelineTree is not copyable
+  PathExpansionPlan(const PathExpansionPlan&) = delete;
+  PathExpansionPlan& operator=(const PathExpansionPlan&) = delete;
+  
+  // Delete move operations since PipelineTree is not movable
+  PathExpansionPlan(PathExpansionPlan&&) = delete;
+  PathExpansionPlan& operator=(PathExpansionPlan&&) = delete;
 };
 
 //===----------------------------------------------------------------------===//
@@ -151,8 +164,9 @@ inferOriginalPath(llvm::ArrayRef<StageSummary> summaries);
 /// 1. Updates the PipelineTree in-place (modifying stage DAG)
 /// 2. Attaches materialization info to stages
 /// 3. Records new private resources needed
-mlir::FailureOr<PathExpansionPlan> 
-planPathExpansion(PipelineTree &tree, 
+/// Returns a unique_ptr to the plan, or nullptr on failure
+std::unique_ptr<PathExpansionPlan>
+planPathExpansion(PipelineTree &tree,
                   PipelineNode *pipeline,
                   const ArchitectureGraph &arch_graph);
 

@@ -18,8 +18,16 @@
 
 #include "Planner.hpp"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Types.h"
+#include "mlir/Support/LogicalResult.h"
+#include "src/Analysis/ArchitectureGraph.hpp"
+#include "src/Analysis/PipelineTree.hpp"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 
 #define DEBUG_TYPE "path-expansion-planner"
@@ -34,7 +42,7 @@ std::optional<ArchitectureGraph::Resource> inferResourceFromMemorySpace(
   if (!memory_space) return std::nullopt;
 
   auto memory_space_attr =
-      mlir::dyn_cast<mlir::ktdf::MemorySpaceAttr>(memory_space);
+      mlir::dyn_cast<mlir::ktdf::MemorySpaceCustomAttr>(memory_space);
   if (!memory_space_attr) return std::nullopt;
 
   switch (memory_space_attr.getValue()) {
@@ -81,7 +89,7 @@ mlir::FailureOr<StageSummary> analyzeStage(StageNode* stage_node) {
   // Check for applicable_units
   if (auto applicable_units = stage_op.getApplicableUnits()) {
     llvm::ArrayRef<mlir::ktdf::ComponentType> units =
-        applicable_units->getUnits();
+        applicable_units->getValue();
     assert(units.size() == 1 &&
            "path expansion currently does not handle nested pipelines with "
            "multi-unit stages");
@@ -275,11 +283,11 @@ inferOriginalPath(llvm::ArrayRef<StageSummary> summaries) {
   return path;
 }
 
-mlir::FailureOr<PathExpansionPlan> planPathExpansion(
+std::unique_ptr<PathExpansionPlan> planPathExpansion(
     PipelineTree& tree, PipelineNode* pipeline,
     const ArchitectureGraph& arch_graph) {
-  PathExpansionPlan plan;
-  plan.changed = false;
+  auto plan = std::make_unique<PathExpansionPlan>();
+  plan->changed = false;
 
   // Step 1: Perform topological sort
   mlir::FailureOr<llvm::SmallVector<StageNode*>> sorted_stages_or =
@@ -287,7 +295,7 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
   if (mlir::failed(sorted_stages_or)) {
     LLVM_DEBUG(llvm::dbgs()
                << "Failed to perform topological sort (cycle detected)\n");
-    return mlir::failure();
+    return nullptr;
   }
   llvm::SmallVector<StageNode*> sorted_stages = *sorted_stages_or;
 
@@ -295,14 +303,14 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
   // dependencies.
   if (mlir::failed(validateLinearChain(sorted_stages))) {
     LLVM_DEBUG(llvm::dbgs() << "Stage topology is not a linear chain\n");
-    return mlir::failure();
+    return nullptr;
   }
 
   // Step 2: Analyze stages in topological order
   mlir::FailureOr<llvm::SmallVector<StageSummary>> summaries_or =
       analyzeStages(sorted_stages);
   if (mlir::failed(summaries_or)) {
-    return mlir::failure();
+    return nullptr;
   }
   llvm::SmallVector<StageSummary> summaries = *summaries_or;
 
@@ -310,14 +318,14 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
   mlir::FailureOr<llvm::SmallVector<ArchitectureGraph::Resource>>
       original_path_or = inferOriginalPath(summaries);
   if (mlir::failed(original_path_or)) {
-    return mlir::failure();
+    return nullptr;
   }
   llvm::SmallVector<ArchitectureGraph::Resource> original_path =
       *original_path_or;
 
   if (original_path.size() < 2) {
     // Need at least source and destination
-    return mlir::failure();
+    return nullptr;
   }
 
   // Step 4: Query architecture graph for shortest path
@@ -334,7 +342,7 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
   if (!shortest_path_or) {
     // No legal path exists
     LLVM_DEBUG(llvm::dbgs() << "No legal path found in architecture graph\n");
-    return mlir::failure();
+    return nullptr;
   }
 
   // Step 5: Convert node IDs back to resources
@@ -342,7 +350,7 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
   for (ArchitectureGraph::NodeId node_id : *shortest_path_or) {
     std::optional<ArchitectureGraph::ResourceNode> node_or =
         arch_graph.getNode(node_id);
-    if (!node_or) return mlir::failure();
+    if (!node_or) return nullptr;
     shortest_path.push_back(node_or->resource);
   }
 
@@ -361,14 +369,14 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
   // Step 6: Compare paths
   if (original_path == shortest_path) {
     // Already legal, no changes needed
-    plan.changed = false;
+    plan->changed = false;
     LLVM_DEBUG(llvm::dbgs() << "Pipeline already legal\n");
     return plan;
   }
 
   // Step 7: Path needs expansion - modify the PipelineTree
-  plan.changed = true;
-  plan.modified_tree = tree;
+  plan->changed = true;
+  plan->modified_tree = tree;
 
   LLVM_DEBUG(llvm::dbgs() << "Planning path expansion for "
                           << sorted_stages.size() << " stages, expanding to "
@@ -378,7 +386,7 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
   llvm::DenseSet<ArchitectureGraph::Resource> intermediate_resources;
   for (size_t i = 1; i < shortest_path.size() - 1; i++) {
     ArchitectureGraph::Resource res = shortest_path[i];
-    if (ArchitectureGraph::getResourceKind(res) ==
+    if (arch_graph.getResourceKind(res) ==
         ArchitectureGraph::ResourceKind::Memory) {
       intermediate_resources.insert(res);
     }
@@ -403,7 +411,10 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
   });
 
   // Map each hop in shortest path to the stage that covers it (if any)
+  // Also collect buffer shape information for intermediate resources
   llvm::SmallVector<StageNode*> hop_to_stage(shortest_path.size() - 1, nullptr);
+  llvm::DenseMap<ArchitectureGraph::Resource, PrivateResourceSpec>
+      resource_specs;
 
   for (size_t hop_idx = 0; hop_idx < shortest_path.size() - 1; hop_idx++) {
     ArchitectureGraph::Resource src_res = shortest_path[hop_idx];
@@ -415,8 +426,8 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
 
       // Check if this stage's transfers cover this hop
       bool covers_hop = false;
-      for (const auto& input_ep : summary.input_endpoints) {
-        for (const auto& output_ep : summary.output_endpoints) {
+      for (const StageEndpoint& input_ep : summary.input_endpoints) {
+        for (const StageEndpoint& output_ep : summary.output_endpoints) {
           if (input_ep.resource == src_res && output_ep.resource == dst_res) {
             covers_hop = true;
             break;
@@ -427,6 +438,44 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
 
       if (covers_hop) {
         hop_to_stage[hop_idx] = stage;
+        if (!(intermediate_resources.contains(src_res) ||
+              intermediate_resources.contains(dst_res)))
+          break;
+        // If this hop involves an intermediate memory resource, extract buffer
+        // shape
+        mlir::ktdf::StageOp stage_op =
+            mlir::cast<mlir::ktdf::StageOp>(stage->getOperation());
+
+        stage_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
+          mlir::Type src_type = transfer.getSource().getType();
+          mlir::Type dst_type = transfer.getDestination().getType();
+
+          // Extract shape from memory resource (memref)
+          auto extract_from_memref = [&](mlir::Type type,
+                                         ArchitectureGraph::Resource res) {
+            if (mlir::MemRefType memref_type =
+                    mlir::dyn_cast<mlir::MemRefType>(type)) {
+              if (!resource_specs.contains(res)) {
+                PrivateResourceSpec spec;
+                spec.resource = res;
+                spec.element_type = memref_type.getElementType();
+                spec.shape.assign(memref_type.getShape().begin(),
+                                  memref_type.getShape().end());
+                resource_specs[res] = spec;
+              }
+            }
+          };
+
+          // Check if source or destination is an intermediate memory resource
+          if (intermediate_resources.contains(src_res)) {
+            extract_from_memref(src_type, src_res);
+          }
+          if (intermediate_resources.contains(dst_res)) {
+            extract_from_memref(dst_type, dst_res);
+          }
+
+          return mlir::WalkResult::advance();
+        });
         break;
       }
     }
@@ -466,10 +515,15 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
         arch_graph.getEdgeInfo(src_node, dst_node);
 
     if (edge_info) {
-      info.transfers.push_back({nullptr, *edge_info});
+      TransferMaterializationInfo transfer_info;
+      transfer_info.template_op = nullptr;
+      transfer_info.hop = *edge_info;
+      transfer_info.source_resource = src_res;
+      transfer_info.dest_resource = dst_res;
+      info.transfers.push_back(transfer_info);
     }
 
-    plan.stage_info[new_stage] = info;
+    plan->stage_info[new_stage] = info;
 
     // Add to pipeline as child
     pipeline->insertChildNode(new_stage, insert_point);
@@ -505,7 +559,7 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
     LLVM_DEBUG(
         llvm::dbgs()
         << "Failed to topologically sort after adding synthetic stages\n");
-    return mlir::failure();
+    return nullptr;
   }
   sorted_stages = *new_sorted_or;
 
@@ -522,7 +576,7 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
   // Step 12: Create materialization info for original stages
   for (StageNode* stage : sorted_stages) {
     // Skip if already processed (synthetic stages)
-    if (plan.stage_info.count(stage)) continue;
+    if (plan->stage_info.count(stage)) continue;
 
     const StageSummary& summary = stage_to_summary[stage];
     StageMaterializationInfo info;
@@ -530,7 +584,7 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
     if (summary.anchor_resource) {
       // Stage has explicit applicable_units attribute
       ArchitectureGraph::ResourceKind kind =
-          ArchitectureGraph::getResourceKind(*summary.anchor_resource);
+          arch_graph.getResourceKind(*summary.anchor_resource);
 
       if (kind == ArchitectureGraph::ResourceKind::Compute) {
         // Compute stage - adapt FIFO kinds to match shortest path
@@ -586,7 +640,12 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
 
           if (edge_info) {
             // Legal hop - store for potential adaptation
-            info.transfers.push_back({transfer, *edge_info});
+            TransferMaterializationInfo transfer_info;
+            transfer_info.template_op = transfer;
+            transfer_info.hop = *edge_info;
+            transfer_info.source_resource = *src_res;
+            transfer_info.dest_resource = *dst_res;
+            info.transfers.push_back(transfer_info);
           } else {
             // Illegal hop
             all_legal = false;
@@ -604,41 +663,35 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
       info.kind = StageMaterializationInfo::Kind::kPreserveOriginal;
     }
 
-    plan.stage_info[stage] = info;
+    plan->stage_info[stage] = info;
   }
 
   // Step 12: Record new private resources for intermediate buffers
-  // Get element type and shape from the first transfer stage
-  StageNode* first_stage = sorted_stages.front();
-  mlir::ktdf::StageOp first_stage_op =
-      mlir::cast<mlir::ktdf::StageOp>(first_stage->getOperation());
-
-  first_stage_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
-    mlir::Type source_type = transfer.getSource().getType();
-    if (mlir::MemRefType memref_type =
-            mlir::dyn_cast<mlir::MemRefType>(source_type)) {
-      for (ArchitectureGraph::Resource res : intermediate_resources) {
-        PrivateResourceSpec spec;
-        spec.resource = res;
-        spec.element_type = memref_type.getElementType();
-
-        // Use the transfer size as the shape
-        llvm::ArrayRef<int64_t> shape = memref_type.getShape();
-        for (int64_t dim : shape) {
-          spec.shape.push_back(dim);
-        }
-
-        plan.new_resources.push_back(spec);
-      }
+  // Use the buffer specs collected during hop-to-stage analysis
+  for (ArchitectureGraph::Resource res : intermediate_resources) {
+    if (resource_specs.contains(res)) {
+      plan->new_resources.push_back(resource_specs[res]);
+    } else {
+      // Fallback: if we couldn't infer shape, log a warning
+      LLVM_DEBUG(
+          llvm::dbgs()
+          << "Warning: Could not infer buffer shape for intermediate resource "
+          << ArchitectureGraph::stringifyResource(res) << "\n");
     }
-    return mlir::WalkResult::interrupt();  // Only process first transfer
-  });
+  }
 
-  LLVM_DEBUG(llvm::dbgs() << "Plan created with " << plan.stage_info.size()
+  // Count synthetic stages
+  size_t synthetic_stage_count = 0;
+  for (const auto& [stage, info] : plan->stage_info) {
+    if (info.kind == StageMaterializationInfo::Kind::kSyntheticTransfer) {
+      synthetic_stage_count++;
+    }
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "Plan created with " << plan->stage_info.size()
                           << " stage entries (including "
-                          << new_stages_to_insert.size()
-                          << " synthetic stages) and "
-                          << plan.new_resources.size() << " new resources\n");
+                          << synthetic_stage_count << " synthetic stages) and "
+                          << plan->new_resources.size() << " new resources\n");
 
   return plan;
 }

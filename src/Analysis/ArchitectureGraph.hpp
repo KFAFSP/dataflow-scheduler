@@ -99,9 +99,9 @@ class ArchitectureGraph {
   static llvm::StringRef stringifyResource(Resource resource);
   static llvm::StringRef stringifyResourceKind(ResourceKind kind);
   static llvm::StringRef stringifyEdgeKind(EdgeKind edge_kind);
+  static ResourceKind getResourceKind(Resource resource);
 
  private:
-  static ResourceKind getResourceKind(Resource resource);
 
   NodeId next_node_id_ = 0;
   llvm::MapVector<NodeId, ResourceNode> nodes_;

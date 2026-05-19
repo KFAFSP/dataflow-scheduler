@@ -91,7 +91,7 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
                           << "\n");
 
   // Build PipelineTree for this pipeline
-  scheduler::PipelineTree tree;
+  PipelineTree tree;
   mlir::Operation* parent = pipeline_op->getParentOp();
   if (!parent) {
     return mlir::failure();
@@ -100,18 +100,17 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
   tree.compute(*parent);
 
   // Find the pipeline node in the tree
-  scheduler::PipelineNode* pipeline_node = tree.getNodeForOp(pipeline_op);
+  PipelineNode* pipeline_node =
+      static_cast<PipelineNode*>(tree.getNodeForOp(pipeline_op));
 
   // Plan path expansion
-  auto plan_or = scheduler::planPathExpansion(tree, pipeline_node, arch_graph);
-  if (mlir::failed(plan_or)) {
+  auto plan = planPathExpansion(tree, pipeline_node, arch_graph);
+  if (!plan) {
     LLVM_DEBUG(llvm::dbgs() << "  Planning failed\n");
     return mlir::failure();
   }
 
-  auto& plan = *plan_or;
-
-  if (!plan.changed) {
+  if (!plan->changed) {
     LLVM_DEBUG(llvm::dbgs() << "  Pipeline already legal, no changes needed\n");
     return mlir::success();
   }

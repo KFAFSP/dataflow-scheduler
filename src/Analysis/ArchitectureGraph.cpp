@@ -23,7 +23,6 @@
 #include <queue>
 
 #include "llvm/Support/ErrorHandling.h"
-#include "src/Dialects/KTDF/KTDFEnums.cpp.inc"
 
 namespace {
 bool isHardwareSupportedGraphFifoType(mlir::ktdf::FifoType fifo_type) {
