@@ -181,6 +181,177 @@ mlir::ktdf::PrivateOp getPipelinePrivateOp(mlir::ktdf::PipelineOp pipeline) {
 }
 
 //===----------------------------------------------------------------------===//
+// Producer/consumer scan and token precedence
+//===----------------------------------------------------------------------===//
+
+struct Candidate {
+  CandidateShape shape;
+  /// The unique sibling stage of the pipeline that writes the buffer.
+  mlir::ktdf::StageOp producer;
+  /// All sibling stages that read the buffer.
+  SmallVector<mlir::ktdf::StageOp> consumers;
+};
+
+/// Find the immediate sibling stage of `pipeline` containing `op` (op may be
+/// nested arbitrarily deep inside the stage's region). Returns nullptr if no
+/// sibling-stage ancestor is found.
+mlir::ktdf::StageOp findEnclosingSiblingStage(
+    mlir::ktdf::PipelineOp pipeline, mlir::Operation* op) {
+  Operation* cur = op;
+  while (cur && cur->getParentOp() != pipeline.getOperation()) {
+    if (auto stage = llvm::dyn_cast<mlir::ktdf::StageOp>(cur)) {
+      if (stage->getParentOp() == pipeline.getOperation()) {
+        return stage;
+      }
+    }
+    cur = cur->getParentOp();
+  }
+  if (auto stage = llvm::dyn_cast_or_null<mlir::ktdf::StageOp>(cur)) {
+    return stage;
+  }
+  return nullptr;
+}
+
+/// Walk the entire region of each sibling stage of `pipeline` recursively,
+/// classifying every ktdf.data_transfer that references `buffer` as producer
+/// (buffer is dest) or consumer (buffer is source). Stages are deduplicated.
+/// Returns std::nullopt iff a sibling stage is both producer and consumer.
+std::optional<std::pair<SmallVector<mlir::ktdf::StageOp>,
+                         SmallVector<mlir::ktdf::StageOp>>>
+scanProducersConsumers(mlir::ktdf::PipelineOp pipeline, mlir::Value buffer) {
+  llvm::SmallSetVector<mlir::ktdf::StageOp, 4> producers;
+  llvm::SmallSetVector<mlir::ktdf::StageOp, 4> consumers;
+
+  for (Operation& sibling : pipeline.getBodyBlock()->getOperations()) {
+    auto stage = llvm::dyn_cast<mlir::ktdf::StageOp>(sibling);
+    if (!stage) {
+      continue;
+    }
+    stage->walk([&](mlir::ktdf::DataTransferOp xfer) {
+      if (xfer.getDestination() == buffer) {
+        producers.insert(stage);
+      }
+      if (xfer.getSource() == buffer) {
+        consumers.insert(stage);
+      }
+    });
+  }
+
+  // Disjointness: no sibling can be both producer and consumer.
+  for (auto stage : producers) {
+    if (consumers.contains(stage)) {
+      return std::nullopt;
+    }
+  }
+
+  return std::make_pair(SmallVector<mlir::ktdf::StageOp>(producers.begin(),
+                                                          producers.end()),
+                        SmallVector<mlir::ktdf::StageOp>(consumers.begin(),
+                                                          consumers.end()));
+}
+
+/// True iff `producer` transitively precedes `target` in `pipeline`'s token
+/// dependency graph. Edges are stage-to-stage: stage S' has an incoming edge
+/// from stage S iff S produces (depends_out) a token that S' consumes
+/// (depends_in).
+bool producerTransitivelyPrecedes(mlir::ktdf::PipelineOp pipeline,
+                                  mlir::ktdf::StageOp producer,
+                                  mlir::ktdf::StageOp target) {
+  if (producer == target) {
+    return false;
+  }
+
+  // Build a map from a token SSA value → defining stage.
+  llvm::DenseMap<mlir::Value, mlir::ktdf::StageOp> token_producer_stage;
+  for (Operation& op : pipeline.getBodyBlock()->getOperations()) {
+    auto stage = llvm::dyn_cast<mlir::ktdf::StageOp>(op);
+    if (!stage) {
+      continue;
+    }
+    for (mlir::Value t : stage.getDependsOut()) {
+      token_producer_stage.try_emplace(t, stage);
+    }
+  }
+
+  // BFS from producer over token edges.
+  llvm::SmallSetVector<mlir::ktdf::StageOp, 8> visited;
+  visited.insert(producer);
+  SmallVector<mlir::ktdf::StageOp> worklist{producer};
+  while (!worklist.empty()) {
+    mlir::ktdf::StageOp s = worklist.pop_back_val();
+    // For every other sibling stage S' that consumes a token produced by S,
+    // S' is reachable from S.
+    for (Operation& op : pipeline.getBodyBlock()->getOperations()) {
+      auto succ = llvm::dyn_cast<mlir::ktdf::StageOp>(op);
+      if (!succ || succ == s) {
+        continue;
+      }
+      bool depends_on_s = false;
+      for (mlir::Value t : succ.getDependsIn()) {
+        auto it = token_producer_stage.find(t);
+        if (it != token_producer_stage.end() && it->second == s) {
+          depends_on_s = true;
+          break;
+        }
+      }
+      if (!depends_on_s) {
+        continue;
+      }
+      if (succ == target) {
+        return true;
+      }
+      if (visited.insert(succ)) {
+        worklist.push_back(succ);
+      }
+    }
+  }
+  return false;
+}
+
+/// Apply spec §3.3 g–k checks to a shape-eligible buffer in `pipeline`. On
+/// success, returns a Candidate. On rejection, logs the reason and returns
+/// std::nullopt.
+std::optional<Candidate> checkProducerConsumer(
+    mlir::ktdf::PipelineOp pipeline, const CandidateShape& shape) {
+  auto scan = scanProducersConsumers(pipeline, shape.yielded);
+  if (!scan.has_value()) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "]   slot " << shape.slot
+               << " skipped: a sibling stage both writes and reads the buffer\n");
+    return std::nullopt;
+  }
+  auto& [producers, consumers] = *scan;
+
+  // h. Producer cardinality.
+  if (producers.size() != 1) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "]   slot " << shape.slot << " skipped: "
+               << producers.size() << " producer stages (need exactly 1)\n");
+    return std::nullopt;
+  }
+
+  // i. Consumer cardinality.
+  if (consumers.empty()) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "]   slot " << shape.slot
+               << " skipped: no consumer stages\n");
+    return std::nullopt;
+  }
+
+  // k. Producer must transitively precede every consumer.
+  for (mlir::ktdf::StageOp consumer : consumers) {
+    if (!producerTransitivelyPrecedes(pipeline, producers.front(), consumer)) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "[" PASS_NAME "]   slot " << shape.slot
+                 << " skipped: producer does not transitively precede consumer\n");
+      return std::nullopt;
+    }
+  }
+
+  return Candidate{shape, producers.front(), consumers};
+}
+
+//===----------------------------------------------------------------------===//
 // Per-pipeline guards
 //===----------------------------------------------------------------------===//
 
@@ -261,7 +432,30 @@ struct DoubleBufferingPass
       per_pipeline_shapes.emplace_back(pipeline, std::move(shapes));
     });
 
-    // Producer/consumer scan + transformation arrive in subsequent tasks.
+    // Per pipeline, filter shape-eligible buffers down to producer/consumer-
+    // valid candidates.
+    SmallVector<std::pair<mlir::ktdf::PipelineOp, SmallVector<Candidate>>>
+        per_pipeline_candidates;
+    for (auto& [pipeline, shapes] : per_pipeline_shapes) {
+      SmallVector<Candidate> candidates;
+      for (const CandidateShape& shape : shapes) {
+        if (auto c = checkProducerConsumer(pipeline, shape)) {
+          candidates.push_back(*c);
+        }
+      }
+      if (candidates.empty()) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()
+                   << ": no candidates passed producer/consumer scan\n");
+        continue;
+      }
+      LLVM_DEBUG(llvm::dbgs()
+                 << "[" PASS_NAME "] pipeline at " << pipeline.getLoc()
+                 << " has " << candidates.size() << " candidate(s)\n");
+      per_pipeline_candidates.emplace_back(pipeline, std::move(candidates));
+    }
+
+    // Transformation arrives in the next task.
   }
 
  private:
