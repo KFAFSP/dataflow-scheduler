@@ -28,6 +28,9 @@ std::unique_ptr<mlir::Pass> createBroadcastPromotionPass();
 std::unique_ptr<mlir::Pass> createParallelizeLoopsAcrossInstancesPass();
 std::unique_ptr<mlir::Pass> createParallelizeLoopsAcrossInstancesPass(
     const scheduler::SchedulerExtContext& scheduler_ctx);
+std::unique_ptr<mlir::Pass> createDoubleBufferingPass();
+std::unique_ptr<mlir::Pass> createDoubleBufferingPass(
+    const scheduler::SchedulerExtContext& scheduler_ctx);
 void buildKTDPToDFIRPipeline(
     mlir::OpPassManager& pm,
     const scheduler::SchedulerExtContext& scheduler_ctx);

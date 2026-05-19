@@ -8,6 +8,7 @@ add_library(SchedulerTransforms
     Common/PipelineScope.cpp
     ComputeGroupExtraction.cpp
     ConstructThreeStagePipeline.cpp
+    DoubleBuffering.cpp
     ParallelizeLoopsAcrossInstances.cpp
     PipelineTree/Legalizer.cpp
     PipelineTree/Materializer.cpp

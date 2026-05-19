@@ -149,4 +149,30 @@ def ParallelizeLoopsAcrossInstancesPass
   let dependentDialects = ["mlir::ktdf::KTDFDialect", "mlir::scf::SCFDialect"];
 }
 
+def DoubleBufferingPass
+    : Pass<"double-buffering", "mlir::ModuleOp"> {
+  let summary = "Double-buffer scratchpad memrefs handed off between sibling stages";
+  let description = [{
+    For each ktdf.pipeline whose enclosing scope contains at least one scf.for
+    and which has no pre-existing modulo attribute, find scratchpad memrefs
+    yielded by the pipeline's ktdf.private region that are written by exactly
+    one sibling stage and read by one or more sibling stages (via
+    ktdf.data_transfer ops). For each such buffer, allocate two physical copies
+    just outside the pipeline scope, insert one shared ktdf.buffer_phase and
+    per-buffer ktdf.select_memref before the pipeline, rewrite the pipeline's
+    references to use the selected memrefs, and set modulo(size: 2) on the
+    pipeline.
+
+    Memory-space eligibility is delegated to
+    SchedulerExtContext::isEligibleForDoubleBuffering, which by default returns
+    true only for LX. Targets can override.
+
+    The pass leaves ktdf.private's signature consistent: dropped result slots
+    are removed from the op and from ktdf.private_yield, and orphaned
+    memref.alloc ops in the private region are erased.
+  }];
+  let constructor = "::ktdf::createDoubleBufferingPass()";
+  let dependentDialects = ["mlir::ktdf::KTDFDialect", "mlir::scf::SCFDialect", "mlir::memref::MemRefDialect"];
+}
+
 #endif // SCHEDULER_TRANSFORM_PASSES
