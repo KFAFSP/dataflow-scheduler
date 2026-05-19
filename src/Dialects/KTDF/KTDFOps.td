@@ -404,15 +404,6 @@ def KTDF_PipelineOp : KTDF_Op<"pipeline", [
 
     StageRange getStages();
     unsigned getNumStages();
-
-    /// Returns the modulo size if the modulo attribute is set, otherwise
-    /// returns std::nullopt.
-    std::optional<int64_t> getModuloSize() {
-      if (auto m = getModuloAttr()) {
-        return m.getInt();
-      }
-      return std::nullopt;
-    }
   }];
 }
 
