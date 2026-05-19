@@ -28,6 +28,7 @@
 #include "KTDFTypes.hpp"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "src/Dialects/KTDF/KTDFEnums.cpp.inc"
@@ -846,6 +847,41 @@ LogicalResult ParallelOp::verify() {
   if (block.empty() || !isa<ParallelYieldOp>(block.back())) {
     return emitOpError(
         "region must be terminated by a ktdf.parallel_yield operation");
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// BufferPhaseOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult BufferPhaseOp::verify() {
+  if (getNumPhases() < 2) {
+    return emitOpError("num_phases must be >= 2, got ") << getNumPhases();
+  }
+
+  if (getIvs().empty()) {
+    return emitOpError("requires at least one induction variable operand");
+  }
+
+  // Each operand must be the induction variable of an enclosing scf.for.
+  for (auto [idx, iv] : llvm::enumerate(getIvs())) {
+    auto block_arg = llvm::dyn_cast<BlockArgument>(iv);
+    if (!block_arg) {
+      return emitOpError("operand #")
+             << idx << " is not an scf.for induction variable";
+    }
+    Block* owner_block = block_arg.getOwner();
+    if (!owner_block) {
+      return emitOpError("operand #") << idx << " has no owning block";
+    }
+    auto for_op =
+        llvm::dyn_cast_or_null<scf::ForOp>(owner_block->getParentOp());
+    if (!for_op || for_op.getInductionVar() != iv) {
+      return emitOpError("operand #")
+             << idx << " is not an scf.for induction variable";
+    }
   }
 
   return success();

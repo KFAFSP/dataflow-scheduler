@@ -894,4 +894,48 @@ def KTDF_ParallelYieldOp : KTDF_Op<"parallel_yield", [
   // and crashed when invoked via `ParallelYieldOp::create(builder, loc)`.
 }
 
+//===----------------------------------------------------------------------===//
+// Double-Buffering Operations
+//===----------------------------------------------------------------------===//
+
+def KTDF_BufferPhaseOp : KTDF_Op<"buffer_phase", [Pure]> {
+  let summary = "Compute the rotation phase for double-buffered memrefs";
+  let description = [{
+    The `ktdf.buffer_phase` operation produces an `index` value that selects
+    which physical buffer a double-buffered (or N-buffered) memref handoff uses
+    on the current pipeline iteration. The result is the linearized pipeline
+    iteration count modulo `num_phases`.
+
+    The operation takes one or more `index` operands; each operand must be the
+    induction variable of an enclosing `scf.for`. The bounds and step of those
+    loops are obtained by walking each operand to its `scf.for` parent.
+
+    Semantics:
+    ```
+    phase = linearized_pipeline_iteration_count % num_phases
+    ```
+    where the linearized count is the global iteration index of the pipeline
+    over its enclosing loop nest (computed from each operand IV's
+    `(iv - lb) / step` and the trip counts of inner loops).
+
+    Example:
+    ```mlir
+    %phase = ktdf.buffer_phase(%m0, %n0) {num_phases = 2 : i64} : index
+    ```
+  }];
+
+  let arguments = (ins
+    Variadic<Index>:$ivs,
+    I64Attr:$num_phases
+  );
+
+  let results = (outs Index:$result);
+
+  let assemblyFormat = [{
+    `(` $ivs `)` attr-dict `:` type($result)
+  }];
+
+  let hasVerifier = 1;
+}
+
 #endif // KTDF_SRC_DIALECTS_KTDF_OPS_TD
