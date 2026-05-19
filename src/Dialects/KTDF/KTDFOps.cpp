@@ -896,10 +896,10 @@ LogicalResult SelectMemrefOp::verify() {
 
   // All candidates must have identical type, and the result must match.
   Type expected = candidates.front().getType();
-  for (auto [idx, c] : llvm::enumerate(candidates)) {
+  for (auto [idx, c] : llvm::enumerate(llvm::drop_begin(candidates, 1))) {
     if (c.getType() != expected) {
       return emitOpError("candidate #")
-             << idx << " type " << c.getType()
+             << (idx + 1) << " type " << c.getType()
              << " does not match candidate #0 type " << expected;
     }
   }

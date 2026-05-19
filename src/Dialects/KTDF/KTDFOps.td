@@ -950,11 +950,12 @@ def KTDF_SelectMemrefOp : KTDF_Op<"select_memref", [Pure]> {
     ```
     result = candidates[phase]
     ```
-    The phase operand is verifier-guaranteed to be in range `[0, N)`.
+    The phase is semantically in `[0, N)` by `ktdf.buffer_phase`'s definition
+    (`iteration_count % num_phases`); no wrap is needed in the result selection.
 
     Example:
     ```mlir
-    %X_sel = ktdf.select_memref %phase[%X0, %X1] : index -> memref<?x?xf16, #ktdf.memory_space<LX>>
+    %X_sel = ktdf.select_memref %phase[%X0, %X1] : index, memref<?x?xf16, #ktdf.memory_space<LX>>, memref<?x?xf16, #ktdf.memory_space<LX>> -> memref<?x?xf16, #ktdf.memory_space<LX>>
     ```
   }];
 
