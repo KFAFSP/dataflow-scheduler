@@ -360,9 +360,13 @@ def KTDF_PipelineOp : KTDF_Op<"pipeline", [
 
     The immediate children of a pipeline must be `ktdf.stage` operations.
 
+    The optional `modulo` attribute declares the pipeline's rolling-window depth.
+    With `modulo(size: N)`, the pipeline rotates through `N` physical resource
+    sets per `N` consecutive iterations.
+
     Example:
     ```mlir
-    ktdf.pipeline {
+    ktdf.pipeline modulo(size: 2) {
       ktdf.stage {
         // Stage 1 operations
       }
@@ -373,9 +377,15 @@ def KTDF_PipelineOp : KTDF_Op<"pipeline", [
     ```
   }];
 
+  let arguments = (ins
+    OptionalAttr<I64Attr>:$modulo
+  );
+
   let regions = (region SizedRegion<1>:$body);
 
-  let assemblyFormat = "$body attr-dict";
+  let assemblyFormat = [{
+    (`modulo` `(` `size` `:` $modulo^ `)`)? $body attr-dict
+  }];
 
   let hasVerifier = 1;
 
@@ -394,6 +404,15 @@ def KTDF_PipelineOp : KTDF_Op<"pipeline", [
 
     StageRange getStages();
     unsigned getNumStages();
+
+    /// Returns the modulo size if the modulo attribute is set, otherwise
+    /// returns std::nullopt.
+    std::optional<int64_t> getModuloSize() {
+      if (auto m = getModuloAttr()) {
+        return m.getInt();
+      }
+      return std::nullopt;
+    }
   }];
 }
 

@@ -184,6 +184,14 @@ LogicalResult PipelineOp::verify() {
     }
   }
 
+  // If the optional modulo attribute is present, its size must be >= 2.
+  if (auto m = getModuloAttr()) {
+    int64_t size = m.getInt();
+    if (size < 2) {
+      return emitOpError("modulo size must be >= 2, got ") << size;
+    }
+  }
+
   return success();
 }
 
