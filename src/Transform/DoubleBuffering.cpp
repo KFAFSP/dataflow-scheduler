@@ -55,7 +55,8 @@ constexpr int64_t kDefaultNumPhases = 2;
 
 struct DoubleBufferingPass
     : public ::ktdf::impl::DoubleBufferingPassBase<DoubleBufferingPass> {
-  DoubleBufferingPass() : scheduler_ctx_(scheduler::SchedulerExtContext::dummyContext()) {}
+  DoubleBufferingPass()
+      : scheduler_ctx_(scheduler::SchedulerExtContext::dummyContext()) {}
   explicit DoubleBufferingPass(const scheduler::SchedulerExtContext& ctx)
       : scheduler_ctx_(ctx) {}
 

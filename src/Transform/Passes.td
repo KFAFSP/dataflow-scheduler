@@ -172,7 +172,9 @@ def DoubleBufferingPass
     memref.alloc ops in the private region are erased.
   }];
   let constructor = "::ktdf::createDoubleBufferingPass()";
-  let dependentDialects = ["mlir::ktdf::KTDFDialect", "mlir::scf::SCFDialect", "mlir::memref::MemRefDialect"];
+  let dependentDialects = [
+      "mlir::ktdf::KTDFDialect", "mlir::scf::SCFDialect",
+      "mlir::memref::MemRefDialect"];
 }
 
 #endif // SCHEDULER_TRANSFORM_PASSES
