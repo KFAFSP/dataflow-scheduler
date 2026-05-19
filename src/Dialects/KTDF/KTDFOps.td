@@ -481,7 +481,8 @@ def KTDF_StageOp : KTDF_Op<"stage", [
 //===----------------------------------------------------------------------===//
 
 def KTDF_DataTransferOp : KTDF_Op<"data_transfer", [
-    AttrSizedOperandSegments
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<AffineMapAccessInterface>
   ]> {
   let summary = "Transfer data between memory locations and FIFO slots";
   let description = [{
@@ -546,38 +547,13 @@ def KTDF_DataTransferOp : KTDF_Op<"data_transfer", [
     Variadic<Index>:$dest_indices,
     Variadic<Index>:$dest_sizes,
     OptionalAttr<DenseI64ArrayAttr>:$static_source_sizes,
-    OptionalAttr<DenseI64ArrayAttr>:$static_dest_sizes
+    OptionalAttr<DenseI64ArrayAttr>:$static_dest_sizes,
+    OptionalAttr<AffineMapAttr>:$source_map,
+    OptionalAttr<AffineMapAttr>:$dest_map
   );
 
-  let assemblyFormat = [{
-    `from` $source
-    (`[` $source_indices^ `]`)?
-    (`size` custom<SizesList>($source_sizes, $static_source_sizes)^)?
-    `to` $destination
-    (`[` $dest_indices^ `]`)?
-    (`size` custom<SizesList>($dest_sizes, $static_dest_sizes)^)?
-    attr-dict `:` type($source) `,` type($destination)
-  }];
-
   let hasVerifier = 1;
-
-  let builders = [
-    // Build with mixed static/dynamic sizes (OpFoldResult can be either Attribute or Value)
-    OpBuilder<(ins "Value":$source,
-      "ValueRange":$sourceIndices,
-      "ArrayRef<OpFoldResult>":$sourceSizes,
-      "Value":$destination,
-      "ValueRange":$destIndices,
-      "ArrayRef<OpFoldResult>":$destSizes)>,
-    
-    // Build with all static sizes
-    OpBuilder<(ins "Value":$source,
-      "ValueRange":$sourceIndices,
-      "ArrayRef<int64_t>":$sourceSizes,
-      "Value":$destination,
-      "ValueRange":$destIndices,
-      "ArrayRef<int64_t>":$destSizes)>
-  ];
+  let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
     /// Returns true if the source is a memref
