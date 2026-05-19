@@ -276,3 +276,101 @@ const PipelineTreeNode* PipelineTreeNode::findInnermostLoop(
 
   return innermost_loop;
 }
+
+//===----------------------------------------------------------------------===//
+// Stage DAG Analysis Methods
+//===----------------------------------------------------------------------===//
+
+mlir::FailureOr<SmallVector<StageNode*>> PipelineTree::topologicalSortStages(
+    PipelineNode* pipeline) const {
+  if (!pipeline) return mlir::failure();
+
+  SmallVector<StageNode*> stages = pipeline->getStages();
+  if (stages.empty()) return SmallVector<StageNode*>();
+
+  // Build in-degree map (count of incoming dependencies for each stage)
+  llvm::DenseMap<StageNode*, int> in_degree;
+  for (StageNode* stage : stages) {
+    in_degree[stage] = 0;
+  }
+
+  // Count incoming edges by examining all stages' outgoing dependencies
+  for (StageNode* stage : stages) {
+    for (StageNode* dependent : stage->getDependencies()) {
+      in_degree[dependent]++;
+    }
+  }
+
+  // Initialize queue with all source nodes (in-degree == 0)
+  std::queue<StageNode*> worklist;
+  for (StageNode* stage : stages) {
+    if (in_degree[stage] == 0) {
+      worklist.push(stage);
+    }
+  }
+
+  // Perform topological sort using Kahn's algorithm
+  SmallVector<StageNode*> sorted;
+  while (!worklist.empty()) {
+    StageNode* current = worklist.front();
+    worklist.pop();
+    sorted.push_back(current);
+
+    // Reduce in-degree for all dependents
+    for (StageNode* dependent : current->getDependencies()) {
+      in_degree[dependent]--;
+      if (in_degree[dependent] == 0) {
+        worklist.push(dependent);
+      }
+    }
+  }
+
+  // Check for cycles
+  if (sorted.size() != stages.size()) {
+    return mlir::failure();  // Cycle detected
+  }
+
+  return sorted;
+}
+
+SmallVector<StageNode*> PipelineTree::identifySourceStages(
+    PipelineNode* pipeline) const {
+  SmallVector<StageNode*> sources;
+  if (!pipeline) return sources;
+
+  SmallVector<StageNode*> stages = pipeline->getStages();
+
+  // Build set of all stages that have incoming dependencies
+  llvm::DenseSet<StageNode*> has_incoming;
+  for (StageNode* stage : stages) {
+    for (StageNode* dependent : stage->getDependencies()) {
+      has_incoming.insert(dependent);
+    }
+  }
+
+  // Source stages are those not in the has_incoming set
+  for (StageNode* stage : stages) {
+    if (!has_incoming.contains(stage)) {
+      sources.push_back(stage);
+    }
+  }
+
+  return sources;
+}
+
+SmallVector<StageNode*> PipelineTree::identifySinkStages(
+    PipelineNode* pipeline) const {
+  SmallVector<StageNode*> sinks;
+  if (!pipeline) return sinks;
+
+  SmallVector<StageNode*> stages = pipeline->getStages();
+
+  // Sink stages are those with no outgoing dependencies
+  for (StageNode* stage : stages) {
+    if (stage->getDependencies().empty()) {
+      sinks.push_back(stage);
+    }
+  }
+
+  return sinks;
+}

@@ -123,13 +123,23 @@ struct PathExpansionPlan {
 };
 
 //===----------------------------------------------------------------------===//
+// Stage DAG Validation Functions
+//===----------------------------------------------------------------------===//
+
+/// Validate that the stage topology is a single linear chain
+/// Returns failure if the DAG has branches or multiple paths
+mlir::LogicalResult
+validateLinearChain(llvm::ArrayRef<StageNode*> sorted_stages);
+
+//===----------------------------------------------------------------------===//
 // Planning Functions
 //===----------------------------------------------------------------------===//
 
 /// Analyze stages and infer their endpoints and properties
 /// This is a pure analysis step that doesn't modify the tree
-mlir::FailureOr<llvm::SmallVector<StageSummary>> 
-analyzeStages(PipelineNode *pipeline);
+/// Takes sorted stages to ensure path inference order matches DAG order
+mlir::FailureOr<llvm::SmallVector<StageSummary>>
+analyzeStages(llvm::ArrayRef<StageNode*> sorted_stages);
 
 /// Infer the original resource path from stage summaries
 /// Returns the sequence of resources implied by the current stages

@@ -151,13 +151,91 @@ mlir::FailureOr<StageSummary> analyzeStage(StageNode* stage_node) {
 
 }  // anonymous namespace
 
+//===----------------------------------------------------------------------===//
+// Stage DAG Validation Functions
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult validateLinearChain(
+    llvm::ArrayRef<StageNode*> sorted_stages) {
+  if (sorted_stages.empty()) {
+    return mlir::success();  // Empty is trivially linear
+  }
+
+  // For a linear chain, each stage (except the last) should have exactly one
+  // dependency and each stage (except the first) should be depended upon by
+  // exactly one other stage
+
+  // Count how many stages depend on each stage
+  llvm::DenseMap<StageNode*, int> dependent_count;
+  for (StageNode* stage : sorted_stages) {
+    dependent_count[stage] = 0;
+  }
+
+  for (StageNode* stage : sorted_stages) {
+    const llvm::SmallVector<StageNode*>& deps = stage->getDependencies();
+
+    // Each stage should have at most one outgoing dependency
+    if (deps.size() > 1) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "Stage " << stage->getStageId()
+                 << " has multiple outgoing dependencies (branching)\n");
+      return mlir::failure();
+    }
+
+    // Count dependents
+    for (StageNode* dep : deps) {
+      dependent_count[dep]++;
+    }
+  }
+
+  // Check that each stage (except source) has exactly one incoming dependency
+  int source_count = 0;
+  int sink_count = 0;
+
+  for (StageNode* stage : sorted_stages) {
+    int incoming = dependent_count[stage];
+    const llvm::SmallVector<StageNode*>& outgoing = stage->getDependencies();
+
+    if (incoming == 0) {
+      source_count++;
+    }
+    if (outgoing.empty()) {
+      sink_count++;
+    }
+
+    // In a linear chain, each non-source stage should have exactly 1 incoming
+    // edge
+    if (incoming > 1) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "Stage " << stage->getStageId()
+                 << " has multiple incoming dependencies (merging)\n");
+      return mlir::failure();
+    }
+  }
+
+  // Should have exactly one source and one sink
+  if (source_count != 1 || sink_count != 1) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "Expected 1 source and 1 sink, got " << source_count
+               << " sources and " << sink_count << " sinks\n");
+    return mlir::failure();
+  }
+
+  return mlir::success();
+}
+
+//===----------------------------------------------------------------------===//
+// Stage Analysis Functions
+//===----------------------------------------------------------------------===//
+
+/// Overload that takes sorted stages to ensure path inference order matches DAG
+/// order
 mlir::FailureOr<llvm::SmallVector<StageSummary>> analyzeStages(
-    PipelineNode* pipeline) {
+    llvm::ArrayRef<StageNode*> sorted_stages) {
   llvm::SmallVector<StageSummary> summaries;
 
-  auto stages = pipeline->getStages();
-  for (auto* stage : stages) {
-    auto summary_or = analyzeStage(stage);
+  for (StageNode* stage : sorted_stages) {
+    mlir::FailureOr<StageSummary> summary_or = analyzeStage(stage);
     if (mlir::failed(summary_or)) {
       return mlir::failure();
     }
@@ -203,26 +281,46 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
   PathExpansionPlan plan;
   plan.changed = false;
 
-  // Step 1: Analyze stages
-  auto summaries_or = analyzeStages(pipeline);
+  // Step 1: Perform topological sort
+  mlir::FailureOr<llvm::SmallVector<StageNode*>> sorted_stages_or =
+      tree.topologicalSortStages(pipeline);
+  if (mlir::failed(sorted_stages_or)) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "Failed to perform topological sort (cycle detected)\n");
+    return mlir::failure();
+  }
+  llvm::SmallVector<StageNode*> sorted_stages = *sorted_stages_or;
+
+  // For now we only perform path expansion when we have linear chain of
+  // dependencies.
+  if (mlir::failed(validateLinearChain(sorted_stages))) {
+    LLVM_DEBUG(llvm::dbgs() << "Stage topology is not a linear chain\n");
+    return mlir::failure();
+  }
+
+  // Step 2: Analyze stages in topological order
+  mlir::FailureOr<llvm::SmallVector<StageSummary>> summaries_or =
+      analyzeStages(sorted_stages);
   if (mlir::failed(summaries_or)) {
     return mlir::failure();
   }
-  auto summaries = *summaries_or;
+  llvm::SmallVector<StageSummary> summaries = *summaries_or;
 
-  // Step 2: Infer original path
-  auto original_path_or = inferOriginalPath(summaries);
+  // Step 3: Infer original path
+  mlir::FailureOr<llvm::SmallVector<ArchitectureGraph::Resource>>
+      original_path_or = inferOriginalPath(summaries);
   if (mlir::failed(original_path_or)) {
     return mlir::failure();
   }
-  auto original_path = *original_path_or;
+  llvm::SmallVector<ArchitectureGraph::Resource> original_path =
+      *original_path_or;
 
   if (original_path.size() < 2) {
     // Need at least source and destination
     return mlir::failure();
   }
 
-  // Step 3: Query architecture graph for shortest path
+  // Step 4: Query architecture graph for shortest path
   ArchitectureGraph::Resource source_resource = original_path.front();
   ArchitectureGraph::Resource dest_resource = original_path.back();
 
@@ -231,42 +329,316 @@ mlir::FailureOr<PathExpansionPlan> planPathExpansion(
   ArchitectureGraph::NodeId dest_node =
       arch_graph.getNodeIdForResource(dest_resource);
 
-  auto shortest_path_or = arch_graph.findShortestPath(source_node, dest_node);
+  std::optional<llvm::SmallVector<ArchitectureGraph::NodeId>> shortest_path_or =
+      arch_graph.findShortestPath(source_node, dest_node);
   if (!shortest_path_or) {
     // No legal path exists
+    LLVM_DEBUG(llvm::dbgs() << "No legal path found in architecture graph\n");
     return mlir::failure();
   }
 
-  // Step 4: Convert node IDs back to resources
+  // Step 5: Convert node IDs back to resources
   llvm::SmallVector<ArchitectureGraph::Resource> shortest_path;
   for (ArchitectureGraph::NodeId node_id : *shortest_path_or) {
-    auto node_or = arch_graph.getNode(node_id);
+    std::optional<ArchitectureGraph::ResourceNode> node_or =
+        arch_graph.getNode(node_id);
     if (!node_or) return mlir::failure();
     shortest_path.push_back(node_or->resource);
   }
 
-  // Step 5: Compare paths
+  LLVM_DEBUG({
+    llvm::dbgs() << "Original path: ";
+    for (ArchitectureGraph::Resource res : original_path) {
+      llvm::dbgs() << ArchitectureGraph::stringifyResource(res) << " -> ";
+    }
+    llvm::dbgs() << "\nShortest path: ";
+    for (ArchitectureGraph::Resource res : shortest_path) {
+      llvm::dbgs() << ArchitectureGraph::stringifyResource(res) << " -> ";
+    }
+    llvm::dbgs() << "\n";
+  });
+
+  // Step 6: Compare paths
   if (original_path == shortest_path) {
     // Already legal, no changes needed
     plan.changed = false;
-    plan.modified_tree = tree;
+    LLVM_DEBUG(llvm::dbgs() << "Pipeline already legal\n");
     return plan;
   }
 
-  // Step 6: Path needs expansion - mark as changed
+  // Step 7: Path needs expansion - modify the PipelineTree
   plan.changed = true;
-
-  // TODO: Implement tree modification to insert intermediate stages
-  // For now, just copy the tree and mark stages for preservation
   plan.modified_tree = tree;
 
-  // Mark all existing stages as preserve original for now
-  auto stages = pipeline->getStages();
-  for (StageNode* stage : stages) {
+  LLVM_DEBUG(llvm::dbgs() << "Planning path expansion for "
+                          << sorted_stages.size() << " stages, expanding to "
+                          << shortest_path.size() << " hops\n");
+
+  // Step 8: Identify intermediate memory resources that need buffers
+  llvm::DenseSet<ArchitectureGraph::Resource> intermediate_resources;
+  for (size_t i = 1; i < shortest_path.size() - 1; i++) {
+    ArchitectureGraph::Resource res = shortest_path[i];
+    if (ArchitectureGraph::getResourceKind(res) ==
+        ArchitectureGraph::ResourceKind::Memory) {
+      intermediate_resources.insert(res);
+    }
+  }
+
+  // Step 9: Build stage-to-summary map for quick lookup
+  llvm::DenseMap<StageNode*, StageSummary> stage_to_summary;
+  for (const StageSummary& summary : summaries) {
+    stage_to_summary[summary.node] = summary;
+  }
+
+  // Step 10: Modify PipelineTree by inserting new stages for intermediate hops
+
+  LLVM_DEBUG({
+    llvm::dbgs() << "Original PipelineTree before expansion:\n";
+    pipeline->print(llvm::dbgs());
+    llvm::dbgs() << "\nOriginal topological order: ";
+    for (StageNode* stage : sorted_stages) {
+      llvm::dbgs() << "Stage " << stage->getStageId() << " ";
+    }
+    llvm::dbgs() << "\n\n";
+  });
+
+  // Map each hop in shortest path to the stage that covers it (if any)
+  llvm::SmallVector<StageNode*> hop_to_stage(shortest_path.size() - 1, nullptr);
+
+  for (size_t hop_idx = 0; hop_idx < shortest_path.size() - 1; hop_idx++) {
+    ArchitectureGraph::Resource src_res = shortest_path[hop_idx];
+    ArchitectureGraph::Resource dst_res = shortest_path[hop_idx + 1];
+
+    // Find which existing stage covers this hop
+    for (StageNode* stage : sorted_stages) {
+      const StageSummary& summary = stage_to_summary[stage];
+
+      // Check if this stage's transfers cover this hop
+      bool covers_hop = false;
+      for (const auto& input_ep : summary.input_endpoints) {
+        for (const auto& output_ep : summary.output_endpoints) {
+          if (input_ep.resource == src_res && output_ep.resource == dst_res) {
+            covers_hop = true;
+            break;
+          }
+        }
+        if (covers_hop) break;
+      }
+
+      if (covers_hop) {
+        hop_to_stage[hop_idx] = stage;
+        break;
+      }
+    }
+  }
+
+  // Create synthetic stages for uncovered hops
+  int next_stage_id = sorted_stages.size();
+  StageNode* insert_point = nullptr;
+  for (size_t hop_idx = 0; hop_idx < hop_to_stage.size(); hop_idx++) {
+    if (hop_to_stage[hop_idx] != nullptr) {
+      insert_point = hop_to_stage[hop_idx];
+      continue;
+    }
+
+    ArchitectureGraph::Resource src_res = shortest_path[hop_idx];
+    ArchitectureGraph::Resource dst_res = shortest_path[hop_idx + 1];
+
+    LLVM_DEBUG(llvm::dbgs()
+               << "  Inserting synthetic stage for hop "
+               << ArchitectureGraph::stringifyResource(src_res) << " -> "
+               << ArchitectureGraph::stringifyResource(dst_res) << "\n");
+
+    // Create unmaterialized stage node (no operation yet)
+    StageNode* new_stage = tree.createStageNode(nullptr, next_stage_id++);
+    hop_to_stage[hop_idx] = new_stage;
+
+    // Create materialization info for this synthetic stage
     StageMaterializationInfo info;
-    info.kind = StageMaterializationInfo::Kind::kPreserveOriginal;
+    info.kind = StageMaterializationInfo::Kind::kSyntheticTransfer;
+
+    // Get edge info for this hop
+    ArchitectureGraph::NodeId src_node =
+        arch_graph.getNodeIdForResource(src_res);
+    ArchitectureGraph::NodeId dst_node =
+        arch_graph.getNodeIdForResource(dst_res);
+    std::optional<ArchitectureGraph::EdgeInfo> edge_info =
+        arch_graph.getEdgeInfo(src_node, dst_node);
+
+    if (edge_info) {
+      info.transfers.push_back({nullptr, *edge_info});
+    }
+
+    plan.stage_info[new_stage] = info;
+
+    // Add to pipeline as child
+    pipeline->insertChildNode(new_stage, insert_point);
+  }
+
+  // Step 11: Build linear chain dependencies based on hop sequence
+  // Clear existing dependencies and rebuild based on shortest path order
+  for (StageNode* stage : pipeline->getStages()) {
+    // Clear all dependencies
+    while (!stage->getDependencies().empty()) {
+      stage->nullifyDependency(stage->getDependencies().front());
+    }
+    stage->removeNullifiedDependencies();
+  }
+
+  // Add dependencies to form linear chain following shortest path
+  for (size_t hop_idx = 0; hop_idx < hop_to_stage.size() - 1; hop_idx++) {
+    StageNode* current_stage = hop_to_stage[hop_idx];
+    StageNode* next_stage = hop_to_stage[hop_idx + 1];
+
+    if (current_stage && next_stage && current_stage != next_stage) {
+      current_stage->addDependency(next_stage);
+      LLVM_DEBUG(llvm::dbgs()
+                 << "  Added dependency: Stage " << current_stage->getStageId()
+                 << " -> Stage " << next_stage->getStageId() << "\n");
+    }
+  }
+
+  // Rebuild the sorted stages list with new topology
+  mlir::FailureOr<llvm::SmallVector<StageNode*>> new_sorted_or =
+      tree.topologicalSortStages(pipeline);
+  if (mlir::failed(new_sorted_or)) {
+    LLVM_DEBUG(
+        llvm::dbgs()
+        << "Failed to topologically sort after adding synthetic stages\n");
+    return mlir::failure();
+  }
+  sorted_stages = *new_sorted_or;
+
+  LLVM_DEBUG({
+    llvm::dbgs() << "Modified PipelineTree after expansion:\n";
+    pipeline->print(llvm::dbgs());
+    llvm::dbgs() << "\nTopological order: ";
+    for (StageNode* stage : sorted_stages) {
+      llvm::dbgs() << "Stage " << stage->getStageId() << " ";
+    }
+    llvm::dbgs() << "\n\n";
+  });
+
+  // Step 12: Create materialization info for original stages
+  for (StageNode* stage : sorted_stages) {
+    // Skip if already processed (synthetic stages)
+    if (plan.stage_info.count(stage)) continue;
+
+    const StageSummary& summary = stage_to_summary[stage];
+    StageMaterializationInfo info;
+
+    if (summary.anchor_resource) {
+      // Stage has explicit applicable_units attribute
+      ArchitectureGraph::ResourceKind kind =
+          ArchitectureGraph::getResourceKind(*summary.anchor_resource);
+
+      if (kind == ArchitectureGraph::ResourceKind::Compute) {
+        // Compute stage - adapt FIFO kinds to match shortest path
+        info.kind = StageMaterializationInfo::Kind::kAdaptFifoKinds;
+        info.applicable_unit =
+            (*summary.anchor_resource == ArchitectureGraph::Resource::SFP)
+                ? mlir::ktdf::ComponentType::SFP
+                : mlir::ktdf::ComponentType::PE;
+      } else {
+        // Memory resource as anchor - preserve as-is
+        info.kind = StageMaterializationInfo::Kind::kPreserveOriginal;
+      }
+    } else if (summary.is_compute_containing) {
+      // Compute stage without explicit applicable_units - adapt FIFO kinds
+      info.kind = StageMaterializationInfo::Kind::kAdaptFifoKinds;
+    } else if (summary.is_transfer_only) {
+      // Transfer-only stage - check if already legal, otherwise adapt
+      bool all_legal = true;
+
+      mlir::ktdf::StageOp stage_op =
+          mlir::cast<mlir::ktdf::StageOp>(stage->getOperation());
+      stage_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
+        // Infer source and destination from this transfer
+        mlir::Type src_type = transfer.getSource().getType();
+        mlir::Type dst_type = transfer.getDestination().getType();
+
+        std::optional<ArchitectureGraph::Resource> src_res;
+        std::optional<ArchitectureGraph::Resource> dst_res;
+
+        if (mlir::MemRefType src_memref =
+                mlir::dyn_cast<mlir::MemRefType>(src_type)) {
+          src_res = inferResourceFromMemorySpace(src_memref.getMemorySpace());
+        } else if (mlir::ktdf::FifoSlotType src_fifo =
+                       mlir::dyn_cast<mlir::ktdf::FifoSlotType>(src_type)) {
+          src_res = inferResourceFromFifoType(src_fifo.getFifoType(), false);
+        }
+
+        if (mlir::MemRefType dst_memref =
+                mlir::dyn_cast<mlir::MemRefType>(dst_type)) {
+          dst_res = inferResourceFromMemorySpace(dst_memref.getMemorySpace());
+        } else if (mlir::ktdf::FifoSlotType dst_fifo =
+                       mlir::dyn_cast<mlir::ktdf::FifoSlotType>(dst_type)) {
+          dst_res = inferResourceFromFifoType(dst_fifo.getFifoType(), true);
+        }
+
+        if (src_res && dst_res) {
+          ArchitectureGraph::NodeId src_node =
+              arch_graph.getNodeIdForResource(*src_res);
+          ArchitectureGraph::NodeId dst_node =
+              arch_graph.getNodeIdForResource(*dst_res);
+          std::optional<ArchitectureGraph::EdgeInfo> edge_info =
+              arch_graph.getEdgeInfo(src_node, dst_node);
+
+          if (edge_info) {
+            // Legal hop - store for potential adaptation
+            info.transfers.push_back({transfer, *edge_info});
+          } else {
+            // Illegal hop
+            all_legal = false;
+          }
+        } else {
+          all_legal = false;
+        }
+      });
+
+      // If all transfers are legal, preserve; otherwise adapt
+      info.kind = all_legal ? StageMaterializationInfo::Kind::kPreserveOriginal
+                            : StageMaterializationInfo::Kind::kAdaptFifoKinds;
+    } else {
+      // No clear classification - preserve as-is
+      info.kind = StageMaterializationInfo::Kind::kPreserveOriginal;
+    }
+
     plan.stage_info[stage] = info;
   }
+
+  // Step 12: Record new private resources for intermediate buffers
+  // Get element type and shape from the first transfer stage
+  StageNode* first_stage = sorted_stages.front();
+  mlir::ktdf::StageOp first_stage_op =
+      mlir::cast<mlir::ktdf::StageOp>(first_stage->getOperation());
+
+  first_stage_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
+    mlir::Type source_type = transfer.getSource().getType();
+    if (mlir::MemRefType memref_type =
+            mlir::dyn_cast<mlir::MemRefType>(source_type)) {
+      for (ArchitectureGraph::Resource res : intermediate_resources) {
+        PrivateResourceSpec spec;
+        spec.resource = res;
+        spec.element_type = memref_type.getElementType();
+
+        // Use the transfer size as the shape
+        llvm::ArrayRef<int64_t> shape = memref_type.getShape();
+        for (int64_t dim : shape) {
+          spec.shape.push_back(dim);
+        }
+
+        plan.new_resources.push_back(spec);
+      }
+    }
+    return mlir::WalkResult::interrupt();  // Only process first transfer
+  });
+
+  LLVM_DEBUG(llvm::dbgs() << "Plan created with " << plan.stage_info.size()
+                          << " stage entries (including "
+                          << new_stages_to_insert.size()
+                          << " synthetic stages) and "
+                          << plan.new_resources.size() << " new resources\n");
 
   return plan;
 }
