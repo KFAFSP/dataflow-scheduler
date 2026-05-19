@@ -343,7 +343,7 @@ SmallVector<Value> hoistAllocPair(mlir::memref::AllocOp alloc,
   OpBuilder builder(outermost_loop);
 
   SmallVector<Value> hoisted;
-  for (int i = 0; i < kDefaultNumPhases; ++i) {
+  for (int64_t i = 0; i < kDefaultNumPhases; ++i) {
     auto cloned = llvm::cast<mlir::memref::AllocOp>(builder.clone(*alloc));
     hoisted.push_back(cloned.getResult());
   }
@@ -359,7 +359,7 @@ SmallVector<Value> hoistAllocPair(mlir::memref::AllocOp alloc,
 
 /// Build the operand list for ktdf.buffer_phase from `scope_loops`
 /// (innermost-first per the convention) reversed to outermost-first.
-SmallVector<Value> sceneIvsOutermostFirst(
+SmallVector<Value> scopeIvsOutermostFirst(
     llvm::ArrayRef<mlir::scf::ForOp> scope_loops_innermost_first) {
   SmallVector<Value> result;
   for (mlir::scf::ForOp loop : llvm::reverse(scope_loops_innermost_first)) {
@@ -389,7 +389,7 @@ void rewritePipeline(mlir::ktdf::PipelineOp pipeline,
 
   // Step 2: insert one shared buffer_phase immediately before the pipeline.
   OpBuilder builder(pipeline);
-  SmallVector<Value> phase_ivs = sceneIvsOutermostFirst(scope.loops);
+  SmallVector<Value> phase_ivs = scopeIvsOutermostFirst(scope.loops);
   auto phase_op = mlir::ktdf::BufferPhaseOp::create(
       builder, pipeline.getLoc(), builder.getIndexType(), phase_ivs,
       builder.getI64IntegerAttr(kDefaultNumPhases));
