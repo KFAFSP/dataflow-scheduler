@@ -725,9 +725,12 @@ static std::optional<AffineMap> findIndexingMapForStoreSource(
 
 // Project loop_ivs and tile_sizes through indexing_map to produce one entry
 // per result dim of the map. Indices are computed via affine::expandAffineMap
-// (handles arbitrary affine expressions). Sizes are taken directly from
-// tile_sizes when the map result is a single AffineDimExpr (a projection); on
-// non-projection results emits an error and returns failure.
+// (handles arbitrary affine expressions). Sizes are derived per result expr:
+//   - AffineDimExpr  d_k  -> tile_sizes[k]   (projection of one iterator dim)
+//   - AffineConstantExpr -> 1                (broadcast/squeeze: that source
+//                                             dim is accessed at a fixed index)
+// Other expressions (e.g. d0 + d1) are not currently supported and produce
+// an error.
 static LogicalResult projectIvsAndSizesThroughIndexingMap(
     OpBuilder& builder, Location loc, AffineMap indexing_map,
     ValueRange loop_ivs, ArrayRef<int64_t> tile_sizes,
@@ -752,17 +755,22 @@ static LogicalResult projectIvsAndSizesThroughIndexingMap(
   projected_indices.assign(expanded->begin(), expanded->end());
 
   for (AffineExpr result : indexing_map.getResults()) {
-    auto dim = dyn_cast<AffineDimExpr>(result);
-    if (!dim) {
-      std::string buf;
-      llvm::raw_string_ostream os(buf);
-      result.print(os);
-      emit_error()
-          << "operand indexing map has a non-projection result expression ("
-          << buf << "); only single-dim projections are supported";
-      return failure();
+    if (auto dim = dyn_cast<AffineDimExpr>(result)) {
+      projected_sizes.push_back(tile_sizes[dim.getPosition()]);
+      continue;
     }
-    projected_sizes.push_back(tile_sizes[dim.getPosition()]);
+    if (isa<AffineConstantExpr>(result)) {
+      projected_sizes.push_back(1);
+      continue;
+    }
+    std::string buf;
+    llvm::raw_string_ostream os(buf);
+    result.print(os);
+    emit_error() << "operand indexing map has an unsupported result expression ("
+                 << buf
+                 << "); only single-dim projections and constant indices are "
+                    "supported";
+    return failure();
   }
   return success();
 }
