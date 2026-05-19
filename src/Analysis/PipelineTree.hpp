@@ -218,6 +218,12 @@ class StageNode : public PipelineTreeNode {
     }
   }
 
+  /// Mark all dependencies for removal by nullifying them
+  void nullifyAllDependencies() {
+    for (auto &dep : dependencies_)
+      dep = nullptr;
+  }
+
   /// Remove all nullified dependencies
   void removeNullifiedDependencies() {
     dependencies_.erase(

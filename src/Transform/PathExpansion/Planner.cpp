@@ -328,30 +328,46 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
     return nullptr;
   }
 
-  // Step 4: Query architecture graph for shortest path
-  ArchitectureGraph::Resource source_resource = original_path.front();
-  ArchitectureGraph::Resource dest_resource = original_path.back();
-
-  ArchitectureGraph::NodeId source_node =
-      arch_graph.getNodeIdForResource(source_resource);
-  ArchitectureGraph::NodeId dest_node =
-      arch_graph.getNodeIdForResource(dest_resource);
-
-  std::optional<llvm::SmallVector<ArchitectureGraph::NodeId>> shortest_path_or =
-      arch_graph.findShortestPath(source_node, dest_node);
-  if (!shortest_path_or) {
-    // No legal path exists
-    LLVM_DEBUG(llvm::dbgs() << "No legal path found in architecture graph\n");
-    return nullptr;
-  }
-
-  // Step 5: Convert node IDs back to resources
+  // Step 4: Query architecture graph for shortest path between consecutive
+  // resources in the original path. This respects anchor points (e.g., for
+  // HBM->SFP->HBM, we query HBM->SFP and SFP->HBM separately, not HBM->HBM).
   llvm::SmallVector<ArchitectureGraph::Resource> shortest_path;
-  for (ArchitectureGraph::NodeId node_id : *shortest_path_or) {
-    std::optional<ArchitectureGraph::ResourceNode> node_or =
-        arch_graph.getNode(node_id);
-    if (!node_or) return nullptr;
-    shortest_path.push_back(node_or->resource);
+  
+  for (size_t i = 0; i < original_path.size() - 1; ++i) {
+    ArchitectureGraph::Resource source_resource = original_path[i];
+    ArchitectureGraph::Resource dest_resource = original_path[i + 1];
+
+    ArchitectureGraph::NodeId source_node =
+        arch_graph.getNodeIdForResource(source_resource);
+    ArchitectureGraph::NodeId dest_node =
+        arch_graph.getNodeIdForResource(dest_resource);
+
+    std::optional<llvm::SmallVector<ArchitectureGraph::NodeId>> segment_path_or =
+        arch_graph.findShortestPath(source_node, dest_node);
+    if (!segment_path_or) {
+      // No legal path exists for this segment
+      LLVM_DEBUG(llvm::dbgs() << "No legal path found from "
+                              << ArchitectureGraph::stringifyResource(source_resource)
+                              << " to "
+                              << ArchitectureGraph::stringifyResource(dest_resource)
+                              << "\n");
+      return nullptr;
+    }
+
+    // Step 5: Convert node IDs back to resources for this segment
+    for (size_t j = 0; j < segment_path_or->size(); ++j) {
+      ArchitectureGraph::NodeId node_id = (*segment_path_or)[j];
+      std::optional<ArchitectureGraph::ResourceNode> node_or =
+          arch_graph.getNode(node_id);
+      if (!node_or) return nullptr;
+      
+      // Avoid duplicating the connection point between segments
+      if (j == 0 && !shortest_path.empty() &&
+          shortest_path.back() == node_or->resource) {
+        continue;
+      }
+      shortest_path.push_back(node_or->resource);
+    }
   }
 
   LLVM_DEBUG({
@@ -381,6 +397,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   LLVM_DEBUG(llvm::dbgs() << "Planning path expansion for "
                           << sorted_stages.size() << " stages, expanding to "
                           << shortest_path.size() << " hops\n");
+  assert(shortest_path.size() >= 2);
 
   // Step 8: Identify intermediate memory resources that need buffers
   llvm::DenseSet<ArchitectureGraph::Resource> intermediate_resources;
@@ -532,10 +549,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   // Step 11: Build linear chain dependencies based on hop sequence
   // Clear existing dependencies and rebuild based on shortest path order
   for (StageNode* stage : pipeline->getStages()) {
-    // Clear all dependencies
-    while (!stage->getDependencies().empty()) {
-      stage->nullifyDependency(stage->getDependencies().front());
-    }
+    stage->nullifyAllDependencies();
     stage->removeNullifiedDependencies();
   }
 
