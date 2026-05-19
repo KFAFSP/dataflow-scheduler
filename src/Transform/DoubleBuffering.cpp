@@ -332,6 +332,84 @@ std::optional<Candidate> checkProducerConsumer(
 }
 
 //===----------------------------------------------------------------------===//
+// Transformation
+//===----------------------------------------------------------------------===//
+
+/// Clone `alloc` `n` times immediately before `outermost_loop`. Insert
+/// matching deallocs immediately after `outermost_loop`. Returns the cloned
+/// alloc results.
+SmallVector<Value> hoistAllocPair(mlir::memref::AllocOp alloc,
+                                  mlir::scf::ForOp outermost_loop) {
+  OpBuilder builder(outermost_loop);
+
+  SmallVector<Value> hoisted;
+  for (int i = 0; i < kDefaultNumPhases; ++i) {
+    auto cloned = llvm::cast<mlir::memref::AllocOp>(builder.clone(*alloc));
+    hoisted.push_back(cloned.getResult());
+  }
+
+  // Deallocs go just after the loop.
+  builder.setInsertionPointAfter(outermost_loop);
+  for (Value h : hoisted) {
+    mlir::memref::DeallocOp::create(builder, alloc.getLoc(), h);
+  }
+
+  return hoisted;
+}
+
+/// Build the operand list for ktdf.buffer_phase from `scope_loops`
+/// (innermost-first per the convention) reversed to outermost-first.
+SmallVector<Value> sceneIvsOutermostFirst(
+    llvm::ArrayRef<mlir::scf::ForOp> scope_loops_innermost_first) {
+  SmallVector<Value> result;
+  for (mlir::scf::ForOp loop : llvm::reverse(scope_loops_innermost_first)) {
+    result.push_back(loop.getInductionVar());
+  }
+  return result;
+}
+
+/// Apply the transformation to one pipeline: hoist alloc pairs, insert one
+/// shared ktdf.buffer_phase, insert per-candidate ktdf.select_memref,
+/// rewrite uses of each original yielded buffer inside the pipeline's
+/// region to the corresponding select result, set modulo(size: 2), and
+/// clean up the dropped slots from ktdf.private.
+void rewritePipeline(mlir::ktdf::PipelineOp pipeline,
+                     const ::ktdf::common::PipelineEnclosingScope& scope,
+                     llvm::ArrayRef<Candidate> candidates) {
+  assert(!candidates.empty());
+  assert(!scope.loops.empty());
+  mlir::scf::ForOp outermost = scope.loops.back();
+
+  // Step 1: hoist alloc pairs per candidate.
+  SmallVector<SmallVector<Value>> hoisted_pairs;
+  hoisted_pairs.reserve(candidates.size());
+  for (const Candidate& c : candidates) {
+    hoisted_pairs.push_back(hoistAllocPair(c.shape.alloc, outermost));
+  }
+
+  // Step 2: insert one shared buffer_phase immediately before the pipeline.
+  OpBuilder builder(pipeline);
+  SmallVector<Value> phase_ivs = sceneIvsOutermostFirst(scope.loops);
+  auto phase_op = mlir::ktdf::BufferPhaseOp::create(
+      builder, pipeline.getLoc(), builder.getIndexType(), phase_ivs,
+      builder.getI64IntegerAttr(kDefaultNumPhases));
+  Value phase = phase_op.getResult();
+
+  // Step 3: insert per-candidate select_memref immediately before the
+  // pipeline (after the buffer_phase).
+  SmallVector<Value> selected;
+  selected.reserve(candidates.size());
+  for (auto [c, hoisted] : llvm::zip(candidates, hoisted_pairs)) {
+    auto sel = mlir::ktdf::SelectMemrefOp::create(
+        builder, pipeline.getLoc(), c.shape.memref_ty, phase, hoisted);
+    selected.push_back(sel.getResult());
+  }
+
+  // Steps 4–6 arrive in the next task.
+  (void)selected;
+}
+
+//===----------------------------------------------------------------------===//
 // Per-pipeline guards
 //===----------------------------------------------------------------------===//
 
@@ -435,7 +513,10 @@ struct DoubleBufferingPass
       per_pipeline_candidates.emplace_back(pipeline, std::move(candidates));
     }
 
-    // Transformation arrives in the next task.
+    for (auto& [pipeline, candidates] : per_pipeline_candidates) {
+      auto scope = ::ktdf::common::computePipelineEnclosingScope(pipeline);
+      rewritePipeline(pipeline, scope, candidates);
+    }
   }
 
  private:
