@@ -54,6 +54,133 @@ namespace {
 constexpr int64_t kDefaultNumPhases = 2;
 
 //===----------------------------------------------------------------------===//
+// Per-buffer shape-eligibility helpers
+//===----------------------------------------------------------------------===//
+
+struct CandidateShape {
+  /// SSA value yielded by ktdf.private (a result of the PrivateOp).
+  mlir::Value yielded;
+  /// Index into PrivateOp's results / PrivateYieldOp's operands.
+  unsigned slot;
+  /// The single memref.alloc op inside the private region producing this value.
+  mlir::memref::AllocOp alloc;
+  /// Memref type carried by `yielded`.
+  mlir::MemRefType memref_ty;
+};
+
+/// Extract the KTDF MemorySpace enum from a memref's memory space attribute.
+/// Returns std::nullopt if the memory space is not a KTDF MemorySpaceCustomAttr.
+std::optional<mlir::ktdf::MemorySpace> extractKtdfMemorySpace(
+    mlir::MemRefType memref_ty) {
+  Attribute mspace_attr = memref_ty.getMemorySpace();
+  if (!mspace_attr) {
+    return std::nullopt;
+  }
+  if (auto ktdf_attr =
+          llvm::dyn_cast<mlir::ktdf::MemorySpaceCustomAttr>(mspace_attr)) {
+    return ktdf_attr.getValue();
+  }
+  return std::nullopt;
+}
+
+/// True iff every dynamic-size SSA operand of `alloc` is defined at a location
+/// that dominates `insertion_point_op` (using strict op-level dominance —
+/// "defined before" `insertion_point_op` in any common enclosing block).
+bool dynamicSizesDominate(mlir::memref::AllocOp alloc,
+                          mlir::Operation* insertion_point_op,
+                          mlir::DominanceInfo& dom) {
+  for (Value sz : alloc.getDynamicSizes()) {
+    if (!dom.properlyDominates(sz, insertion_point_op)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Apply spec §3.3 a–f checks to one yielded value of a pipeline's
+/// ktdf.private region. Returns a populated CandidateShape on success;
+/// std::nullopt on rejection (with a reason logged via LLVM_DEBUG).
+std::optional<CandidateShape> checkBufferShape(
+    mlir::ktdf::PipelineOp pipeline, mlir::ktdf::PrivateOp private_op,
+    unsigned slot, mlir::Operation* hoist_target,
+    const scheduler::SchedulerExtContext& ctx, mlir::DominanceInfo& dom) {
+  Value yielded = private_op.getResults()[slot];
+
+  // a. Type check: memref.
+  auto memref_ty = llvm::dyn_cast<mlir::MemRefType>(yielded.getType());
+  if (!memref_ty) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "]   slot " << slot << " skipped: not a memref\n");
+    return std::nullopt;
+  }
+
+  // b. Memory-space eligibility.
+  auto mspace = extractKtdfMemorySpace(memref_ty);
+  if (!mspace.has_value() || !ctx.isEligibleForDoubleBuffering(*mspace)) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "]   slot " << slot
+               << " skipped: memory space ineligible\n");
+    return std::nullopt;
+  }
+
+  // c. Defining op check: memref.alloc inside the private region.
+  Value yield_operand = private_op.getYieldOp().getOperands()[slot];
+  auto alloc = yield_operand.getDefiningOp<mlir::memref::AllocOp>();
+  if (!alloc) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "]   slot " << slot
+               << " skipped: defining op is not memref.alloc\n");
+    return std::nullopt;
+  }
+
+  // d. Single-use check: alloc result has exactly one use, and that use is
+  // the private_yield op.
+  if (!alloc.getResult().hasOneUse()) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "]   slot " << slot
+               << " skipped: alloc has multiple uses\n");
+    return std::nullopt;
+  }
+  Operation* sole_user = *alloc.getResult().getUsers().begin();
+  if (sole_user != private_op.getYieldOp().getOperation()) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "]   slot " << slot
+               << " skipped: alloc's sole use is not private_yield\n");
+    return std::nullopt;
+  }
+
+  // e. Same-block check: alloc and private_yield in the same block of the
+  // private region.
+  if (alloc->getBlock() != private_op.getYieldOp()->getBlock()) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "]   slot " << slot
+               << " skipped: alloc and yield are in different blocks\n");
+    return std::nullopt;
+  }
+
+  // f. Dynamic-size domination check.
+  if (!dynamicSizesDominate(alloc, hoist_target, dom)) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "]   slot " << slot
+               << " skipped: dynamic size operand does not dominate hoist target\n");
+    return std::nullopt;
+  }
+
+  return CandidateShape{yielded, slot, alloc, memref_ty};
+}
+
+/// Find the PrivateOp that is the immediate child of `pipeline`. Returns
+/// nullptr if the pipeline has no PrivateOp.
+mlir::ktdf::PrivateOp getPipelinePrivateOp(mlir::ktdf::PipelineOp pipeline) {
+  for (Operation& op : pipeline.getBodyBlock()->getOperations()) {
+    if (auto p = llvm::dyn_cast<mlir::ktdf::PrivateOp>(op)) {
+      return p;
+    }
+  }
+  return nullptr;
+}
+
+//===----------------------------------------------------------------------===//
 // Per-pipeline guards
 //===----------------------------------------------------------------------===//
 
@@ -90,20 +217,51 @@ struct DoubleBufferingPass
 
     LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] starting\n");
 
-    // Pre-order walk over pipelines.
-    SmallVector<mlir::ktdf::PipelineOp> eligible;
+    DominanceInfo dom(module);
+
+    SmallVector<std::pair<mlir::ktdf::PipelineOp, SmallVector<CandidateShape>>>
+        per_pipeline_shapes;
     module.walk<WalkOrder::PreOrder>([&](mlir::ktdf::PipelineOp pipeline) {
       auto scope = ::ktdf::common::computePipelineEnclosingScope(pipeline);
       if (!isPipelineEligible(pipeline, scope)) {
         return;
       }
+
+      // Hoist target: the position immediately before scope.loops.back()
+      // (the outermost loop in scope).
+      Operation* hoist_target = scope.loops.back().getOperation();
+
+      auto private_op = getPipelinePrivateOp(pipeline);
+      if (!private_op) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()
+                   << ": no ktdf.private region\n");
+        return;
+      }
+
+      SmallVector<CandidateShape> shapes;
+      for (unsigned slot = 0; slot < private_op.getNumResults(); ++slot) {
+        auto shape = checkBufferShape(pipeline, private_op, slot, hoist_target,
+                                       scheduler_ctx_, dom);
+        if (shape.has_value()) {
+          shapes.push_back(*shape);
+        }
+      }
+
+      if (shapes.empty()) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()
+                   << ": no shape-eligible buffers\n");
+        return;
+      }
+
       LLVM_DEBUG(llvm::dbgs()
-                 << "[" PASS_NAME "] eligible pipeline at " << pipeline.getLoc()
-                 << "\n");
-      eligible.push_back(pipeline);
+                 << "[" PASS_NAME "] pipeline at " << pipeline.getLoc()
+                 << " has " << shapes.size() << " shape-eligible buffer(s)\n");
+      per_pipeline_shapes.emplace_back(pipeline, std::move(shapes));
     });
 
-    // Candidate detection and transformation arrive in subsequent tasks.
+    // Producer/consumer scan + transformation arrive in subsequent tasks.
   }
 
  private:
