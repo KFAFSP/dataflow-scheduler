@@ -88,7 +88,7 @@ std::optional<mlir::ktdf::MemorySpace> extractKtdfMemorySpace(
 /// "defined before" `insertion_point_op` in any common enclosing block).
 bool dynamicSizesDominate(mlir::memref::AllocOp alloc,
                           mlir::Operation* insertion_point_op,
-                          mlir::DominanceInfo& dom) {
+                          const mlir::DominanceInfo& dom) {
   for (Value sz : alloc.getDynamicSizes()) {
     if (!dom.properlyDominates(sz, insertion_point_op)) {
       return false;
@@ -101,9 +101,9 @@ bool dynamicSizesDominate(mlir::memref::AllocOp alloc,
 /// ktdf.private region. Returns a populated CandidateShape on success;
 /// std::nullopt on rejection (with a reason logged via LLVM_DEBUG).
 std::optional<CandidateShape> checkBufferShape(
-    mlir::ktdf::PipelineOp pipeline, mlir::ktdf::PrivateOp private_op,
+    mlir::ktdf::PrivateOp private_op,
     unsigned slot, mlir::Operation* hoist_target,
-    const scheduler::SchedulerExtContext& ctx, mlir::DominanceInfo& dom) {
+    const scheduler::SchedulerExtContext& ctx, const mlir::DominanceInfo& dom) {
   Value yielded = private_op.getResults()[slot];
 
   // a. Type check: memref.
@@ -241,7 +241,7 @@ struct DoubleBufferingPass
 
       SmallVector<CandidateShape> shapes;
       for (unsigned slot = 0; slot < private_op.getNumResults(); ++slot) {
-        auto shape = checkBufferShape(pipeline, private_op, slot, hoist_target,
+        auto shape = checkBufferShape(private_op, slot, hoist_target,
                                        scheduler_ctx_, dom);
         if (shape.has_value()) {
           shapes.push_back(*shape);
