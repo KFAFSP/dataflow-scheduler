@@ -192,26 +192,6 @@ struct Candidate {
   SmallVector<mlir::ktdf::StageOp> consumers;
 };
 
-/// Find the immediate sibling stage of `pipeline` containing `op` (op may be
-/// nested arbitrarily deep inside the stage's region). Returns nullptr if no
-/// sibling-stage ancestor is found.
-mlir::ktdf::StageOp findEnclosingSiblingStage(
-    mlir::ktdf::PipelineOp pipeline, mlir::Operation* op) {
-  Operation* cur = op;
-  while (cur && cur->getParentOp() != pipeline.getOperation()) {
-    if (auto stage = llvm::dyn_cast<mlir::ktdf::StageOp>(cur)) {
-      if (stage->getParentOp() == pipeline.getOperation()) {
-        return stage;
-      }
-    }
-    cur = cur->getParentOp();
-  }
-  if (auto stage = llvm::dyn_cast_or_null<mlir::ktdf::StageOp>(cur)) {
-    return stage;
-  }
-  return nullptr;
-}
-
 /// Walk the entire region of each sibling stage of `pipeline` recursively,
 /// classifying every ktdf.data_transfer that references `buffer` as producer
 /// (buffer is dest) or consumer (buffer is source). Stages are deduplicated.
