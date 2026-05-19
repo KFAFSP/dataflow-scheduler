@@ -901,29 +901,43 @@ void ConstructThreeStagePipelinePass::createComputeOps(
     return;
   }
 
-  // Build a mapping from load results to read_from_fifo results
-  DenseMap<Value, Value> value_map;
+  // Find the post-tiling extract_slice that feeds each load result into the
+  // linalg compute op. Its result type is the per-operand tile shape (which
+  // may have lower rank than the linalg result when the operand's indexing
+  // map drops iteration-space dims, e.g. a broadcast input).
+  DenseMap<Value, tensor::ExtractSliceOp> load_to_extract;
+  for (ktdp::LoadOp load_op : load_ops_) {
+    for (Operation* user : load_op.getResult().getUsers()) {
+      if (auto extract_op = dyn_cast<tensor::ExtractSliceOp>(user)) {
+        load_to_extract[load_op.getResult()] = extract_op;
+        break;
+      }
+    }
+  }
 
-  // For each load operation, create ktdf.read_from_fifo to read tiled tensor
-  // from FIFO slot, and map the load result to it.
+  // Build a mapping from load results to read_from_fifo results, using the
+  // per-operand tile type so the cloned linalg op's input ranks match its
+  // indexing maps.
+  DenseMap<Value, Value> value_map;
+  IRMapping mapper;
   for (size_t i = 0; i < load_ops_.size(); ++i) {
     ktdp::LoadOp load_op = load_ops_[i];
     Value fifo_slot = private_op.getResult(i);
 
-    auto read_fifo_op = mlir::ktdf::ReadFromFifoOp::create(
-        builder, loc, tiled_tensor_type, fifo_slot);
-    value_map[load_op.getResult()] = read_fifo_op.getResult();
-  }
-
-  // Find all tensor.extract_slice operations that use load results
-  // and map them to corresponding read_from_fifo result.
-  IRMapping mapper;
-  for (ktdp::LoadOp load_op : load_ops_) {
-    for (Operation* user : load_op.getResult().getUsers()) {
-      if (auto extract_op = dyn_cast<tensor::ExtractSliceOp>(user)) {
-        mapper.map(extract_op.getResult(), value_map[load_op.getResult()]);
-      }
+    auto extract_it = load_to_extract.find(load_op.getResult());
+    if (extract_it == load_to_extract.end()) {
+      load_op.emitError(
+          "no tensor.extract_slice user found; cannot determine the per-operand "
+          "tile type for ktdf.read_from_fifo");
+      signalPassFailure();
+      return;
     }
+    Type per_operand_tile_type = extract_it->second.getResult().getType();
+
+    auto read_fifo_op = mlir::ktdf::ReadFromFifoOp::create(
+        builder, loc, per_operand_tile_type, fifo_slot);
+    value_map[load_op.getResult()] = read_fifo_op.getResult();
+    mapper.map(extract_it->second.getResult(), read_fifo_op.getResult());
   }
 
   // Clone compute operation into stage 2 and create write_to_fifo for each
