@@ -415,7 +415,6 @@ LogicalResult DataTransferOp::verify() {
   auto source_type = getSource().getType();
   auto dest_type = getDestination().getType();
 
-  // Verify that source and destination are not both FIFOs
   bool source_fifo = llvm::isa<FifoSlotType>(source_type);
   bool dest_fifo = llvm::isa<FifoSlotType>(dest_type);
 
@@ -423,97 +422,105 @@ LogicalResult DataTransferOp::verify() {
     return emitOpError("cannot transfer directly from FIFO to FIFO");
   }
 
-  // Verify that at least one is a memref or FIFO
   bool source_memref = llvm::isa<MemRefType>(source_type);
   bool dest_memref = llvm::isa<MemRefType>(dest_type);
 
   if (!source_memref && !source_fifo) {
     return emitOpError("source must be a memref or FIFO slot");
   }
-
   if (!dest_memref && !dest_fifo) {
-    return emitOpError("destination must be a memref or FIFO slot");
+    return emitOpError("dest must be a memref or FIFO slot");
   }
 
-  // Verify that FIFO slots have no indices specified
-  if (source_fifo && !getSourceIndices().empty()) {
-    return emitOpError("FIFO slot source cannot have indices specified");
-  }
-
-  if (dest_fifo && !getDestIndices().empty()) {
-    return emitOpError("FIFO slot destination cannot have indices specified");
-  }
-
-  // Get element types for compatibility checking
-  Type source_elem_type;
-  Type dest_elem_type;
-
+  // Element-type compatibility.
+  Type source_elem_type, dest_elem_type;
   if (source_memref) {
     source_elem_type = llvm::cast<MemRefType>(source_type).getElementType();
-  } else if (source_fifo) {
+  } else {
     source_elem_type = llvm::cast<FifoSlotType>(source_type).getElementType();
   }
-
   if (dest_memref) {
     dest_elem_type = llvm::cast<MemRefType>(dest_type).getElementType();
-  } else if (dest_fifo) {
+  } else {
     dest_elem_type = llvm::cast<FifoSlotType>(dest_type).getElementType();
   }
-
-  // Verify element type compatibility
-  if (source_elem_type && dest_elem_type &&
-      source_elem_type != dest_elem_type) {
+  if (source_elem_type != dest_elem_type) {
     return emitOpError("source and destination element types must match, got ")
            << source_elem_type << " and " << dest_elem_type;
   }
 
-  // Verify indices and sizes are consistent for memrefs
-  auto source_memref_type = llvm::dyn_cast<MemRefType>(source_type);
-  if (source_memref_type) {
-    unsigned rank = source_memref_type.getRank();
-    if (!getSourceIndices().empty() && getSourceIndices().size() != rank) {
-      return emitOpError("source indices count (")
-             << getSourceIndices().size() << ") must match source memref rank ("
-             << rank << ")";
+  // Map / indices invariants per side.
+  auto verifySide = [&](StringRef side_name, bool is_memref, Type ty,
+                        std::optional<AffineMap> map,
+                        OperandRange indices) -> LogicalResult {
+    if (is_memref) {
+      auto memref_ty = llvm::cast<MemRefType>(ty);
+      if (!map) {
+        return emitOpError(side_name)
+               << "_map must be present when " << side_name << " is a memref";
+      }
+      if (map->getNumSymbols() != 0) {
+        return emitOpError(side_name)
+               << "_map must have 0 symbols (dims-only); got "
+               << map->getNumSymbols();
+      }
+      if (map->getNumResults() != static_cast<unsigned>(memref_ty.getRank())) {
+        return emitOpError(side_name)
+               << " memref has rank " << memref_ty.getRank() << " but "
+               << side_name << "_map has " << map->getNumResults()
+               << " results";
+      }
+      if (indices.size() != map->getNumDims()) {
+        return emitOpError(side_name)
+               << "_indices count (" << indices.size() << ") must match "
+               << side_name << "_map dim count (" << map->getNumDims() << ")";
+      }
+      return success();
     }
-  }
-
-  auto dest_memref_type = llvm::dyn_cast<MemRefType>(dest_type);
-  if (dest_memref_type) {
-    unsigned rank = dest_memref_type.getRank();
-    if (!getDestIndices().empty() && getDestIndices().size() != rank) {
-      return emitOpError("destination indices count (")
-             << getDestIndices().size()
-             << ") must match destination memref rank (" << rank << ")";
+    // FIFO side
+    if (map) {
+      return emitOpError(side_name)
+             << "_map must be absent for fifo " << side_name;
     }
-  }
+    if (!indices.empty()) {
+      return emitOpError("FIFO slot ")
+             << side_name << " cannot have indices specified";
+    }
+    return success();
+  };
 
-  // Verify that static and dynamic sizes are consistent
+  std::optional<AffineMap> source_map;
+  if (auto src_map_attr = getSourceMapAttr())
+    source_map = src_map_attr.getValue();
+  std::optional<AffineMap> dest_map;
+  if (auto dst_map_attr = getDestMapAttr())
+    dest_map = dst_map_attr.getValue();
+
+  if (failed(verifySide("source", source_memref, source_type, source_map,
+                        getSourceIndices())))
+    return failure();
+  if (failed(verifySide("dest", dest_memref, dest_type, dest_map,
+                        getDestIndices())))
+    return failure();
+
+  // Sizes consistency (dynamic operand count vs static array placeholders).
   auto verifySize = [&](OperandRange dynamicSizes,
                         std::optional<ArrayRef<int64_t>> static_sizes,
                         StringRef name) -> LogicalResult {
-    if (!static_sizes) {
-      // All sizes are dynamic - no verification needed
-      return success();
-    }
-
+    if (!static_sizes) return success();
     ArrayRef<int64_t> static_values = *static_sizes;
     unsigned num_dynamic = llvm::count_if(
         static_values, [](int64_t val) { return ShapedType::isDynamic(val); });
-
     if (dynamicSizes.size() != num_dynamic) {
       return emitOpError("number of dynamic ")
              << name << " sizes (" << dynamicSizes.size()
              << ") must match number of dynamic entries in static_" << name
              << "_sizes (" << num_dynamic << ")";
     }
-
     return success();
   };
-
   if (failed(verifySize(getSourceSizes(), getStaticSourceSizes(), "source")))
     return failure();
-
   if (failed(verifySize(getDestSizes(), getStaticDestSizes(), "dest")))
     return failure();
 
