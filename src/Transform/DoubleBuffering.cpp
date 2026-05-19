@@ -24,6 +24,7 @@
 // inserted before the pipeline, and modulo(size: 2) set on the pipeline.
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -368,6 +369,80 @@ SmallVector<Value> scopeIvsOutermostFirst(
   return result;
 }
 
+/// Replace all uses of `from` with `to` that are inside `region` (recursively
+/// — including nested ops). Uses outside the region are left alone (there
+/// shouldn't be any for a ktdf.private result, but this keeps the helper
+/// scoped).
+void replaceUsesInRegion(Value from, Value to, mlir::Region& region) {
+  from.replaceUsesWithIf(to, [&](OpOperand& use) {
+    Operation* user = use.getOwner();
+    return region.isAncestor(user->getParentRegion());
+  });
+}
+
+/// Erase the slots in `slots_to_drop` from a ktdf.private op:
+///   1. Erase the corresponding operands of ktdf.private_yield.
+///   2. Recreate the ktdf.private op with the reduced result types.
+///   3. RAUW the kept results of the old op with the new op's results.
+///   4. Erase the orphaned memref.alloc ops in the private region.
+void prunePrivateSlots(mlir::ktdf::PrivateOp private_op,
+                       llvm::ArrayRef<unsigned> slots_to_drop_sorted) {
+  // Build keep mask.
+  unsigned n_results = private_op.getNumResults();
+  llvm::BitVector drop_mask(n_results);
+  for (unsigned slot : slots_to_drop_sorted) {
+    drop_mask.set(slot);
+  }
+
+  // Erase yield operands at dropped slots, collecting the orphaned alloc ops
+  // for later erase. Process slots in descending order so indices stay valid.
+  mlir::ktdf::PrivateYieldOp yield_op = private_op.getYieldOp();
+  SmallVector<mlir::memref::AllocOp> orphaned_allocs;
+  for (unsigned slot :
+       llvm::reverse(SmallVector<unsigned>(slots_to_drop_sorted.begin(),
+                                           slots_to_drop_sorted.end()))) {
+    Value yield_operand = yield_op.getOperands()[slot];
+    if (auto alloc = yield_operand.getDefiningOp<mlir::memref::AllocOp>()) {
+      orphaned_allocs.push_back(alloc);
+    }
+    yield_op->eraseOperand(slot);
+  }
+
+  // Compute the new result types for the recreated PrivateOp.
+  SmallVector<Type> new_result_types;
+  for (unsigned i = 0; i < n_results; ++i) {
+    if (!drop_mask.test(i)) {
+      new_result_types.push_back(private_op.getResult(i).getType());
+    }
+  }
+
+  // Build the new PrivateOp at the same location and splice the body.
+  OpBuilder builder(private_op);
+  auto new_private = mlir::ktdf::PrivateOp::create(
+      builder, private_op.getLoc(), TypeRange(new_result_types));
+  // Splice the old region into the new op (drops the auto-created empty body).
+  new_private.getBody().takeBody(private_op.getBody());
+
+  // RAUW kept results of the old op with corresponding results of the new op.
+  unsigned new_idx = 0;
+  for (unsigned i = 0; i < n_results; ++i) {
+    if (drop_mask.test(i)) {
+      continue;
+    }
+    private_op.getResult(i).replaceAllUsesWith(new_private.getResult(new_idx));
+    ++new_idx;
+  }
+
+  // Erase the old PrivateOp.
+  private_op.erase();
+
+  // Erase the orphaned allocs (now detached via private_yield's operand
+  // erasure).
+  for (mlir::memref::AllocOp alloc : orphaned_allocs) {
+    alloc.erase();
+  }
+}
+
 /// Apply the transformation to one pipeline: hoist alloc pairs, insert one
 /// shared ktdf.buffer_phase, insert per-candidate ktdf.select_memref,
 /// rewrite uses of each original yielded buffer inside the pipeline's
@@ -405,8 +480,26 @@ void rewritePipeline(mlir::ktdf::PipelineOp pipeline,
     selected.push_back(sel.getResult());
   }
 
-  // Steps 4–6 arrive in the next task.
-  (void)selected;
+  // Step 4: rewrite uses of each original yielded buffer inside the
+  // pipeline's region to the corresponding selected memref.
+  for (auto [c, sel] : llvm::zip(candidates, selected)) {
+    replaceUsesInRegion(c.shape.yielded, sel, pipeline.getBody());
+  }
+
+  // Step 5: set modulo(size: 2) on the pipeline.
+  pipeline.setModuloAttr(
+      builder.getI64IntegerAttr(kDefaultNumPhases));
+
+  // Step 6: clean up ktdf.private — drop the slots we transferred out.
+  SmallVector<unsigned> slots_to_drop;
+  slots_to_drop.reserve(candidates.size());
+  for (const Candidate& c : candidates) {
+    slots_to_drop.push_back(c.shape.slot);
+  }
+  llvm::sort(slots_to_drop);
+  if (auto private_op = getPipelinePrivateOp(pipeline)) {
+    prunePrivateSlots(private_op, slots_to_drop);
+  }
 }
 
 //===----------------------------------------------------------------------===//
