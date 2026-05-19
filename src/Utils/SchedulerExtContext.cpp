@@ -75,4 +75,9 @@ bool SchedulerExtContext::isPerCoreletUnit(
   llvm::report_fatal_error("Unknown ComponentType in isPerCoreletUnit");
 }
 
+bool SchedulerExtContext::isEligibleForDoubleBuffering(
+    mlir::ktdf::MemorySpace mspace) const {
+  return mspace == mlir::ktdf::MemorySpace::LX;
+}
+
 }  // namespace scheduler

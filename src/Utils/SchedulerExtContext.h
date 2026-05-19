@@ -65,6 +65,12 @@ struct SchedulerExtContext {
   /// core-shared units (L3LU, L3SU). Used to decide whether a pipeline's
   /// work is corelet-local.
   virtual bool isPerCoreletUnit(mlir::ktdf::ComponentType unit) const;
+
+  /// True iff `mspace` is eligible for double-buffering on this target.
+  /// Default returns true only for LX scratchpad. Used by the
+  /// -double-buffering pass to gate which memrefs it transforms.
+  virtual bool isEligibleForDoubleBuffering(
+      mlir::ktdf::MemorySpace mspace) const;
 };
 
 /// @brief Construct a DummySchedulerExtContext. In general prefer
