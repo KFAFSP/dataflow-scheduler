@@ -527,6 +527,120 @@ LogicalResult DataTransferOp::verify() {
   return success();
 }
 
+ParseResult DataTransferOp::parse(OpAsmParser& parser, OperationState& result) {
+  OpAsmParser::UnresolvedOperand source_operand, dest_operand;
+  SmallVector<OpAsmParser::UnresolvedOperand> source_index_operands;
+  SmallVector<OpAsmParser::UnresolvedOperand> source_size_operands;
+  SmallVector<OpAsmParser::UnresolvedOperand> dest_index_operands;
+  SmallVector<OpAsmParser::UnresolvedOperand> dest_size_operands;
+  DenseI64ArrayAttr static_source_sizes_attr;
+  DenseI64ArrayAttr static_dest_sizes_attr;
+  Type source_type, dest_type;
+
+  if (parser.parseKeyword("from") || parser.parseOperand(source_operand))
+    return failure();
+
+  // Source map + indices: present iff `[` follows.
+  if (succeeded(parser.parseOptionalLSquare())) {
+    Attribute source_map_attr;
+    if (parser.parseAffineMapOfSSAIds(source_index_operands, source_map_attr,
+                                      "source_map", result.attributes,
+                                      OpAsmParser::Delimiter::None) ||
+        parser.parseRSquare())
+      return failure();
+  }
+
+  // Source size clause (optional): `size [ ... ]`.
+  if (succeeded(parser.parseOptionalKeyword("size"))) {
+    if (parseSizesList(parser, source_size_operands, static_source_sizes_attr))
+      return failure();
+    if (static_source_sizes_attr) {
+      result.addAttribute("static_source_sizes", static_source_sizes_attr);
+    }
+  }
+
+  if (parser.parseKeyword("to") || parser.parseOperand(dest_operand))
+    return failure();
+
+  if (succeeded(parser.parseOptionalLSquare())) {
+    Attribute dest_map_attr;
+    if (parser.parseAffineMapOfSSAIds(dest_index_operands, dest_map_attr,
+                                      "dest_map", result.attributes,
+                                      OpAsmParser::Delimiter::None) ||
+        parser.parseRSquare())
+      return failure();
+  }
+
+  if (succeeded(parser.parseOptionalKeyword("size"))) {
+    if (parseSizesList(parser, dest_size_operands, static_dest_sizes_attr))
+      return failure();
+    if (static_dest_sizes_attr) {
+      result.addAttribute("static_dest_sizes", static_dest_sizes_attr);
+    }
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes) ||
+      parser.parseColon() || parser.parseType(source_type) ||
+      parser.parseComma() || parser.parseType(dest_type))
+    return failure();
+
+  // Resolve operands.
+  if (parser.resolveOperand(source_operand, source_type, result.operands))
+    return failure();
+  Type index_ty = parser.getBuilder().getIndexType();
+  if (parser.resolveOperands(source_index_operands, index_ty, result.operands))
+    return failure();
+  if (parser.resolveOperands(source_size_operands, index_ty, result.operands))
+    return failure();
+  if (parser.resolveOperand(dest_operand, dest_type, result.operands))
+    return failure();
+  if (parser.resolveOperands(dest_index_operands, index_ty, result.operands))
+    return failure();
+  if (parser.resolveOperands(dest_size_operands, index_ty, result.operands))
+    return failure();
+
+  // operandSegmentSizes: source(1), src_idx, src_sz, dest(1), dst_idx, dst_sz
+  result.addAttribute(
+      "operandSegmentSizes",
+      parser.getBuilder().getDenseI32ArrayAttr(
+          {1, static_cast<int32_t>(source_index_operands.size()),
+           static_cast<int32_t>(source_size_operands.size()), 1,
+           static_cast<int32_t>(dest_index_operands.size()),
+           static_cast<int32_t>(dest_size_operands.size())}));
+
+  return success();
+}
+
+void DataTransferOp::print(OpAsmPrinter& p) {
+  p << " from " << getSource();
+  if (auto src_map = getSourceMapAttr()) {
+    p << "[";
+    p.printAffineMapOfSSAIds(src_map, getSourceIndices());
+    p << "]";
+  }
+  if (!getSourceSizes().empty() || getStaticSourceSizes()) {
+    p << " size ";
+    printSizesList(p, getOperation(), getSourceSizes(),
+                   getStaticSourceSizesAttr());
+  }
+  p << " to " << getDestination();
+  if (auto dst_map = getDestMapAttr()) {
+    p << "[";
+    p.printAffineMapOfSSAIds(dst_map, getDestIndices());
+    p << "]";
+  }
+  if (!getDestSizes().empty() || getStaticDestSizes()) {
+    p << " size ";
+    printSizesList(p, getOperation(), getDestSizes(), getStaticDestSizesAttr());
+  }
+  // Elide all attributes we render inline.
+  p.printOptionalAttrDict(
+      (*this)->getAttrs(),
+      /*elidedAttrs=*/{"source_map", "dest_map", "static_source_sizes",
+                       "static_dest_sizes", "operandSegmentSizes"});
+  p << " : " << getSource().getType() << ", " << getDestination().getType();
+}
+
 //===----------------------------------------------------------------------===//
 // ReadFromFifoOp
 //===----------------------------------------------------------------------===//
