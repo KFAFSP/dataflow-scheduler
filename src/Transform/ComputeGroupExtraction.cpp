@@ -78,7 +78,9 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
 
@@ -605,6 +607,13 @@ void ComputeGroupExtractionPass::runOn(ModuleOp module_op) {
   for (const auto& group : groups_to_extract_) {
     extractComputeGroup(module_op, original_module, group);
   }
+
+  // Clean up side-effect-free ops left dead after extraction (e.g. ops that
+  // were cloned into child modules but whose originals are now unused in the
+  // top-level module). runRegionDCE recurses into nested regions, so passing
+  // the module's regions covers child modules created above.
+  IRRewriter rewriter(module_op.getContext());
+  (void)mlir::runRegionDCE(rewriter, module_op->getRegions());
 }
 
 void ComputeGroupExtractionPass::runOnOperation() {

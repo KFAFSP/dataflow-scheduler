@@ -44,7 +44,6 @@ void buildKTDPToDFIRPipeline(
     mlir::OpPassManager& pm,
     const scheduler::SchedulerExtContext& scheduler_ctx) {
   pm.addPass(createComputeGroupExtractionPass());
-  pm.addPass(mlir::createSymbolDCEPass());
   pm.addPass(createConstructThreeStagePipelinePass(scheduler_ctx));
   pm.addPass(createParallelizeLoopsAcrossInstancesPass(scheduler_ctx));
   pm.addPass(createDoubleBufferingPass(scheduler_ctx));
