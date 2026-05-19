@@ -905,20 +905,22 @@ LogicalResult SelectMemrefOp::verify() {
   }
   if (getResult().getType() != expected) {
     return emitOpError("result type ")
-           << getResult().getType()
-           << " must match candidate type " << expected;
+           << getResult().getType() << " must match candidate type "
+           << expected;
   }
 
   // The phase operand must come from a ktdf.buffer_phase whose num_phases
   // equals the number of candidates.
   Operation* defining_op = getPhase().getDefiningOp();
   if (!defining_op) {
-    return emitOpError("phase operand must be defined by a ktdf.buffer_phase op");
+    return emitOpError(
+        "phase operand must be defined by a ktdf.buffer_phase op");
   }
   auto phase_op = llvm::dyn_cast<BufferPhaseOp>(defining_op);
   if (!phase_op) {
-    return emitOpError("phase operand must be defined by a ktdf.buffer_phase op, "
-                       "got ")
+    return emitOpError(
+               "phase operand must be defined by a ktdf.buffer_phase op, "
+               "got ")
            << defining_op->getName();
   }
   if (phase_op.getNumPhases() != static_cast<int64_t>(candidates.size())) {

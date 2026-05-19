@@ -70,7 +70,8 @@ struct CandidateShape {
 };
 
 /// Extract the KTDF MemorySpace enum from a memref's memory space attribute.
-/// Returns std::nullopt if the memory space is not a KTDF MemorySpaceCustomAttr.
+/// Returns std::nullopt if the memory space is not a KTDF
+/// MemorySpaceCustomAttr.
 std::optional<mlir::ktdf::MemorySpace> extractKtdfMemorySpace(
     mlir::MemRefType memref_ty) {
   Attribute mspace_attr = memref_ty.getMemorySpace();
@@ -102,25 +103,24 @@ bool dynamicSizesDominate(mlir::memref::AllocOp alloc,
 /// ktdf.private region. Returns a populated CandidateShape on success;
 /// std::nullopt on rejection (with a reason logged via LLVM_DEBUG).
 std::optional<CandidateShape> checkBufferShape(
-    mlir::ktdf::PrivateOp private_op,
-    unsigned slot, mlir::Operation* hoist_target,
-    const scheduler::SchedulerExtContext& ctx, const mlir::DominanceInfo& dom) {
+    mlir::ktdf::PrivateOp private_op, unsigned slot,
+    mlir::Operation* hoist_target, const scheduler::SchedulerExtContext& ctx,
+    const mlir::DominanceInfo& dom) {
   Value yielded = private_op.getResults()[slot];
 
   // a. Type check: memref.
   auto memref_ty = llvm::dyn_cast<mlir::MemRefType>(yielded.getType());
   if (!memref_ty) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "]   slot " << slot << " skipped: not a memref\n");
+    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "]   slot " << slot
+                            << " skipped: not a memref\n");
     return std::nullopt;
   }
 
   // b. Memory-space eligibility.
   auto mspace = extractKtdfMemorySpace(memref_ty);
   if (!mspace.has_value() || !ctx.isEligibleForDoubleBuffering(*mspace)) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "]   slot " << slot
-               << " skipped: memory space ineligible\n");
+    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "]   slot " << slot
+                            << " skipped: memory space ineligible\n");
     return std::nullopt;
   }
 
@@ -128,18 +128,16 @@ std::optional<CandidateShape> checkBufferShape(
   Value yield_operand = private_op.getYieldOp().getOperands()[slot];
   auto alloc = yield_operand.getDefiningOp<mlir::memref::AllocOp>();
   if (!alloc) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "]   slot " << slot
-               << " skipped: defining op is not memref.alloc\n");
+    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "]   slot " << slot
+                            << " skipped: defining op is not memref.alloc\n");
     return std::nullopt;
   }
 
   // d. Single-use check: alloc result has exactly one use, and that use is
   // the private_yield op.
   if (!alloc.getResult().hasOneUse()) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "]   slot " << slot
-               << " skipped: alloc has multiple uses\n");
+    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "]   slot " << slot
+                            << " skipped: alloc has multiple uses\n");
     return std::nullopt;
   }
   Operation* sole_user = *alloc.getResult().getUsers().begin();
@@ -161,9 +159,10 @@ std::optional<CandidateShape> checkBufferShape(
 
   // f. Dynamic-size domination check.
   if (!dynamicSizesDominate(alloc, hoist_target, dom)) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "]   slot " << slot
-               << " skipped: dynamic size operand does not dominate hoist target\n");
+    LLVM_DEBUG(
+        llvm::dbgs()
+        << "[" PASS_NAME "]   slot " << slot
+        << " skipped: dynamic size operand does not dominate hoist target\n");
     return std::nullopt;
   }
 
@@ -198,7 +197,7 @@ struct Candidate {
 /// (buffer is dest) or consumer (buffer is source). Stages are deduplicated.
 /// Returns std::nullopt iff a sibling stage is both producer and consumer.
 std::optional<std::pair<SmallVector<mlir::ktdf::StageOp>,
-                         SmallVector<mlir::ktdf::StageOp>>>
+                        SmallVector<mlir::ktdf::StageOp>>>
 scanProducersConsumers(mlir::ktdf::PipelineOp pipeline, mlir::Value buffer) {
   llvm::SmallSetVector<mlir::ktdf::StageOp, 4> producers;
   llvm::SmallSetVector<mlir::ktdf::StageOp, 4> consumers;
@@ -225,10 +224,9 @@ scanProducersConsumers(mlir::ktdf::PipelineOp pipeline, mlir::Value buffer) {
     }
   }
 
-  return std::make_pair(SmallVector<mlir::ktdf::StageOp>(producers.begin(),
-                                                          producers.end()),
-                        SmallVector<mlir::ktdf::StageOp>(consumers.begin(),
-                                                          consumers.end()));
+  return std::make_pair(
+      SmallVector<mlir::ktdf::StageOp>(producers.begin(), producers.end()),
+      SmallVector<mlir::ktdf::StageOp>(consumers.begin(), consumers.end()));
 }
 
 /// True iff `producer` transitively precedes `target` in `pipeline`'s token
@@ -292,39 +290,40 @@ bool producerTransitivelyPrecedes(mlir::ktdf::PipelineOp pipeline,
 /// Apply spec §3.3 g–k checks to a shape-eligible buffer in `pipeline`. On
 /// success, returns a Candidate. On rejection, logs the reason and returns
 /// std::nullopt.
-std::optional<Candidate> checkProducerConsumer(
-    mlir::ktdf::PipelineOp pipeline, const CandidateShape& shape) {
+std::optional<Candidate> checkProducerConsumer(mlir::ktdf::PipelineOp pipeline,
+                                               const CandidateShape& shape) {
   auto scan = scanProducersConsumers(pipeline, shape.yielded);
   if (!scan.has_value()) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "]   slot " << shape.slot
-               << " skipped: a sibling stage both writes and reads the buffer\n");
+    LLVM_DEBUG(
+        llvm::dbgs()
+        << "[" PASS_NAME "]   slot " << shape.slot
+        << " skipped: a sibling stage both writes and reads the buffer\n");
     return std::nullopt;
   }
   auto& [producers, consumers] = *scan;
 
   // h. Producer cardinality.
   if (producers.size() != 1) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "]   slot " << shape.slot << " skipped: "
-               << producers.size() << " producer stages (need exactly 1)\n");
+    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "]   slot " << shape.slot
+                            << " skipped: " << producers.size()
+                            << " producer stages (need exactly 1)\n");
     return std::nullopt;
   }
 
   // i. Consumer cardinality.
   if (consumers.empty()) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "]   slot " << shape.slot
-               << " skipped: no consumer stages\n");
+    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "]   slot " << shape.slot
+                            << " skipped: no consumer stages\n");
     return std::nullopt;
   }
 
   // k. Producer must transitively precede every consumer.
   for (mlir::ktdf::StageOp consumer : consumers) {
     if (!producerTransitivelyPrecedes(pipeline, producers.front(), consumer)) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "[" PASS_NAME "]   slot " << shape.slot
-                 << " skipped: producer does not transitively precede consumer\n");
+      LLVM_DEBUG(
+          llvm::dbgs()
+          << "[" PASS_NAME "]   slot " << shape.slot
+          << " skipped: producer does not transitively precede consumer\n");
       return std::nullopt;
     }
   }
@@ -398,9 +397,8 @@ void prunePrivateSlots(mlir::ktdf::PrivateOp private_op,
   // for later erase. Process slots in descending order so indices stay valid.
   mlir::ktdf::PrivateYieldOp yield_op = private_op.getYieldOp();
   SmallVector<mlir::memref::AllocOp> orphaned_allocs;
-  for (unsigned slot :
-       llvm::reverse(SmallVector<unsigned>(slots_to_drop_sorted.begin(),
-                                           slots_to_drop_sorted.end()))) {
+  for (unsigned slot : llvm::reverse(SmallVector<unsigned>(
+           slots_to_drop_sorted.begin(), slots_to_drop_sorted.end()))) {
     Value yield_operand = yield_op.getOperands()[slot];
     if (auto alloc = yield_operand.getDefiningOp<mlir::memref::AllocOp>()) {
       orphaned_allocs.push_back(alloc);
@@ -418,8 +416,8 @@ void prunePrivateSlots(mlir::ktdf::PrivateOp private_op,
 
   // Build the new PrivateOp at the same location and splice the body.
   OpBuilder builder(private_op);
-  auto new_private = mlir::ktdf::PrivateOp::create(
-      builder, private_op.getLoc(), TypeRange(new_result_types));
+  auto new_private = mlir::ktdf::PrivateOp::create(builder, private_op.getLoc(),
+                                                   TypeRange(new_result_types));
   // Splice the old region into the new op (drops the auto-created empty body).
   new_private.getBody().takeBody(private_op.getBody());
 
@@ -487,8 +485,7 @@ void rewritePipeline(mlir::ktdf::PipelineOp pipeline,
   }
 
   // Step 5: set modulo(size: 2) on the pipeline.
-  pipeline.setModuloAttr(
-      builder.getI64IntegerAttr(kDefaultNumPhases));
+  pipeline.setModuloAttr(builder.getI64IntegerAttr(kDefaultNumPhases));
 
   // Step 6: clean up ktdf.private — drop the slots we transferred out.
   SmallVector<unsigned> slots_to_drop;
@@ -509,13 +506,11 @@ void rewritePipeline(mlir::ktdf::PipelineOp pipeline,
 /// True iff the pipeline is eligible for analysis (no pre-existing modulo
 /// and a non-empty enclosing scope of scf.for loops). On rejection, logs
 /// the reason via LLVM_DEBUG.
-bool isPipelineEligible(
-    mlir::ktdf::PipelineOp pipeline,
-    const ::ktdf::common::PipelineEnclosingScope& scope) {
+bool isPipelineEligible(mlir::ktdf::PipelineOp pipeline,
+                        const ::ktdf::common::PipelineEnclosingScope& scope) {
   if (pipeline.getModuloAttr()) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()
-               << ": modulo already set\n");
+    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] skip pipeline at "
+                            << pipeline.getLoc() << ": modulo already set\n");
     return false;
   }
   if (scope.loops.empty()) {
@@ -564,7 +559,7 @@ struct DoubleBufferingPass
       SmallVector<CandidateShape> shapes;
       for (unsigned slot = 0; slot < private_op.getNumResults(); ++slot) {
         auto shape = checkBufferShape(private_op, slot, hoist_target,
-                                       scheduler_ctx_, dom);
+                                      scheduler_ctx_, dom);
         if (shape.has_value()) {
           shapes.push_back(*shape);
         }
