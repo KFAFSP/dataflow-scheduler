@@ -938,4 +938,38 @@ def KTDF_BufferPhaseOp : KTDF_Op<"buffer_phase", [Pure]> {
   let hasVerifier = 1;
 }
 
+def KTDF_SelectMemrefOp : KTDF_Op<"select_memref", [Pure]> {
+  let summary = "Select one of N candidate memrefs by index";
+  let description = [{
+    The `ktdf.select_memref` operation picks one of `N >= 2` candidate
+    memrefs based on a phase index produced by `ktdf.buffer_phase`. All
+    candidate memrefs must have identical type (element type, shape including
+    dynamic dims, and memory space); the result has the same type.
+
+    Semantics:
+    ```
+    result = candidates[phase]
+    ```
+    The phase operand is verifier-guaranteed to be in range `[0, N)`.
+
+    Example:
+    ```mlir
+    %X_sel = ktdf.select_memref %phase[%X0, %X1] : index -> memref<?x?xf16, #ktdf.memory_space<LX>>
+    ```
+  }];
+
+  let arguments = (ins
+    Index:$phase,
+    Variadic<AnyMemRef>:$candidates
+  );
+
+  let results = (outs AnyMemRef:$result);
+
+  let assemblyFormat = [{
+    $phase `[` $candidates `]` attr-dict `:` type($phase) `,` type($candidates) `->` type($result)
+  }];
+
+  let hasVerifier = 1;
+}
+
 #endif // KTDF_SRC_DIALECTS_KTDF_OPS_TD

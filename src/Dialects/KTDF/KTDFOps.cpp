@@ -882,3 +882,50 @@ LogicalResult BufferPhaseOp::verify() {
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// SelectMemrefOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult SelectMemrefOp::verify() {
+  auto candidates = getCandidates();
+  if (candidates.size() < 2) {
+    return emitOpError("requires at least 2 candidate memrefs, got ")
+           << candidates.size();
+  }
+
+  // All candidates must have identical type, and the result must match.
+  Type expected = candidates.front().getType();
+  for (auto [idx, c] : llvm::enumerate(candidates)) {
+    if (c.getType() != expected) {
+      return emitOpError("candidate #")
+             << idx << " type " << c.getType()
+             << " does not match candidate #0 type " << expected;
+    }
+  }
+  if (getResult().getType() != expected) {
+    return emitOpError("result type ")
+           << getResult().getType()
+           << " must match candidate type " << expected;
+  }
+
+  // The phase operand must come from a ktdf.buffer_phase whose num_phases
+  // equals the number of candidates.
+  Operation* defining_op = getPhase().getDefiningOp();
+  if (!defining_op) {
+    return emitOpError("phase operand must be defined by a ktdf.buffer_phase op");
+  }
+  auto phase_op = llvm::dyn_cast<BufferPhaseOp>(defining_op);
+  if (!phase_op) {
+    return emitOpError("phase operand must be defined by a ktdf.buffer_phase op, "
+                       "got ")
+           << defining_op->getName();
+  }
+  if (phase_op.getNumPhases() != static_cast<int64_t>(candidates.size())) {
+    return emitOpError("phase op num_phases (")
+           << phase_op.getNumPhases() << ") must equal candidate count ("
+           << candidates.size() << ")";
+  }
+
+  return success();
+}
