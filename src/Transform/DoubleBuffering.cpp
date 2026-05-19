@@ -53,6 +53,31 @@ namespace {
 
 constexpr int64_t kDefaultNumPhases = 2;
 
+//===----------------------------------------------------------------------===//
+// Per-pipeline guards
+//===----------------------------------------------------------------------===//
+
+/// True iff the pipeline is eligible for analysis (no pre-existing modulo
+/// and a non-empty enclosing scope of scf.for loops). On rejection, logs
+/// the reason via LLVM_DEBUG.
+bool isPipelineEligible(
+    mlir::ktdf::PipelineOp pipeline,
+    const ::ktdf::common::PipelineEnclosingScope& scope) {
+  if (pipeline.getModuloAttr()) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()
+               << ": modulo already set\n");
+    return false;
+  }
+  if (scope.loops.empty()) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()
+               << ": no enclosing scf.for scope\n");
+    return false;
+  }
+  return true;
+}
+
 struct DoubleBufferingPass
     : public ::ktdf::impl::DoubleBufferingPassBase<DoubleBufferingPass> {
   DoubleBufferingPass()
@@ -61,8 +86,24 @@ struct DoubleBufferingPass
       : scheduler_ctx_(ctx) {}
 
   void runOnOperation() override {
-    // Algorithm added in subsequent tasks.
-    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] running (no-op skeleton)\n");
+    ModuleOp module = getOperation();
+
+    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] starting\n");
+
+    // Pre-order walk over pipelines.
+    SmallVector<mlir::ktdf::PipelineOp> eligible;
+    module.walk<WalkOrder::PreOrder>([&](mlir::ktdf::PipelineOp pipeline) {
+      auto scope = ::ktdf::common::computePipelineEnclosingScope(pipeline);
+      if (!isPipelineEligible(pipeline, scope)) {
+        return;
+      }
+      LLVM_DEBUG(llvm::dbgs()
+                 << "[" PASS_NAME "] eligible pipeline at " << pipeline.getLoc()
+                 << "\n");
+      eligible.push_back(pipeline);
+    });
+
+    // Candidate detection and transformation arrive in subsequent tasks.
   }
 
  private:
