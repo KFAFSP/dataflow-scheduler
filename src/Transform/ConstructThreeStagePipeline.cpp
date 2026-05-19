@@ -20,6 +20,7 @@
 
 #include "Ktdp/KtdpOps.hpp"
 #include "llvm/Support/Debug.h"
+#include "mlir/Dialect/Affine/Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -928,9 +929,12 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
       return;
     }
 
-    // Get the access tile indices - remaining operands after the first
-    SmallVector<Value> indices = access_tile.getIndices();
-    size_t num_indices = indices.size();
+    // Get the access tile indices and base_map. base_map projects the index
+    // operands onto the per-dimension coordinates of the source memref, so
+    // indices.size() == base_map.getNumInputs() and base_map.getNumResults()
+    // == memref rank. For the common case base_map is identity.
+    SmallVector<Value> raw_indices = access_tile.getIndices();
+    AffineMap base_map = access_tile.getBaseMap();
 
     // Get the access tile result type to determine sizes
     auto access_tile_type =
@@ -967,16 +971,34 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     // it dominates the reinterpret_cast
     memory_view.getDefiningOp()->moveBefore(insertion_point);
 
-    // Assert that indices and strides have the same size
-    if (num_indices != strides.size()) {
+    // Apply base_map to materialize one index per source-memref dimension.
+    // Operands to expandAffineMap are dim-values followed by symbol-values; the
+    // op's symbol_operands feed both base_map symbols (if any) and the
+    // access_tile_set, so they are appended after the raw indices.
+    SmallVector<Value> expand_operands(raw_indices.begin(), raw_indices.end());
+    ValueRange symbol_operands = access_tile.getSymbolOperands();
+    expand_operands.append(symbol_operands.begin(), symbol_operands.end());
+    std::optional<SmallVector<Value, 8>> per_dim_indices =
+        affine::expandAffineMap(builder, loc, base_map, expand_operands);
+    if (!per_dim_indices) {
+      access_tile.emitError("Failed to expand base_map into per-dimension "
+                            "indices");
+      signalPassFailure();
+      return;
+    }
+    SmallVector<Value> indices(per_dim_indices->begin(),
+                               per_dim_indices->end());
+
+    // After base_map expansion, indices.size() == memref rank == strides.size()
+    if (indices.size() != strides.size()) {
       access_tile.emitError("Number of indices (")
-          << num_indices << ") does not match number of strides ("
+          << indices.size() << ") does not match number of strides ("
           << strides.size() << ")";
       signalPassFailure();
       return;
     }
 
-    // Calculate offset from access tile indices and memory view strides
+    // Calculate offset from per-dim indices and memory view strides
     Value offset = computeReinterpretCastOffset(builder, loc, indices, strides);
 
     // Create sizes for reinterpret_cast
