@@ -12,6 +12,8 @@ add_ktir_dialect_library(KTIRSchedulerTransforms
     ConstructThreeStagePipeline.cpp
     DoubleBuffering.cpp
     ParallelizeLoopsAcrossInstances.cpp
+    PathExpansion.cpp
+    PathExpansion/Planner.cpp
     PipelineTree/Legalizer.cpp
     ReusePromotion/Common/CandidateSearch.cpp
     ReusePromotion/Common/InvarianceCheck.cpp

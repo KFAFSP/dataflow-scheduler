@@ -174,6 +174,17 @@ std::optional<ArchitectureGraph::Path> ArchitectureGraph::findShortestPath(
   return path;
 }
 
+ArchitectureGraph::NodeId ArchitectureGraph::getNodeIdForResource(
+    Resource resource) const {
+  // Search through nodes to find the one with matching resource
+  for (const auto& [node_id, node] : nodes_) {
+    if (node.resource == resource) {
+      return node_id;
+    }
+  }
+  llvm_unreachable("resource not found in graph");
+}
+
 void ArchitectureGraph::dump(llvm::raw_ostream& os) const {
   os << "ArchitectureGraph {\n";
   os << "  Nodes:\n";

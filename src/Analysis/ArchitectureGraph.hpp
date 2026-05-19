@@ -90,6 +90,9 @@ class ArchitectureGraph {
   NeighborList getNeighbors(NodeId node_id) const;
   std::optional<EdgeInfo> getEdgeInfo(NodeId source, NodeId target) const;
   std::optional<Path> findShortestPath(NodeId source, NodeId target) const;
+  
+  /// Get the node ID for a given resource.
+  NodeId getNodeIdForResource(Resource resource) const;
 
   void dump(llvm::raw_ostream &os) const;
 

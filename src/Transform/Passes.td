@@ -3,6 +3,20 @@
 
 include "mlir/Pass/PassBase.td"
 
+def PathExpansionPass : Pass<"path-expansion", "mlir::ModuleOp"> {
+  let summary = "Expand data movement paths to match architecture graph";
+  let description = [{
+    This pass legalizes data movement in ktdf.pipeline operations by expanding
+    paths to match the architecture graph. It inserts intermediate transfer
+    stages and resources where needed to ensure all data movement follows legal
+    hardware routing.
+    
+    Example: A direct HBM->SFP transfer is expanded to HBM->LX->SFP with
+    intermediate LX buffers and stages.
+  }];
+  let constructor = "::ktdf::createPathExpansionPass()";
+}
+
 def ComputeGroupExtractionPass : Pass<"compute-group-extraction", "mlir::ModuleOp"> {
   let summary = "Extract main and compute group modules from a module";
   let description = [{
