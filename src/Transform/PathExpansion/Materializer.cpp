@@ -262,37 +262,12 @@ void PathExpansionMaterializer::materializePrivateNode(
   auto orig_private = mlir::cast<mlir::ktdf::PrivateOp>(template_op);
   mlir::Location loc = orig_private.getLoc();
 
-  // Collect all stages with dependencies to determine token count
+  // Identify stages that have dependencies (need tokens)
+  llvm::SmallVector<StageNode*> stages = pipeline_node.getStages();
   llvm::SmallVector<StageNode*> stages_with_deps;
-  OperationTreeNode* child = pipeline_node.getFirstChild();
-  while (child) {
-    auto pipeline_child = static_cast<PipelineTreeNode*>(child);
-    if (pipeline_child->isStageNode()) {
-      StageNode* stage_node = static_cast<StageNode*>(pipeline_child);
-      // A stage needs a token if it has dependencies or is depended upon
-      bool needs_token = !stage_node->getDependencies().empty();
-
-      // Check if any other stage depends on this one
-      OperationTreeNode* other_child = pipeline_node.getFirstChild();
-      while (other_child && !needs_token) {
-        auto other_pipeline_child = static_cast<PipelineTreeNode*>(other_child);
-        if (other_pipeline_child->isStageNode() && other_child != child) {
-          auto other_stage = static_cast<StageNode*>(other_pipeline_child);
-          for (StageNode* dep : other_stage->getDependencies()) {
-            if (dep == stage_node) {
-              needs_token = true;
-              break;
-            }
-          }
-        }
-        other_child = other_child->getNextSibling();
-      }
-
-      if (needs_token) {
-        stages_with_deps.push_back(stage_node);
-      }
-    }
-    child = child->getNextSibling();
+  for (StageNode* stage : stages) {
+    if (stage->getDependencies().empty()) continue;
+    stages_with_deps.push_back(stage);
   }
 
   // Build result types: original resources + new resources + tokens
@@ -422,39 +397,42 @@ mlir::ktdf::StageOp PathExpansionMaterializer::materializeStageNode(
   mlir::Location loc =
       template_op ? template_op->getLoc() : builder_.getUnknownLoc();
 
-  // Determine depends_in and depends_out tokens
-  llvm::SmallVector<mlir::Value> depends_in_tokens;
-  llvm::SmallVector<mlir::Value> depends_out_tokens;
+  // Build depends_in and depends_out from stage dependencies
+  // (same logic as stage coarsening)
+  llvm::SmallVector<mlir::Value> depends_in;
+  llvm::SmallVector<mlir::Value> depends_out;
 
-  // Find which stage depends on this one (for depends_out)
-  const llvm::SmallVector<StageNode*>& deps = stage_node.getDependencies();
-  if (!deps.empty() && deps[0] != nullptr) {
-    llvm::DenseMap<StageNode*, mlir::Value>::iterator token_it =
-        stage_to_token_map_.find(deps[0]);
-    if (token_it != stage_to_token_map_.end()) {
-      depends_out_tokens.push_back(token_it->second);
-    }
+  // For depends_out: find the token produced by this stage
+  if (!stage_node.getDependencies().empty()) {
+    auto it = stage_to_token_map_.find(const_cast<StageNode*>(&stage_node));
+    assert(it != stage_to_token_map_.end() &&
+           "expected token map to be updated for this stage");
+    depends_out.push_back(it->second);
   }
 
-  // Find which stage this one depends on (for depends_in)
-  // Need to search through all stages to find predecessor
-  for (const std::pair<StageNode* const, mlir::Value>& entry :
-       stage_to_token_map_) {
-    StageNode* other_stage = entry.first;
-    mlir::Value token = entry.second;
+  // For depends_in: find stages that this stage depends on
+  // We need to look at all stages in the parent pipeline and check if this
+  // stage is in their list of dependents.
+  const PipelineTreeNode* parent =
+      static_cast<const PipelineTreeNode*>(stage_node.getParentNode());
+  assert(parent && parent->isPipelineNode());
+  const PipelineNode* pipeline_parent =
+      static_cast<const PipelineNode*>(parent);
+  for (StageNode* other_stage : pipeline_parent->getStages()) {
+    if (other_stage == &stage_node) continue;
+    // Check if this stage is in other_stage's dependencies
     for (StageNode* dep : other_stage->getDependencies()) {
-      if (dep == &stage_node) {
-        depends_in_tokens.push_back(token);
-        break;
-      }
+      if (dep != &stage_node) continue;
+      // This stage depends on other_stage (other_stage unblocks this stage)
+      auto it = stage_to_token_map_.find(other_stage);
+      assert(it != stage_to_token_map_.end());
+      depends_in.push_back(it->second);
     }
-    if (!depends_in_tokens.empty()) break;
   }
 
-  // Create the stage operation with ValueRange for dependencies
-  auto new_stage = mlir::ktdf::StageOp::create(
-      builder_, loc, mlir::ValueRange(depends_in_tokens),
-      mlir::ValueRange(depends_out_tokens));
+  // Create the stage operation with proper dependencies
+  auto new_stage =
+      mlir::ktdf::StageOp::create(builder_, loc, depends_in, depends_out);
 
   // Set applicable_units if present in materialization info
   if (info_it != stage_info_.end() &&
