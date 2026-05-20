@@ -257,8 +257,10 @@ mlir::ktdf::PipelineOp PathExpansionMaterializer::materializePipelineNode(
 void PathExpansionMaterializer::materializePrivateNode(
     const PrivateNode& private_node, const PipelineNode& pipeline_node) {
   mlir::Operation* template_op = private_node.getOperationOrTemplate();
-  mlir::Location loc =
-      template_op ? template_op->getLoc() : builder_.getUnknownLoc();
+  assert(template_op && "Private node must have template");
+
+  auto orig_private = mlir::cast<mlir::ktdf::PrivateOp>(template_op);
+  mlir::Location loc = orig_private.getLoc();
 
   // Collect all stages with dependencies to determine token count
   llvm::SmallVector<StageNode*> stages_with_deps;
@@ -293,8 +295,14 @@ void PathExpansionMaterializer::materializePrivateNode(
     child = child->getNextSibling();
   }
 
-  // Build result types: new resources + FIFOs + tokens
+  // Build result types: original resources + new resources + tokens
   llvm::SmallVector<mlir::Type> result_types;
+
+  // First, add all original private result types (existing buffers and FIFOs)
+  size_t orig_result_count = orig_private.getNumResults();
+  for (size_t i = 0; i < orig_result_count; ++i) {
+    result_types.push_back(orig_private.getResult(i).getType());
+  }
 
   // Add new buffer resources
   for (const PrivateResourceSpec& spec : new_resources_) {
@@ -306,56 +314,6 @@ void PathExpansionMaterializer::materializePrivateNode(
   }
 
   size_t non_token_result_count = result_types.size();
-
-  // Add FIFO slots - collect from stage materialization info
-  llvm::DenseSet<mlir::Type> fifo_types_set;
-  llvm::SmallVector<mlir::Type> fifo_types;
-
-  for (const std::pair<StageNode* const, StageMaterializationInfo>& entry :
-       stage_info_) {
-    const StageMaterializationInfo& info = entry.second;
-    for (const TransferMaterializationInfo& transfer_info : info.transfers) {
-      if (transfer_info.hop.fifo_type) {
-        // Extract element type and shape from template if available
-        mlir::Type element_type;
-        llvm::SmallVector<int64_t> shape;
-
-        if (transfer_info.template_op) {
-          // Get from template transfer op (need to make it mutable)
-          mlir::ktdf::DataTransferOp template_op = transfer_info.template_op;
-          mlir::Type src_type = template_op.getSource().getType();
-          if (auto memref_type = mlir::dyn_cast<mlir::MemRefType>(src_type)) {
-            element_type = memref_type.getElementType();
-            shape.assign(memref_type.getShape().begin(),
-                         memref_type.getShape().end());
-          } else if (auto fifo_type =
-                         mlir::dyn_cast<mlir::ktdf::FifoSlotType>(src_type)) {
-            auto tensor_type = fifo_type.getElementType();
-            if (auto ranked =
-                    mlir::dyn_cast<mlir::RankedTensorType>(tensor_type)) {
-              element_type = ranked.getElementType();
-              shape.assign(ranked.getShape().begin(), ranked.getShape().end());
-            }
-          }
-        }
-
-        if (element_type && !shape.empty()) {
-          mlir::ktdf::FifoSlotType fifo_type = getFifoTypeFromEdge(
-              transfer_info.hop, transfer_info.source_resource,
-              transfer_info.dest_resource, element_type, shape);
-
-          // Avoid duplicates
-          if (!fifo_types_set.contains(fifo_type)) {
-            fifo_types_set.insert(fifo_type);
-            fifo_types.push_back(fifo_type);
-          }
-        }
-      }
-    }
-  }
-
-  result_types.append(fifo_types.begin(), fifo_types.end());
-  non_token_result_count = result_types.size();
 
   // Add tokens for stages with dependencies
   mlir::Type token_type = mlir::ktdf::TokenType::get(builder_.getContext());
@@ -370,7 +328,23 @@ void PathExpansionMaterializer::materializePrivateNode(
   mlir::Block* private_body = &new_private.getBody().front();
   builder_.setInsertionPointToStart(private_body);
 
+  // Clone operations from original private op's body (except the yield)
+  // Use value_map_ so stages can reference the cloned values
+  mlir::Block& orig_body = orig_private.getBody().front();
+  for (mlir::Operation& op : orig_body.without_terminator()) {
+    mlir::Operation* cloned_op = builder_.clone(op, value_map_);
+  }
+
+  // Get the original yield operands (now mapped to cloned values)
+  auto orig_yield =
+      mlir::cast<mlir::ktdf::PrivateYieldOp>(orig_body.getTerminator());
+  llvm::SmallVector<mlir::Value> yield_operands;
+  for (mlir::Value orig_operand : orig_yield.getOperands()) {
+    yield_operands.push_back(value_map_.lookup(orig_operand));
+  }
+
   // Allocate new buffer resources
+  size_t new_resource_start_idx = orig_result_count;
   for (size_t i = 0; i < new_resources_.size(); ++i) {
     const PrivateResourceSpec& spec = new_resources_[i];
     mlir::Attribute memory_space = getMemorySpaceFromResource(spec.resource);
@@ -381,18 +355,10 @@ void PathExpansionMaterializer::materializePrivateNode(
     auto alloc_op = mlir::memref::AllocOp::create(builder_, loc, memref_type);
 
     // Store mapping from resource index to SSA value
-    resource_index_to_value_[i] = alloc_op.getResult();
-  }
+    resource_index_to_value_[new_resource_start_idx + i] = alloc_op.getResult();
 
-  // Allocate FIFO slots - allocate all at once
-  size_t fifo_start_idx = new_resources_.size();
-  if (!fifo_types.empty()) {
-    llvm::SmallVector<mlir::Value> dynamic_sizes;  // No dynamic sizes for now
-    mlir::ktdf::FifoAllocateOp fifo_alloc = mlir::ktdf::FifoAllocateOp::create(
-        builder_, loc, fifo_types, dynamic_sizes);
-    for (size_t i = 0; i < fifo_types.size(); ++i) {
-      resource_index_to_value_[fifo_start_idx + i] = fifo_alloc.getResult(i);
-    }
+    // Add to yield operands
+    yield_operands.push_back(alloc_op.getResult());
   }
 
   // Create tokens
@@ -400,22 +366,25 @@ void PathExpansionMaterializer::materializePrivateNode(
   for (size_t i = 0; i < stages_with_deps.size(); ++i) {
     auto token_op = mlir::ktdf::CreateTokenOp::create(builder_, loc);
     resource_index_to_value_[token_start_idx + i] = token_op.getResult();
+
+    // Add to yield operands
+    yield_operands.push_back(token_op.getResult());
   }
 
-  // Build yield operands
-  llvm::SmallVector<mlir::Value> yield_operands;
-  for (size_t i = 0; i < result_types.size(); ++i) {
-    yield_operands.push_back(resource_index_to_value_[i]);
-  }
-
-  // Create private_yield
+  // Create private_yield with all operands (original + new)
   mlir::ktdf::PrivateYieldOp::create(builder_, loc, yield_operands);
 
   // Build stage-to-token mapping
   buildStageToTokenMapping(stages_with_deps, new_private,
                            non_token_result_count);
 
-  // Map private results to value map for later use
+  // Map original private results to new private results in value_map_
+  // This allows stages to reference the correct resources
+  for (size_t i = 0; i < orig_result_count; ++i) {
+    value_map_.map(orig_private.getResult(i), new_private.getResult(i));
+  }
+
+  // Also map all results to resource_index_to_value_ for new stages
   for (size_t i = 0; i < new_private.getNumResults(); ++i) {
     resource_index_to_value_[i] = new_private.getResult(i);
   }
@@ -424,8 +393,8 @@ void PathExpansionMaterializer::materializePrivateNode(
   builder_.setInsertionPointAfter(new_private);
 
   LLVM_DEBUG(llvm::dbgs() << "  Materialized private node with "
-                          << new_resources_.size() << " buffers, "
-                          << fifo_types.size() << " FIFOs, and "
+                          << orig_result_count << " original resources, "
+                          << new_resources_.size() << " new buffers, and "
                           << stages_with_deps.size() << " tokens\n");
 }
 
@@ -454,8 +423,8 @@ mlir::ktdf::StageOp PathExpansionMaterializer::materializeStageNode(
       template_op ? template_op->getLoc() : builder_.getUnknownLoc();
 
   // Determine depends_in and depends_out tokens
-  mlir::Value depends_in_token;
-  mlir::Value depends_out_token;
+  llvm::SmallVector<mlir::Value> depends_in_tokens;
+  llvm::SmallVector<mlir::Value> depends_out_tokens;
 
   // Find which stage depends on this one (for depends_out)
   const llvm::SmallVector<StageNode*>& deps = stage_node.getDependencies();
@@ -463,7 +432,7 @@ mlir::ktdf::StageOp PathExpansionMaterializer::materializeStageNode(
     llvm::DenseMap<StageNode*, mlir::Value>::iterator token_it =
         stage_to_token_map_.find(deps[0]);
     if (token_it != stage_to_token_map_.end()) {
-      depends_out_token = token_it->second;
+      depends_out_tokens.push_back(token_it->second);
     }
   }
 
@@ -475,16 +444,17 @@ mlir::ktdf::StageOp PathExpansionMaterializer::materializeStageNode(
     mlir::Value token = entry.second;
     for (StageNode* dep : other_stage->getDependencies()) {
       if (dep == &stage_node) {
-        depends_in_token = token;
+        depends_in_tokens.push_back(token);
         break;
       }
     }
-    if (depends_in_token) break;
+    if (!depends_in_tokens.empty()) break;
   }
 
-  // Create the stage operation
-  auto new_stage = mlir::ktdf::StageOp::create(builder_, loc, depends_in_token,
-                                               depends_out_token);
+  // Create the stage operation with ValueRange for dependencies
+  auto new_stage = mlir::ktdf::StageOp::create(
+      builder_, loc, mlir::ValueRange(depends_in_tokens),
+      mlir::ValueRange(depends_out_tokens));
 
   // Set applicable_units if present in materialization info
   if (info_it != stage_info_.end() &&

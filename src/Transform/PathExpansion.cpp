@@ -31,7 +31,9 @@
 #include "src/Analysis/PipelineTree.hpp"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 #include "src/Transform/Passes.h"
+#include "src/Transform/PathExpansion/Materializer.hpp"
 #include "src/Transform/PathExpansion/Planner.hpp"
+#include "src/Utils/OperationUtils.hpp"
 
 namespace ktdf {
 
@@ -75,13 +77,17 @@ void PathExpansionPass::runOnOperation() {
   });
 
   // Walk all pipeline operations in the module
-  mlir::WalkResult result = module_op.walk<mlir::WalkOrder::PostOrder>(
+  llvm::SmallVector<mlir::ktdf::PipelineOp> candidates;
+  module_op.walk<mlir::WalkOrder::PostOrder>(
       [&](mlir::ktdf::PipelineOp pipeline_op) {
-        if (mlir::failed(processPipeline(pipeline_op, arch_graph))) {
-          return mlir::WalkResult::skip();
-        }
-        return mlir::WalkResult::advance();
+        candidates.push_back(pipeline_op);
       });
+  for (mlir::ktdf::PipelineOp cand : candidates) {
+    if (mlir::failed(processPipeline(cand, arch_graph))) {
+      LLVM_DEBUG(llvm::dbgs() << "Unable to process pipeline \n";
+                 scheduler::utils::printLocation(llvm::dbgs(), cand));
+    }
+  }
 }
 
 mlir::LogicalResult PathExpansionPass::processPipeline(
@@ -117,9 +123,28 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
 
   LLVM_DEBUG(llvm::dbgs() << "  Pipeline needs expansion\n");
 
-  // TODO: Implement materialization
-  // For now, just report that changes are needed
-  LLVM_DEBUG(llvm::dbgs() << "  Materialization not yet implemented\n");
+  // Materialize the modified pipeline tree
+  mlir::OpBuilder builder(pipeline_op.getContext());
+  mlir::IRMapping value_map;
+
+  scheduler::PathExpansionMaterializer materializer(
+      builder, value_map, plan->stage_info, plan->new_resources);
+
+  // Set insertion point before the original pipeline
+  builder.setInsertionPoint(pipeline_op);
+
+  // Materialize the new pipeline from the modified tree
+  mlir::Operation* new_pipeline_op = materializer.materialize(*pipeline_node);
+
+  if (!new_pipeline_op) {
+    LLVM_DEBUG(llvm::dbgs() << "  Materialization failed\n");
+    return mlir::failure();
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "  Materialization succeeded\n");
+
+  // Erase the original pipeline
+  pipeline_op.erase();
 
   return mlir::success();
 }

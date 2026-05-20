@@ -112,7 +112,7 @@ struct PrivateResourceSpec {
 struct PathExpansionPlan {
   // The modified PipelineTree is the primary output
   // It contains the final stage DAG with dependencies
-  PipelineTree modified_tree;
+  PipelineTree *modified_tree;
   
   // Side information for materialization (indexed by StageNode*)
   llvm::DenseMap<StageNode*, StageMaterializationInfo> stage_info;

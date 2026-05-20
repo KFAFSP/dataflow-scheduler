@@ -328,95 +328,6 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
     return nullptr;
   }
 
-  // Step 4: Query architecture graph for shortest path between consecutive
-  // resources in the original path. This respects anchor points (e.g., for
-  // HBM->SFP->HBM, we query HBM->SFP and SFP->HBM separately, not HBM->HBM).
-  llvm::SmallVector<ArchitectureGraph::Resource> shortest_path;
-  
-  for (size_t i = 0; i < original_path.size() - 1; ++i) {
-    ArchitectureGraph::Resource source_resource = original_path[i];
-    ArchitectureGraph::Resource dest_resource = original_path[i + 1];
-
-    ArchitectureGraph::NodeId source_node =
-        arch_graph.getNodeIdForResource(source_resource);
-    ArchitectureGraph::NodeId dest_node =
-        arch_graph.getNodeIdForResource(dest_resource);
-
-    std::optional<llvm::SmallVector<ArchitectureGraph::NodeId>> segment_path_or =
-        arch_graph.findShortestPath(source_node, dest_node);
-    if (!segment_path_or) {
-      // No legal path exists for this segment
-      LLVM_DEBUG(llvm::dbgs() << "No legal path found from "
-                              << ArchitectureGraph::stringifyResource(source_resource)
-                              << " to "
-                              << ArchitectureGraph::stringifyResource(dest_resource)
-                              << "\n");
-      return nullptr;
-    }
-
-    // Step 5: Convert node IDs back to resources for this segment
-    for (size_t j = 0; j < segment_path_or->size(); ++j) {
-      ArchitectureGraph::NodeId node_id = (*segment_path_or)[j];
-      std::optional<ArchitectureGraph::ResourceNode> node_or =
-          arch_graph.getNode(node_id);
-      if (!node_or) return nullptr;
-      
-      // Avoid duplicating the connection point between segments
-      if (j == 0 && !shortest_path.empty() &&
-          shortest_path.back() == node_or->resource) {
-        continue;
-      }
-      shortest_path.push_back(node_or->resource);
-    }
-  }
-
-  LLVM_DEBUG({
-    llvm::dbgs() << "Original path: ";
-    for (ArchitectureGraph::Resource res : original_path) {
-      llvm::dbgs() << ArchitectureGraph::stringifyResource(res) << " -> ";
-    }
-    llvm::dbgs() << "\nShortest path: ";
-    for (ArchitectureGraph::Resource res : shortest_path) {
-      llvm::dbgs() << ArchitectureGraph::stringifyResource(res) << " -> ";
-    }
-    llvm::dbgs() << "\n";
-  });
-
-  // Step 6: Compare paths
-  if (original_path == shortest_path) {
-    // Already legal, no changes needed
-    plan->changed = false;
-    LLVM_DEBUG(llvm::dbgs() << "Pipeline already legal\n");
-    return plan;
-  }
-
-  // Step 7: Path needs expansion - modify the PipelineTree
-  plan->changed = true;
-  plan->modified_tree = tree;
-
-  LLVM_DEBUG(llvm::dbgs() << "Planning path expansion for "
-                          << sorted_stages.size() << " stages, expanding to "
-                          << shortest_path.size() << " hops\n");
-  assert(shortest_path.size() >= 2);
-
-  // Step 8: Identify intermediate memory resources that need buffers
-  llvm::DenseSet<ArchitectureGraph::Resource> intermediate_resources;
-  for (size_t i = 1; i < shortest_path.size() - 1; i++) {
-    ArchitectureGraph::Resource res = shortest_path[i];
-    if (arch_graph.getResourceKind(res) ==
-        ArchitectureGraph::ResourceKind::Memory) {
-      intermediate_resources.insert(res);
-    }
-  }
-
-  // Step 9: Build stage-to-summary map for quick lookup
-  llvm::DenseMap<StageNode*, StageSummary> stage_to_summary;
-  for (const StageSummary& summary : summaries) {
-    stage_to_summary[summary.node] = summary;
-  }
-
-  // Step 10: Modify PipelineTree by inserting new stages for intermediate hops
-
   LLVM_DEBUG({
     llvm::dbgs() << "Original PipelineTree before expansion:\n";
     pipeline->print(llvm::dbgs());
@@ -427,271 +338,314 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
     llvm::dbgs() << "\n\n";
   });
 
-  // Map each hop in shortest path to the stage that covers it (if any)
-  // Also collect buffer shape information for intermediate resources
-  llvm::SmallVector<StageNode*> hop_to_stage(shortest_path.size() - 1, nullptr);
+  // Step 4-12: Resource-centric path expansion
+  // Key insight: Create one stage per resource node in the expanded path
+  // - Original stages get adapted/preserved at their resource positions
+  // - New stages get created for newly introduced intermediate resources
+
+  // First, build the full shortest path by querying each segment
+  llvm::SmallVector<ArchitectureGraph::Resource> full_shortest_path;
+
+  for (size_t i = 0; i < original_path.size() - 1; ++i) {
+    ArchitectureGraph::Resource seg_source = original_path[i];
+    ArchitectureGraph::Resource seg_dest = original_path[i + 1];
+
+    ArchitectureGraph::NodeId source_node =
+        arch_graph.getNodeIdForResource(seg_source);
+    ArchitectureGraph::NodeId dest_node =
+        arch_graph.getNodeIdForResource(seg_dest);
+
+    std::optional<llvm::SmallVector<ArchitectureGraph::NodeId>>
+        segment_path_or = arch_graph.findShortestPath(source_node, dest_node);
+    if (!segment_path_or) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "No legal path found from "
+                 << ArchitectureGraph::stringifyResource(seg_source) << " to "
+                 << ArchitectureGraph::stringifyResource(seg_dest) << "\n");
+      return nullptr;
+    }
+
+    // Convert node IDs to resources and add to full path
+    for (size_t j = 0; j < segment_path_or->size(); ++j) {
+      ArchitectureGraph::NodeId node_id = (*segment_path_or)[j];
+      std::optional<ArchitectureGraph::ResourceNode> node_or =
+          arch_graph.getNode(node_id);
+      if (!node_or) return nullptr;
+
+      // Avoid duplicating connection points between segments
+      if (j == 0 && !full_shortest_path.empty() &&
+          full_shortest_path.back() == node_or->resource) {
+        continue;
+      }
+      full_shortest_path.push_back(node_or->resource);
+    }
+  }
+
+  LLVM_DEBUG({
+    llvm::dbgs() << "Original path: ";
+    for (auto res : original_path) {
+      llvm::dbgs() << ArchitectureGraph::stringifyResource(res) << " -> ";
+    }
+    llvm::dbgs() << "\nFull shortest path: ";
+    for (auto res : full_shortest_path) {
+      llvm::dbgs() << ArchitectureGraph::stringifyResource(res) << " -> ";
+    }
+    llvm::dbgs() << "\n";
+  });
+
+  // Check if expansion is needed
+  if (original_path == full_shortest_path) {
+    plan->changed = false;
+    LLVM_DEBUG(llvm::dbgs() << "Pipeline already legal\n");
+    return plan;
+  }
+
+  plan->changed = true;
+  plan->modified_tree = &tree;
+
+  // Process each segment of the original path and build the stage sequence
+  // Key insight: Walk through original stages sequentially, and for each
+  // segment:
+  // - Reuse original stages where they belong
+  // - Insert new stages for newly introduced intermediate resources
+
+  llvm::SmallVector<StageNode*> stage_sequence;
   llvm::DenseMap<ArchitectureGraph::Resource, PrivateResourceSpec>
       resource_specs;
-
-  for (size_t hop_idx = 0; hop_idx < shortest_path.size() - 1; hop_idx++) {
-    ArchitectureGraph::Resource src_res = shortest_path[hop_idx];
-    ArchitectureGraph::Resource dst_res = shortest_path[hop_idx + 1];
-
-    // Find which existing stage covers this hop
-    for (StageNode* stage : sorted_stages) {
-      const StageSummary& summary = stage_to_summary[stage];
-
-      // Check if this stage's transfers cover this hop
-      bool covers_hop = false;
-      for (const StageEndpoint& input_ep : summary.input_endpoints) {
-        for (const StageEndpoint& output_ep : summary.output_endpoints) {
-          if (input_ep.resource == src_res && output_ep.resource == dst_res) {
-            covers_hop = true;
-            break;
-          }
-        }
-        if (covers_hop) break;
-      }
-
-      if (covers_hop) {
-        hop_to_stage[hop_idx] = stage;
-        if (!(intermediate_resources.contains(src_res) ||
-              intermediate_resources.contains(dst_res)))
-          break;
-        // If this hop involves an intermediate memory resource, extract buffer
-        // shape
-        mlir::ktdf::StageOp stage_op =
-            mlir::cast<mlir::ktdf::StageOp>(stage->getOperation());
-
-        stage_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
-          mlir::Type src_type = transfer.getSource().getType();
-          mlir::Type dst_type = transfer.getDestination().getType();
-
-          // Extract shape from memory resource (memref)
-          auto extract_from_memref = [&](mlir::Type type,
-                                         ArchitectureGraph::Resource res) {
-            if (mlir::MemRefType memref_type =
-                    mlir::dyn_cast<mlir::MemRefType>(type)) {
-              if (!resource_specs.contains(res)) {
-                PrivateResourceSpec spec;
-                spec.resource = res;
-                spec.element_type = memref_type.getElementType();
-                spec.shape.assign(memref_type.getShape().begin(),
-                                  memref_type.getShape().end());
-                resource_specs[res] = spec;
-              }
-            }
-          };
-
-          // Check if source or destination is an intermediate memory resource
-          if (intermediate_resources.contains(src_res)) {
-            extract_from_memref(src_type, src_res);
-          }
-          if (intermediate_resources.contains(dst_res)) {
-            extract_from_memref(dst_type, dst_res);
-          }
-
-          return mlir::WalkResult::advance();
-        });
-        break;
-      }
-    }
-  }
-
-  // Create synthetic stages for uncovered hops
   int next_stage_id = sorted_stages.size();
-  StageNode* insert_point = nullptr;
-  for (size_t hop_idx = 0; hop_idx < hop_to_stage.size(); hop_idx++) {
-    if (hop_to_stage[hop_idx] != nullptr) {
-      insert_point = hop_to_stage[hop_idx];
-      continue;
-    }
+  size_t original_stage_idx = 0;
+  size_t path_position = 0;  // Current position in full_shortest_path
+  StageNode* last_inserted_stage =
+      nullptr;  // Track last inserted stage for ordering
 
-    ArchitectureGraph::Resource src_res = shortest_path[hop_idx];
-    ArchitectureGraph::Resource dst_res = shortest_path[hop_idx + 1];
+  for (size_t seg_idx = 0; seg_idx < original_path.size() - 1; ++seg_idx) {
+    ArchitectureGraph::Resource seg_source = original_path[seg_idx];
+    ArchitectureGraph::Resource seg_dest = original_path[seg_idx + 1];
+
+    // Find this segment in the full shortest path
+    size_t seg_start_pos = path_position;
+    size_t seg_end_pos = seg_start_pos;
+    while (seg_end_pos < full_shortest_path.size() &&
+           full_shortest_path[seg_end_pos] != seg_dest) {
+      seg_end_pos++;
+    }
 
     LLVM_DEBUG(llvm::dbgs()
-               << "  Inserting synthetic stage for hop "
-               << ArchitectureGraph::stringifyResource(src_res) << " -> "
-               << ArchitectureGraph::stringifyResource(dst_res) << "\n");
+               << "\nSegment " << seg_idx << ": "
+               << ArchitectureGraph::stringifyResource(seg_source) << " -> "
+               << ArchitectureGraph::stringifyResource(seg_dest)
+               << " (positions " << seg_start_pos << " to " << seg_end_pos
+               << " in shortest path)\n");
 
-    // Create unmaterialized stage node (no operation yet)
-    StageNode* new_stage = tree.createStageNode(nullptr, next_stage_id++);
-    hop_to_stage[hop_idx] = new_stage;
+    // Check if segment needs expansion
+    bool needs_expansion = (seg_end_pos - seg_start_pos > 1);
 
-    // Create materialization info for this synthetic stage
-    StageMaterializationInfo info;
-    info.kind = StageMaterializationInfo::Kind::kSyntheticTransfer;
+    if (!needs_expansion) {
+      // Segment is already legal - reuse original stage
+      if (original_stage_idx < summaries.size()) {
+        StageNode* original_stage = summaries[original_stage_idx].node;
+        stage_sequence.push_back(original_stage);
+        last_inserted_stage = original_stage;  // Track for insertion order
+        LLVM_DEBUG(llvm::dbgs() << "  Keeping original stage "
+                                << original_stage->getStageId() << "\n");
 
-    // Get edge info for this hop
-    ArchitectureGraph::NodeId src_node =
-        arch_graph.getNodeIdForResource(src_res);
-    ArchitectureGraph::NodeId dst_node =
-        arch_graph.getNodeIdForResource(dst_res);
-    std::optional<ArchitectureGraph::EdgeInfo> edge_info =
-        arch_graph.getEdgeInfo(src_node, dst_node);
+        // Create materialization info
+        StageMaterializationInfo info;
+        const StageSummary& summary = summaries[original_stage_idx];
+        if (summary.anchor_resource &&
+            arch_graph.getResourceKind(*summary.anchor_resource) ==
+                ArchitectureGraph::ResourceKind::Compute) {
+          info.kind = StageMaterializationInfo::Kind::kAdaptFifoKinds;
+          info.applicable_unit =
+              (*summary.anchor_resource == ArchitectureGraph::Resource::SFP)
+                  ? mlir::ktdf::ComponentType::SFP
+                  : mlir::ktdf::ComponentType::PE;
+        } else {
+          info.kind = StageMaterializationInfo::Kind::kAdaptFifoKinds;
+        }
+        plan->stage_info[original_stage] = info;
+        original_stage_idx++;
+      }
+    } else {
+      // Segment needs expansion
+      LLVM_DEBUG(llvm::dbgs()
+                 << "  Expanding segment with "
+                 << (seg_end_pos - seg_start_pos + 1) << " resources\n");
 
-    if (edge_info) {
-      TransferMaterializationInfo transfer_info;
-      transfer_info.template_op = nullptr;
-      transfer_info.hop = *edge_info;
-      transfer_info.source_resource = src_res;
-      transfer_info.dest_resource = dst_res;
-      info.transfers.push_back(transfer_info);
+      // Process each position in the expanded segment
+      for (size_t pos = seg_start_pos; pos <= seg_end_pos; ++pos) {
+        ArchitectureGraph::Resource res = full_shortest_path[pos];
+
+        // Skip if this is a segment boundary we already processed
+        if (pos == seg_start_pos && seg_idx > 0 && !stage_sequence.empty()) {
+          // This is the start of a new segment, but it's the same resource as
+          // the end of the previous segment - skip it
+          LLVM_DEBUG(llvm::dbgs()
+                     << "    Skipping "
+                     << ArchitectureGraph::stringifyResource(res)
+                     << " (already handled as previous segment end)\n");
+          continue;
+        }
+
+        StageNode* stage = nullptr;
+        bool reused_original = false;
+
+        // Check if we should reuse an original stage at this position
+        if (original_stage_idx < summaries.size()) {
+          const StageSummary& summary = summaries[original_stage_idx];
+
+          // Reuse if this is a compute anchor at this resource
+          if (summary.anchor_resource && *summary.anchor_resource == res) {
+            stage = summary.node;
+            reused_original = true;
+            original_stage_idx++;
+            last_inserted_stage = stage;  // Track for insertion order
+
+            LLVM_DEBUG(llvm::dbgs()
+                       << "    Reusing original stage " << stage->getStageId()
+                       << " at " << ArchitectureGraph::stringifyResource(res)
+                       << "\n");
+
+            StageMaterializationInfo info;
+            info.kind = StageMaterializationInfo::Kind::kAdaptFifoKinds;
+            info.applicable_unit = (res == ArchitectureGraph::Resource::SFP)
+                                       ? mlir::ktdf::ComponentType::SFP
+                                       : mlir::ktdf::ComponentType::PE;
+            plan->stage_info[stage] = info;
+          }
+          // Reuse if this is the start or end of the segment and matches
+          // original path
+          else if ((pos == seg_start_pos && res == seg_source) ||
+                   (pos == seg_end_pos && res == seg_dest)) {
+            // This is a transfer stage at segment boundary
+            stage = summary.node;
+            reused_original = true;
+            original_stage_idx++;
+            last_inserted_stage = stage;  // Track for insertion order
+
+            LLVM_DEBUG(llvm::dbgs()
+                       << "    Reusing original transfer stage "
+                       << stage->getStageId() << " at "
+                       << ArchitectureGraph::stringifyResource(res) << "\n");
+
+            StageMaterializationInfo info;
+            info.kind = StageMaterializationInfo::Kind::kAdaptFifoKinds;
+            plan->stage_info[stage] = info;
+          }
+        }
+
+        if (!reused_original) {
+          // Create new stage for intermediate resource
+          stage = tree.createStageNode(nullptr, next_stage_id++);
+
+          LLVM_DEBUG(llvm::dbgs()
+                     << "    Creating new stage " << stage->getStageId()
+                     << " at " << ArchitectureGraph::stringifyResource(res)
+                     << "\n");
+
+          StageMaterializationInfo info;
+          info.kind = StageMaterializationInfo::Kind::kSyntheticTransfer;
+
+          // Add transfer for incoming edge
+          if (pos > seg_start_pos ||
+              (pos == seg_start_pos && !stage_sequence.empty())) {
+            size_t src_pos = (pos > 0) ? pos - 1 : 0;
+            ArchitectureGraph::Resource src_res = full_shortest_path[src_pos];
+            ArchitectureGraph::NodeId src_node =
+                arch_graph.getNodeIdForResource(src_res);
+            ArchitectureGraph::NodeId dst_node =
+                arch_graph.getNodeIdForResource(res);
+            std::optional<ArchitectureGraph::EdgeInfo> edge_info =
+                arch_graph.getEdgeInfo(src_node, dst_node);
+            if (edge_info) {
+              TransferMaterializationInfo transfer_info;
+              transfer_info.template_op = nullptr;
+              transfer_info.hop = *edge_info;
+              transfer_info.source_resource = src_res;
+              transfer_info.dest_resource = res;
+              info.transfers.push_back(transfer_info);
+            }
+          }
+
+          plan->stage_info[stage] = info;
+
+          // Insert stage in correct position (after last inserted stage)
+          pipeline->insertChildNode(stage, last_inserted_stage);
+          last_inserted_stage = stage;  // Track for next insertion
+
+          // Track intermediate memory resources
+          if (pos > seg_start_pos && pos < seg_end_pos &&
+              arch_graph.getResourceKind(res) ==
+                  ArchitectureGraph::ResourceKind::Memory) {
+            if (!summaries.empty()) {
+              mlir::ktdf::StageOp stage_op = mlir::cast<mlir::ktdf::StageOp>(
+                  summaries[0].node->getOperation());
+              stage_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
+                mlir::Type src_type = transfer.getSource().getType();
+                if (mlir::MemRefType memref_type =
+                        mlir::dyn_cast<mlir::MemRefType>(src_type)) {
+                  if (!resource_specs.contains(res)) {
+                    PrivateResourceSpec spec;
+                    spec.resource = res;
+                    spec.element_type = memref_type.getElementType();
+                    spec.shape.assign(memref_type.getShape().begin(),
+                                      memref_type.getShape().end());
+                    resource_specs[res] = spec;
+                  }
+                }
+                return mlir::WalkResult::advance();
+              });
+            }
+          }
+        }
+
+        stage_sequence.push_back(stage);
+      }
     }
 
-    plan->stage_info[new_stage] = info;
-
-    // Add to pipeline as child
-    pipeline->insertChildNode(new_stage, insert_point);
+    // Move to next segment's starting position
+    path_position = seg_end_pos;
   }
 
-  // Step 11: Build linear chain dependencies based on hop sequence
-  // Clear existing dependencies and rebuild based on shortest path order
+  // Build dependencies between stages in sequence
   for (StageNode* stage : pipeline->getStages()) {
     stage->nullifyAllDependencies();
     stage->removeNullifiedDependencies();
   }
 
-  // Add dependencies to form linear chain following shortest path
-  for (size_t hop_idx = 0; hop_idx < hop_to_stage.size() - 1; hop_idx++) {
-    StageNode* current_stage = hop_to_stage[hop_idx];
-    StageNode* next_stage = hop_to_stage[hop_idx + 1];
-
-    if (current_stage && next_stage && current_stage != next_stage) {
-      current_stage->addDependency(next_stage);
+  for (size_t i = 0; i < stage_sequence.size() - 1; ++i) {
+    StageNode* current = stage_sequence[i];
+    StageNode* next = stage_sequence[i + 1];
+    if (current && next && current != next) {
+      current->addDependency(next);
       LLVM_DEBUG(llvm::dbgs()
-                 << "  Added dependency: Stage " << current_stage->getStageId()
-                 << " -> Stage " << next_stage->getStageId() << "\n");
+                 << "  Added dependency: Stage " << current->getStageId()
+                 << " -> Stage " << next->getStageId() << "\n");
     }
   }
 
-  // Rebuild the sorted stages list with new topology
+  // Rebuild the sorted stages list
   mlir::FailureOr<llvm::SmallVector<StageNode*>> new_sorted_or =
       tree.topologicalSortStages(pipeline);
   if (mlir::failed(new_sorted_or)) {
-    LLVM_DEBUG(
-        llvm::dbgs()
-        << "Failed to topologically sort after adding synthetic stages\n");
+    LLVM_DEBUG(llvm::dbgs()
+               << "Failed to topologically sort after expansion\n");
     return nullptr;
   }
-  sorted_stages = *new_sorted_or;
 
   LLVM_DEBUG({
     llvm::dbgs() << "Modified PipelineTree after expansion:\n";
     pipeline->print(llvm::dbgs());
     llvm::dbgs() << "\nTopological order: ";
-    for (StageNode* stage : sorted_stages) {
+    for (StageNode* stage : *new_sorted_or) {
       llvm::dbgs() << "Stage " << stage->getStageId() << " ";
     }
     llvm::dbgs() << "\n\n";
   });
 
-  // Step 12: Create materialization info for original stages
-  for (StageNode* stage : sorted_stages) {
-    // Skip if already processed (synthetic stages)
-    if (plan->stage_info.count(stage)) continue;
-
-    const StageSummary& summary = stage_to_summary[stage];
-    StageMaterializationInfo info;
-
-    if (summary.anchor_resource) {
-      // Stage has explicit applicable_units attribute
-      ArchitectureGraph::ResourceKind kind =
-          arch_graph.getResourceKind(*summary.anchor_resource);
-
-      if (kind == ArchitectureGraph::ResourceKind::Compute) {
-        // Compute stage - adapt FIFO kinds to match shortest path
-        info.kind = StageMaterializationInfo::Kind::kAdaptFifoKinds;
-        info.applicable_unit =
-            (*summary.anchor_resource == ArchitectureGraph::Resource::SFP)
-                ? mlir::ktdf::ComponentType::SFP
-                : mlir::ktdf::ComponentType::PE;
-      } else {
-        // Memory resource as anchor - preserve as-is
-        info.kind = StageMaterializationInfo::Kind::kPreserveOriginal;
-      }
-    } else if (summary.is_compute_containing) {
-      // Compute stage without explicit applicable_units - adapt FIFO kinds
-      info.kind = StageMaterializationInfo::Kind::kAdaptFifoKinds;
-    } else if (summary.is_transfer_only) {
-      // Transfer-only stage - check if already legal, otherwise adapt
-      bool all_legal = true;
-
-      mlir::ktdf::StageOp stage_op =
-          mlir::cast<mlir::ktdf::StageOp>(stage->getOperation());
-      stage_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
-        // Infer source and destination from this transfer
-        mlir::Type src_type = transfer.getSource().getType();
-        mlir::Type dst_type = transfer.getDestination().getType();
-
-        std::optional<ArchitectureGraph::Resource> src_res;
-        std::optional<ArchitectureGraph::Resource> dst_res;
-
-        if (mlir::MemRefType src_memref =
-                mlir::dyn_cast<mlir::MemRefType>(src_type)) {
-          src_res = inferResourceFromMemorySpace(src_memref.getMemorySpace());
-        } else if (mlir::ktdf::FifoSlotType src_fifo =
-                       mlir::dyn_cast<mlir::ktdf::FifoSlotType>(src_type)) {
-          src_res = inferResourceFromFifoType(src_fifo.getFifoType(), false);
-        }
-
-        if (mlir::MemRefType dst_memref =
-                mlir::dyn_cast<mlir::MemRefType>(dst_type)) {
-          dst_res = inferResourceFromMemorySpace(dst_memref.getMemorySpace());
-        } else if (mlir::ktdf::FifoSlotType dst_fifo =
-                       mlir::dyn_cast<mlir::ktdf::FifoSlotType>(dst_type)) {
-          dst_res = inferResourceFromFifoType(dst_fifo.getFifoType(), true);
-        }
-
-        if (src_res && dst_res) {
-          ArchitectureGraph::NodeId src_node =
-              arch_graph.getNodeIdForResource(*src_res);
-          ArchitectureGraph::NodeId dst_node =
-              arch_graph.getNodeIdForResource(*dst_res);
-          std::optional<ArchitectureGraph::EdgeInfo> edge_info =
-              arch_graph.getEdgeInfo(src_node, dst_node);
-
-          if (edge_info) {
-            // Legal hop - store for potential adaptation
-            TransferMaterializationInfo transfer_info;
-            transfer_info.template_op = transfer;
-            transfer_info.hop = *edge_info;
-            transfer_info.source_resource = *src_res;
-            transfer_info.dest_resource = *dst_res;
-            info.transfers.push_back(transfer_info);
-          } else {
-            // Illegal hop
-            all_legal = false;
-          }
-        } else {
-          all_legal = false;
-        }
-      });
-
-      // If all transfers are legal, preserve; otherwise adapt
-      info.kind = all_legal ? StageMaterializationInfo::Kind::kPreserveOriginal
-                            : StageMaterializationInfo::Kind::kAdaptFifoKinds;
-    } else {
-      // No clear classification - preserve as-is
-      info.kind = StageMaterializationInfo::Kind::kPreserveOriginal;
-    }
-
-    plan->stage_info[stage] = info;
-  }
-
-  // Step 12: Record new private resources for intermediate buffers
-  // Use the buffer specs collected during hop-to-stage analysis
-  for (ArchitectureGraph::Resource res : intermediate_resources) {
-    if (resource_specs.contains(res)) {
-      plan->new_resources.push_back(resource_specs[res]);
-    } else {
-      // Fallback: if we couldn't infer shape, log a warning
-      LLVM_DEBUG(
-          llvm::dbgs()
-          << "Warning: Could not infer buffer shape for intermediate resource "
-          << ArchitectureGraph::stringifyResource(res) << "\n");
-    }
+  // Record new private resources
+  for (const auto& [res, spec] : resource_specs) {
+    plan->new_resources.push_back(spec);
   }
 
   // Count synthetic stages
