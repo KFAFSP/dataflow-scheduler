@@ -154,7 +154,7 @@ private:
 
 /// Information needed to materialize a transfer operation
 struct TransferMaterializationInfo {
-  mlir::ktdf::DataTransferOp template_op;  // Template to derive from (can be null for synthetic)
+  mlir::Operation* template_op = nullptr;  // Template to derive from (can be null for synthetic)
   ArchitectureGraph::EdgeInfo hop;         // Architecture hop this implements
   ArchitectureGraph::Resource source_resource;  // Source resource for this hop
   ArchitectureGraph::Resource dest_resource;    // Destination resource for this hop
@@ -173,16 +173,22 @@ struct TransferMaterializationInfo {
 /// This is stored separately and looked up by the materializer
 struct StageMaterializationInfo {
   enum class Kind {
-    kPreserveOriginal,      // Keep original stage body unchanged
-    kAdaptFifoKinds,        // Preserve body but update FIFO types
-    kSyntheticTransfer,     // Generate new transfer stage
+    kPreserveOriginal,      // Keep original stage body unchanged (rare)
+    kAdaptFifoKinds,        // Preserve body but update FIFO types (usually needed for compute stages)
+    kAdaptTransfer,         // Preserve body but update transfer source or dest types (needed for transfer stages that are intermdiate-stage facing)
+    kSyntheticTransfer,     // Generate new transfer stage (usually for intermediate memory stages ie LX)
   };
 
   Kind kind = Kind::kPreserveOriginal;
-  // For AdaptFifoKinds and SyntheticTransfer:
+  
+  // Resource associated with this stage (determined in Step 1)
+  std::optional<ArchitectureGraph::Resource> stage_resource;
+  
+  // For AdaptFifoKinds, AdaptTransfer, and SyntheticTransfer:
   // Contains transfer operations with pointers to private resources
   llvm::SmallVector<TransferMaterializationInfo> transfers;
   
+  // which unit this stage runs on
   mlir::ktdf::ComponentType applicable_unit;
 };
 

@@ -503,6 +503,11 @@ mlir::ktdf::StageOp PathExpansionMaterializer::materializeStageNode(
         }
         break;
 
+      case StageMaterializationInfo::Kind::kAdaptTransfer:
+        // TODO: Implement transfer adaptation
+        // For now, treat as synthetic transfer
+        [[fallthrough]];
+
       case StageMaterializationInfo::Kind::kSyntheticTransfer:
         synthesizeTransferStage(info);
         break;
@@ -621,8 +626,12 @@ void PathExpansionMaterializer::synthesizeTransferStage(
   for (const TransferMaterializationInfo& transfer_info : info.transfers) {
     if (transfer_info.template_op) {
       // Clone and adapt the template transfer
-      mlir::ktdf::DataTransferOp template_transfer = transfer_info.template_op;
-      mlir::Location loc = template_transfer.getLoc();
+      mlir::Operation* template_op = transfer_info.template_op;
+      mlir::Location loc = template_op->getLoc();
+      
+      // Cast to DataTransferOp to access its methods
+      auto template_transfer = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(template_op);
+      assert(template_transfer && "template_op should be a DataTransferOp");
 
       // Get source - use private resource if specified, otherwise materialize from template
       mlir::Value source;
