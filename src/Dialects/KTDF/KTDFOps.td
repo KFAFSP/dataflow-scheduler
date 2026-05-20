@@ -555,6 +555,21 @@ def KTDF_DataTransferOp : KTDF_Op<"data_transfer", [
   let hasVerifier = 1;
   let hasCustomAssemblyFormat = 1;
 
+  let builders = [
+    OpBuilder<(ins "Value":$source, "AffineMap":$sourceMap,
+      "ValueRange":$sourceIndices,
+      "ArrayRef<OpFoldResult>":$sourceSizes,
+      "Value":$destination, "AffineMap":$destMap,
+      "ValueRange":$destIndices,
+      "ArrayRef<OpFoldResult>":$destSizes)>,
+    OpBuilder<(ins "Value":$source, "AffineMap":$sourceMap,
+      "ValueRange":$sourceIndices,
+      "ArrayRef<int64_t>":$sourceSizes,
+      "Value":$destination, "AffineMap":$destMap,
+      "ValueRange":$destIndices,
+      "ArrayRef<int64_t>":$destSizes)>
+  ];
+
   let extraClassDeclaration = [{
     /// Returns true if the source is a memref
     bool isSourceMemRef() {

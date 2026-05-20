@@ -540,13 +540,14 @@ ParseResult DataTransferOp::parse(OpAsmParser& parser, OperationState& result) {
   if (parser.parseKeyword("from") || parser.parseOperand(source_operand))
     return failure();
 
-  // Source map + indices: present iff `[` follows.
-  if (succeeded(parser.parseOptionalLSquare())) {
+  // Source map + indices: present iff `[` follows. OptionalSquare lets the
+  // helper consume both brackets itself; when no `[` is present it returns
+  // success without touching result.attributes.
+  {
     Attribute source_map_attr;
     if (parser.parseAffineMapOfSSAIds(source_index_operands, source_map_attr,
                                       "source_map", result.attributes,
-                                      OpAsmParser::Delimiter::None) ||
-        parser.parseRSquare())
+                                      OpAsmParser::Delimiter::OptionalSquare))
       return failure();
   }
 
@@ -562,12 +563,12 @@ ParseResult DataTransferOp::parse(OpAsmParser& parser, OperationState& result) {
   if (parser.parseKeyword("to") || parser.parseOperand(dest_operand))
     return failure();
 
-  if (succeeded(parser.parseOptionalLSquare())) {
+  // Dest map + indices: same pattern as source side.
+  {
     Attribute dest_map_attr;
     if (parser.parseAffineMapOfSSAIds(dest_index_operands, dest_map_attr,
                                       "dest_map", result.attributes,
-                                      OpAsmParser::Delimiter::None) ||
-        parser.parseRSquare())
+                                      OpAsmParser::Delimiter::OptionalSquare))
       return failure();
   }
 
@@ -734,35 +735,44 @@ LogicalResult WriteToFifoOp::verify() {
   return success();
 }
 
-// Build with mixed static/dynamic sizes (OpFoldResult can be either Attribute
-// or Value)
+// Build with mixed static/dynamic sizes (OpFoldResult).
+// `sourceMap` must be non-null iff source is a memref; same for `destMap`.
 void DataTransferOp::build(OpBuilder& builder, OperationState& result,
-                           Value source, ValueRange source_indices,
+                           Value source, AffineMap sourceMap,
+                           ValueRange source_indices,
                            ArrayRef<OpFoldResult> source_sizes,
-                           Value destination, ValueRange dest_indices,
+                           Value destination, AffineMap destMap,
+                           ValueRange dest_indices,
                            ArrayRef<OpFoldResult> dest_sizes) {
   SmallVector<int64_t> static_source_sizes, static_dest_sizes;
   SmallVector<Value> dynamic_source_sizes, dynamic_dest_sizes;
-
-  // Dispatch OpFoldResults into static attributes and dynamic values
   dispatchIndexOpFoldResults(source_sizes, dynamic_source_sizes,
                              static_source_sizes);
   dispatchIndexOpFoldResults(dest_sizes, dynamic_dest_sizes, static_dest_sizes);
 
-  // Build the operation with separated static and dynamic components
+  // Source map: non-null iff source is a memref (asserted at verifier time).
+  bool source_is_memref = llvm::isa<MemRefType>(source.getType());
+  assert(static_cast<bool>(sourceMap) == source_is_memref &&
+         "sourceMap must be non-null iff source is a memref");
+  bool dest_is_memref = llvm::isa<MemRefType>(destination.getType());
+  assert(static_cast<bool>(destMap) == dest_is_memref &&
+         "destMap must be non-null iff destination is a memref");
+
   build(builder, result, source, source_indices, dynamic_source_sizes,
         destination, dest_indices, dynamic_dest_sizes,
         builder.getDenseI64ArrayAttr(static_source_sizes),
-        builder.getDenseI64ArrayAttr(static_dest_sizes));
+        builder.getDenseI64ArrayAttr(static_dest_sizes),
+        sourceMap ? AffineMapAttr::get(sourceMap) : AffineMapAttr(),
+        destMap ? AffineMapAttr::get(destMap) : AffineMapAttr());
 }
 
-// Build with all static sizes
+// Build with all static sizes.
 void DataTransferOp::build(OpBuilder& builder, OperationState& result,
-                           Value source, ValueRange source_indices,
+                           Value source, AffineMap sourceMap,
+                           ValueRange source_indices,
                            ArrayRef<int64_t> source_sizes, Value destination,
-                           ValueRange dest_indices,
+                           AffineMap destMap, ValueRange dest_indices,
                            ArrayRef<int64_t> dest_sizes) {
-  // Convert static sizes to OpFoldResult (as attributes)
   SmallVector<OpFoldResult> source_size_values = llvm::map_to_vector<4>(
       source_sizes,
       [&](int64_t v) -> OpFoldResult { return builder.getI64IntegerAttr(v); });
@@ -770,9 +780,8 @@ void DataTransferOp::build(OpBuilder& builder, OperationState& result,
       dest_sizes,
       [&](int64_t v) -> OpFoldResult { return builder.getI64IntegerAttr(v); });
 
-  // Delegate to the OpFoldResult builder
-  build(builder, result, source, source_indices, source_size_values,
-        destination, dest_indices, dest_size_values);
+  build(builder, result, source, sourceMap, source_indices, source_size_values,
+        destination, destMap, dest_indices, dest_size_values);
 }
 
 //===----------------------------------------------------------------------===//
