@@ -1,15 +1,10 @@
-add_library(SchedulerUtils
-  OperationUtils.cpp
-  SchedulerExtContext.cpp
+add_ktir_library(KTIRSchedulerUtils
+    OperationUtils.cpp
+    SchedulerExtContext.cpp
+  LINK_LIBS PRIVATE
+    KTIRKTDFDialect
 )
 
-target_link_libraries(SchedulerUtils
-  PUBLIC
+mlir_target_link_libraries(KTIRSchedulerUtils PUBLIC
   MLIRIR
-  KTDFOps
-)
-
-target_include_directories(SchedulerUtils
-  PUBLIC
-  ${CMAKE_SOURCE_DIR}
 )

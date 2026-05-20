@@ -24,8 +24,8 @@
 #include <mlir/Pass/PassManager.h>
 #include <tools/scheduler-driver-lib/scheduler-main.h>
 
-#include "Dialects/Includes/init-all-dialects.h"
-#include "Transform/Passes.h"
+#include "src/Dialects/Includes/init-all-dialects.h"
+#include "src/Transform/Passes.h"
 
 int main(int argc, char** argv) {
   scheduler::registerPassesForScheduler();

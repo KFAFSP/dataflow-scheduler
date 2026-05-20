@@ -24,7 +24,6 @@
 
 #include "scheduler-main.h"
 
-#include "Transform/Passes.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/InitLLVM.h"
@@ -40,6 +39,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Support/ToolUtilities.h"
+#include "src/Transform/Passes.h"
 
 using namespace mlir;
 using namespace llvm;

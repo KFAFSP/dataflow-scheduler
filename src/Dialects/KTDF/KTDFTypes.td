@@ -28,8 +28,8 @@ include "mlir/IR/OpBase.td"
 #endif // OP_BASE
 include "mlir/IR/EnumAttr.td"
 
-include "KTDFDialect.td"
-include "KTDFEnums.td"
+include "src/Dialects/KTDF/KTDFDialect.td"
+include "src/Dialects/KTDF/KTDFEnums.td"
 
 // Base class for KTDF dialect types
 class KTDF_Type<string name, string typeMnemonic, list<Trait> traits = []>

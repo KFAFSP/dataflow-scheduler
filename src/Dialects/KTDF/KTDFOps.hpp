@@ -39,12 +39,11 @@
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
-#include "src/Dialects/KTDF/KTDFOpsDialect.hpp.inc"
-#include "src/Dialects/KTDF/KTDFEnums.hpp.inc"
-
-/// Include the auto-generated header file containing the declarations of the
-/// KTDF types.
 #include "src/Dialects/KTDF/KTDFTypes.hpp"
+
+/// Include auto-generated header files.
+#include "src/Dialects/KTDF/KTDFEnums.hpp.inc"
+#include "src/Dialects/KTDF/KTDFOpsDialect.hpp.inc"
 
 /// Include the auto-generated header file containing the declarations of the
 /// KTDF operations.
@@ -52,4 +51,3 @@
 #include "src/Dialects/KTDF/KTDFOps.hpp.inc"
 
 #endif  // KTDF_SRC_DIALECTS_KTDF_HPP_
-

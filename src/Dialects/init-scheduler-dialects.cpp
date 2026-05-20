@@ -15,10 +15,10 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
-#include "Dialects/Includes/init-scheduler-dialects.h"
+#include "src/Dialects/Includes/init-scheduler-dialects.h"
 
-#include "Dialects/Includes/scheduler-dialects.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "src/Dialects/Includes/scheduler-dialects.h"
 
 namespace scheduler {
 

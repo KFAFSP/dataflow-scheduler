@@ -1,18 +1,19 @@
 configure_lit_site_cfg(
-  ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
-  ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
+    lit.site.cfg.py.in
+    ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
   MAIN_CONFIG
-  ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
-  )
+    ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
+)
 
-add_lit_testsuite(check-scheduler
-  "Running scheduler tests"
-  ${CMAKE_CURRENT_BINARY_DIR})
+set(KTIR_TEST_DEPENDS
+  scheduler)
 
-add_dependencies(check-scheduler scheduler)
+add_lit_testsuite(check-scheduler "Running the scheduler regression tests"
+  ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS ${KTIR_TEST_DEPENDS})
+set_target_properties(check-scheduler PROPERTIES FOLDER "Tests")
 
-# Add check-all target that runs all tests
-add_custom_target(check-all
-  COMMENT "Running all tests")
+add_dependencies(check-ktir check-scheduler)
 
-add_dependencies(check-all check-scheduler)
+add_lit_testsuites(KTIR ${CMAKE_CURRENT_SOURCE_DIR}
+  DEPENDS ${KTIR_TEST_DEPENDS})

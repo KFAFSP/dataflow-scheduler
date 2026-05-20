@@ -1,46 +1,61 @@
-cmake_minimum_required(VERSION 3.20.0)
-project(ktir-scheduler)
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+cmake_minimum_required(VERSION 3.20)
 
-set(SCHEDULER_SRC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
-set(SCHEDULER_BIN_ROOT "${CMAKE_CURRENT_BINARY_DIR}")
-set(SCHEDULER_TOOLS_DIR "${CMAKE_BINARY_DIR}/scheduler/bin")
+project(ktir-scheduler LANGUAGES C CXX)
 
-# Add cmake directory to search for custom cmake functions
-set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
-message(STATUS "cmake_module_path ${CMAKE_MODULE_PATH}")
+# Set defaults for compiler features and options.
+set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
+set(CMAKE_CXX_STANDARD_REQUIRED YES)
+set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
+set(LLVM_LIT_ARGS "-sv" CACHE STRING "Default options for lit")
 
-include(MLIR)
-include(clang-format)
-# for lit testings
-set(LLVM_EXTERNAL_LIT "${MLIR_LLVM_SOURCE_DIR}/utils/lit/lit.py" CACHE STRING "Command used to spawn lit")
+# Declare new CMake build options and their defaults.
+option(KTIR_ENABLE_PYTHON_BINDINGS "Build Python bindings" NO)
+option(KTIR_BUILD_TOOLS "Build tool executables" YES)
 
-# Add KTIR dependency
-set(KTIR_PROJ_SRC $ENV{KTIR_PROJ_SRC} CACHE STRING "Points to KTIR source directory")
-if("${KTIR_PROJ_SRC}" STREQUAL "")
-  message(FATAL_ERROR "Environment variable KTIR_PROJ_SRC was not set")
-endif()
-message(STATUS "KTIR_PROJ_SRC:${KTIR_PROJ_SRC}")
+# Find MLIR.
+find_package(MLIR REQUIRED CONFIG)
+message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
+message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
-set(KTIR_PROJ_BUILD $ENV{KTIR_PROJ_BUILD} CACHE STRING "Points to KTIR build directory")
-if("${KTIR_PROJ_BUILD}" STREQUAL "")
-  message(FATAL_ERROR "Environment variable KTIR_PROJ_BUILD was not set")
-endif()
-message(STATUS "KTIR_PROJ_BUILD:${KTIR_PROJ_BUILD}")
+# Load LLVM and MLIR CMake modules.
+list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
+list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+include(TableGen)
+include(AddLLVM)
+include(AddMLIR)
+include(HandleLLVMOptions)
 
-# Find KTIR libraries and includes
-find_library(KTDP_LIB MLIRKtdp PATHS ${KTIR_PROJ_BUILD}/lib NO_DEFAULT_PATH REQUIRED)
-message(STATUS "Found KTDP library: ${KTDP_LIB}")
+# Apply target properties for LLVM/MLIR globally.
+include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
+include_directories(SYSTEM ${MLIR_INCLUDE_DIRS})
+link_directories(${LLVM_BUILD_LIBRARY_DIR})
+add_definitions(${LLVM_DEFINITIONS})
 
-include_directories(${SCHEDULER_SRC_ROOT})
-include_directories(${SCHEDULER_SRC_ROOT}/src)
-include_directories(${SCHEDULER_BIN_ROOT})
-include_directories(${KTIR_PROJ_SRC}/include)
-include_directories(${KTIR_PROJ_BUILD}/include)
+# Set shared output directories.
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/lib)
+set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/bin)
+
+# Set project-specific output directories.
+set(KTIR_BINARY_DIR ${CMAKE_BINARY_DIR})
+
+# Include KTIR CMake module.
+# Until the projects are merged, some part of the build system is external.
+add_subdirectory(external)
+list(APPEND CMAKE_MODULE_PATH 
+  ${CMAKE_CURRENT_SOURCE_DIR}/external/ktir-mlir-frontend/cmake)
+include_directories(
+  ${CMAKE_CURRENT_SOURCE_DIR}/external/ktir-mlir-frontend/include)
+include_directories(
+  ${CMAKE_CURRENT_BINARY_DIR}/external/ktir-mlir-frontend/include)
+include(AddKTIR)
+
+# Apply target properties for this project globally.
+include_directories(SYSTEM ${PROJECT_BINARY_DIR})
+include_directories(${PROJECT_SOURCE_DIR})
 
 add_subdirectory(src)
 add_subdirectory(tools)
 add_subdirectory(test)
-
-message(STATUS "Finished loading KTIR-Scheduler CMake configuration")

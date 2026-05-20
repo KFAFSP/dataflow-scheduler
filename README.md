@@ -29,73 +29,42 @@ Before building KTIR-Scheduler, you need the following dependencies:
    ninja
    ```
 
-3. **KTIR (ktir-mlir-frontend)** - The KTIR Data Plane dialect and infrastructure
-   ```bash
-   git clone https://github.com/torch-spyre/ktir-mlir-frontend.git
-   cd ktir-mlir-frontend
-   mkdir build && cd build
-   cmake -G Ninja .. \
-     -DCMAKE_BUILD_TYPE=Debug \
-     -DLLVM_PROJ_SRC=<path-to-llvm-project> \
-     -DLLVM_PROJ_BUILD=<path-to-llvm-project>/build
-   ninja
-   ```
-
 ## Build Instructions
 
-### Step 1: Clone KTIR-Scheduler
+Building `KTIR-scheduler` automatically fetches and builds the required KTIR submodules, but requires a working build or installation of LLVM and MLIR to be present on your system.
 
-```bash
-git clone git@github.ibm.com:ai-chip-toolchain/KTIR-Scheduler.git
+```sh
+# Clone `KTIR-scheduler` and all its submodules.
+git clone --recursive git@github.ibm.com:ai-chip-toolchain/KTIR-Scheduler.git
 cd KTIR-Scheduler
-```
 
-### Step 2: Configure Build Paths
-
-Edit `scripts/buildKTIRScheduler.sh` to set the correct paths for your environment:
-- `LLVM_PROJ_SRC`: Path to your LLVM source directory
-- `LLVM_PROJ_BUILD`: Path to your LLVM build directory
-- `KTIR_PATH`: Path to your ktir-mlir-frontend source directory
-- `KTIR_BUILD_PATH`: Path to your ktir-mlir-frontend build directory
-
-### Step 3: Build Using the Build Script
-
-```bash
-mkdir -p build
-./scripts/buildKTIRScheduler.sh
-```
-
-### Step 4: Manual Build (Alternative)
-
-Alternatively, you can build manually with CMake:
-
-```bash
-mkdir -p build
-cd build
-
-cmake -G Ninja .. \
+# Configure the project.
+cmake -S . -B build -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_CXX_COMPILER=clang++ \
-  -DCMAKE_C_COMPILER=clang \
-  -DLLVM_PROJ_SRC=<path-to-llvm-project> \
-  -DLLVM_PROJ_BUILD=<path-to-llvm-project>/build \
-  -DKTIR_PROJ_SRC=<path-to-ktir-mlir-frontend> \
-  -DKTIR_PROJ_BUILD=<path-to-ktir-mlir-frontend>/build \
-  -DCMAKE_INSTALL_PREFIX=../install
+  -DLLVM_DIR=$LLVM_INSTALL_PREFIX/$lib/cmake/llvm \
+  -DMLIR_DIR=$MLIR_INSTALL_PREFIX/$lib/cmake/mlir \
+  -DLLVM_EXTERNAL_LIT=$LLVM_BUILD_DIR/bin/llvm-lit
 
-ninja
+# Build everything.
+cmake --build build --target all
 ```
 
-The build will produce the `scheduler` executable in `build/scheduler/bin/`.
+The build will produce the `scheduler` executable in `build/bin/`.
+
+The following CMake variables can be configured:
+
+|              Name | Type      | Description |
+| ----------------: | :-------- | --- |
+| `LLVM_DIR` <br/>*(required)* | `STRING` | Path to the CMake directory of an **LLVM** installation. <br/> *e.g. `~/tools/llvm-12.0.1/lib/cmake/llvm`* |
+| `MLIR_DIR` <br/>*(required)* | `STRING` | Path to the CMake directory of an **MLIR** installation. <br/> *e.g. `~/tools/llvm-12.0.1/lib/cmake/mlir`* |
+| `LLVM_EXTERNAL_LIT` <br/>*(optional)* | `STRING` | Path to an `llvm-lit` executable, required for testing. |
+| `KTIR_ENABLE_PYTHON_BINDINGS` <br/>*(default: `OFF`)* | `BOOL` | Whether to build the Python bindings. |
+| `KTIR_BUILD_TOOLS` <br/>*(default: `ON`)* | `BOOL` | Whether to build the tool executables. |
 
 ## Running Tests
 
-To run the test suite:
+The entire set of KTIR regression tests can be run with the following command:
 
-```bash
-cd build
-ninja check-scheduler
+```sh
+cmake --build build --target check-ktir
 ```
-
-This will execute all tests defined in the `test/` directory using the LLVM lit testing framework.
-

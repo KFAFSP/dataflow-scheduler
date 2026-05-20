@@ -18,8 +18,8 @@
 #ifndef SCHEDULER_SRC_DIALECTS_INCLUDES_SCHEDULER_DIALECTS_H
 #define SCHEDULER_SRC_DIALECTS_INCLUDES_SCHEDULER_DIALECTS_H
 
-#include "Dialects/KTDF/KTDFOps.hpp"
 #include "mlir/IR/DialectRegistry.h"
+#include "src/Dialects/KTDF/KTDFOps.hpp"
 
 // Future scheduler dialects can be added here
 // ...

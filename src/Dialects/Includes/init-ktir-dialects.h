@@ -18,9 +18,9 @@
 #ifndef SCHEDULER_SRC_DIALECTS_INCLUDES_INIT_KTIR_DIALECTS_H
 #define SCHEDULER_SRC_DIALECTS_INCLUDES_INIT_KTIR_DIALECTS_H
 
-#include "Dialects/Includes/ktir-dialects.h"
-#include "Dialects/Includes/mlir-dialects.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "src/Dialects/Includes/ktir-dialects.h"
+#include "src/Dialects/Includes/mlir-dialects.h"
 
 namespace scheduler {
 

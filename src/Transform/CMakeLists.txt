@@ -1,8 +1,10 @@
 set(LLVM_TARGET_DEFINITIONS Passes.td)
-scheduler_tablegen(Passes.h.inc -gen-pass-decls -name SchedulerTransforms)
-add_public_tablegen_target(SchedulerTransformsPassIncGen)
+mlir_tablegen(Passes.h.inc -gen-pass-decls -name SchedulerTransforms)
+add_ktir_tablegen_target(KTIRSchedulerTransformsPassIncGen)
 
-add_library(SchedulerTransforms
+add_ktir_doc(Passes KTDFPasses ./ -gen-pass-doc)
+
+add_ktir_dialect_library(KTIRSchedulerTransforms
     BroadcastPromotion.cpp
     Common/ApplicableUnits.cpp
     Common/PipelineScope.cpp
@@ -23,13 +25,16 @@ add_library(SchedulerTransforms
     TileSCFForLoops.cpp
     Utils/CustomLinalgTiling.cpp
     Utils/Utils.cpp
+
+    PARTIAL_SOURCES_INTENDED
+  
+  DEPENDS
+    KTIRSchedulerTransformsPassIncGen
+
+  LINK_LIBS PUBLIC
+    KTIRKTDFDialect
+    KTIRSchedulerUtils
+    KTIRSchedulerAnalysis
 )
 
-target_link_libraries(SchedulerTransforms
-    PUBLIC
-    KTDFOps
-    SchedulerUtils
-    SchedulerAnalysis
-)
-
-add_dependencies(SchedulerTransforms SchedulerTransformsPassIncGen)
+# FIXME: Clearly, MLIR libs are not being linked.
