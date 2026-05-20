@@ -549,6 +549,11 @@ ParseResult DataTransferOp::parse(OpAsmParser& parser, OperationState& result) {
                                       "source_map", result.attributes,
                                       OpAsmParser::Delimiter::OptionalSquare))
       return failure();
+    // OptionalSquare without `[` synthesizes an empty map and attaches it.
+    // Strip it so fifo sides have no map attribute.
+    if (source_index_operands.empty()) {
+      result.attributes.erase("source_map");
+    }
   }
 
   // Source size clause (optional): `size [ ... ]`.
@@ -570,6 +575,11 @@ ParseResult DataTransferOp::parse(OpAsmParser& parser, OperationState& result) {
                                       "dest_map", result.attributes,
                                       OpAsmParser::Delimiter::OptionalSquare))
       return failure();
+    // OptionalSquare without `[` synthesizes an empty map and attaches it.
+    // Strip it so fifo sides have no map attribute.
+    if (dest_index_operands.empty()) {
+      result.attributes.erase("dest_map");
+    }
   }
 
   if (succeeded(parser.parseOptionalKeyword("size"))) {
@@ -736,7 +746,11 @@ LogicalResult WriteToFifoOp::verify() {
 }
 
 // Build with mixed static/dynamic sizes (OpFoldResult).
-// `sourceMap` must be non-null iff source is a memref; same for `destMap`.
+// Caller is responsible for passing AffineMap() (null) for fifo sides and
+// a real AffineMap for memref sides; the verifier enforces this invariant
+// on the final IR. The builder does not assert on construction because
+// transient IR may legitimately reference access-tile-typed values that
+// will be lowered to memrefs later in the pipeline.
 void DataTransferOp::build(OpBuilder& builder, OperationState& result,
                            Value source, AffineMap sourceMap,
                            ValueRange source_indices,
@@ -749,14 +763,6 @@ void DataTransferOp::build(OpBuilder& builder, OperationState& result,
   dispatchIndexOpFoldResults(source_sizes, dynamic_source_sizes,
                              static_source_sizes);
   dispatchIndexOpFoldResults(dest_sizes, dynamic_dest_sizes, static_dest_sizes);
-
-  // Source map: non-null iff source is a memref (asserted at verifier time).
-  bool source_is_memref = llvm::isa<MemRefType>(source.getType());
-  assert(static_cast<bool>(sourceMap) == source_is_memref &&
-         "sourceMap must be non-null iff source is a memref");
-  bool dest_is_memref = llvm::isa<MemRefType>(destination.getType());
-  assert(static_cast<bool>(destMap) == dest_is_memref &&
-         "destMap must be non-null iff destination is a memref");
 
   build(builder, result, source, source_indices, dynamic_source_sizes,
         destination, dest_indices, dynamic_dest_sizes,
