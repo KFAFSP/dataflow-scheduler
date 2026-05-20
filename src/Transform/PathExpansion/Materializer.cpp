@@ -282,10 +282,11 @@ void PathExpansionMaterializer::materializePrivateNode(
   for (const auto& spec_ptr : resource_factory_.getSpecs()) {
     const PrivateResourceSpec& spec = *spec_ptr;
     if (spec.kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
-      mlir::Attribute memory_space = getMemorySpaceFromResource(spec.memory_resource);
-      mlir::MemRefType memref_type =
-          mlir::MemRefType::get(spec.shape, spec.element_type,
-                                mlir::MemRefLayoutAttrInterface{}, memory_space);
+      mlir::Attribute memory_space =
+          getMemorySpaceFromResource(spec.memory_resource);
+      mlir::MemRefType memref_type = mlir::MemRefType::get(
+          spec.shape, spec.element_type, mlir::MemRefLayoutAttrInterface{},
+          memory_space);
       result_types.push_back(memref_type);
     } else if (spec.kind == PrivateResourceSpec::Kind::kFifo) {
       // Add one result type per FIFO slot
@@ -331,12 +332,13 @@ void PathExpansionMaterializer::materializePrivateNode(
   // Allocate new private resources (buffers and FIFOs) using factory
   for (const auto& spec_ptr : resource_factory_.getSpecs()) {
     const PrivateResourceSpec* spec = spec_ptr.get();
-    
+
     if (spec->kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
-      mlir::Attribute memory_space = getMemorySpaceFromResource(spec->memory_resource);
-      mlir::MemRefType memref_type =
-          mlir::MemRefType::get(spec->shape, spec->element_type,
-                                mlir::MemRefLayoutAttrInterface{}, memory_space);
+      mlir::Attribute memory_space =
+          getMemorySpaceFromResource(spec->memory_resource);
+      mlir::MemRefType memref_type = mlir::MemRefType::get(
+          spec->shape, spec->element_type, mlir::MemRefLayoutAttrInterface{},
+          memory_space);
 
       auto alloc_op = mlir::memref::AllocOp::create(builder_, loc, memref_type);
 
@@ -345,25 +347,27 @@ void PathExpansionMaterializer::materializePrivateNode(
 
       // Add to yield operands
       yield_operands.push_back(alloc_op.getResult());
-      
+
     } else if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
       // Create FIFO allocation with multiple slots
       llvm::SmallVector<mlir::Type> fifo_slot_types;
       for (int64_t num_elements : spec->elements_per_slot) {
-        mlir::ktdf::FifoSlotType fifo_type =
-            mlir::ktdf::FifoSlotType::get(builder_.getContext(), spec->fifo_type,
-                                          num_elements, spec->element_type);
+        mlir::ktdf::FifoSlotType fifo_type = mlir::ktdf::FifoSlotType::get(
+            builder_.getContext(), spec->fifo_type, num_elements,
+            spec->element_type);
         fifo_slot_types.push_back(fifo_type);
       }
-      
-      // FifoAllocateOp::create requires: builder, location, result types, operands (empty), attributes (empty)
+
+      // FifoAllocateOp::create requires: builder, location, result types,
+      // operands (empty), attributes (empty)
       llvm::SmallVector<mlir::Value> empty_operands;
       auto fifo_alloc = mlir::ktdf::FifoAllocateOp::create(
           builder_, loc, fifo_slot_types, empty_operands);
-      
+
       // Register allocation with factory (all slots)
       llvm::SmallVector<mlir::Value> slot_values;
-      for (size_t slot_idx = 0; slot_idx < fifo_alloc.getNumResults(); ++slot_idx) {
+      for (size_t slot_idx = 0; slot_idx < fifo_alloc.getNumResults();
+           ++slot_idx) {
         slot_values.push_back(fifo_alloc.getResult(slot_idx));
         yield_operands.push_back(fifo_alloc.getResult(slot_idx));
       }
@@ -395,8 +399,9 @@ void PathExpansionMaterializer::materializePrivateNode(
 
   LLVM_DEBUG(llvm::dbgs() << "  Materialized private node with "
                           << orig_result_count << " original resources, "
-                          << resource_factory_.getSpecs().size() << " new buffers, and "
-                          << stages_with_deps.size() << " tokens\n");
+                          << resource_factory_.getSpecs().size()
+                          << " new buffers, and " << stages_with_deps.size()
+                          << " tokens\n");
 }
 
 void PathExpansionMaterializer::buildStageToTokenMapping(
@@ -534,11 +539,13 @@ void PathExpansionMaterializer::cloneStageBody(mlir::ktdf::StageOp orig_stage) {
 
 void PathExpansionMaterializer::adaptStageBodyFifoKinds(
     mlir::ktdf::StageOp orig_stage, const StageMaterializationInfo& info) {
-  // Clone the stage body but adapt data_transfer operations to use new FIFO resources
+  // Clone the stage body but adapt data_transfer operations to use new FIFO
+  // resources
   mlir::Block* orig_body = &orig_stage.getBody().front();
 
   // Build a map from original transfer ops to their transfer info
-  llvm::DenseMap<mlir::Operation*, const TransferMaterializationInfo*> transfer_map;
+  llvm::DenseMap<mlir::Operation*, const TransferMaterializationInfo*>
+      transfer_map;
   for (const TransferMaterializationInfo& transfer_info : info.transfers) {
     if (transfer_info.template_op) {
       transfer_map[transfer_info.template_op] = &transfer_info;
@@ -556,12 +563,14 @@ void PathExpansionMaterializer::adaptStageBodyFifoKinds(
         const TransferMaterializationInfo& transfer_info = *it->second;
         mlir::Location loc = transfer_op.getLoc();
 
-        // Get source - use private resource if specified, otherwise materialize from template
+        // Get source - use private resource if specified, otherwise materialize
+        // from template
         mlir::Value source;
         if (transfer_info.source_private_resource) {
           // Look up the allocated SSA value from the factory
           const PrivateResourceAllocation* alloc =
-              resource_factory_.getAllocation(transfer_info.source_private_resource);
+              resource_factory_.getAllocation(
+                  transfer_info.source_private_resource);
           assert(alloc && "Private resource should have been allocated");
           assert(transfer_info.source_slot_index < alloc->ssa_values.size() &&
                  "Slot index out of bounds");
@@ -570,12 +579,14 @@ void PathExpansionMaterializer::adaptStageBodyFifoKinds(
           source = materializeValue(transfer_op.getSource());
         }
 
-        // Get destination - use private resource if specified, otherwise materialize from template
+        // Get destination - use private resource if specified, otherwise
+        // materialize from template
         mlir::Value destination;
         if (transfer_info.dest_private_resource) {
           // Look up the allocated SSA value from the factory
           const PrivateResourceAllocation* alloc =
-              resource_factory_.getAllocation(transfer_info.dest_private_resource);
+              resource_factory_.getAllocation(
+                  transfer_info.dest_private_resource);
           assert(alloc && "Private resource should have been allocated");
           assert(transfer_info.dest_slot_index < alloc->ssa_values.size() &&
                  "Slot index out of bounds");
@@ -606,15 +617,16 @@ void PathExpansionMaterializer::adaptStageBodyFifoKinds(
         }
 
         // Create the adapted transfer operation
-        mlir::ktdf::DataTransferOp::create(builder_, loc, source, source_indices,
-                                           source_sizes, destination,
-                                           dest_indices, dest_sizes);
+        mlir::ktdf::DataTransferOp::create(
+            builder_, loc, source, source_indices, source_sizes, destination,
+            dest_indices, dest_sizes);
       } else {
         // No adaptation needed, clone as-is
         builder_.clone(op, value_map_);
       }
     } else {
-      // Clone other operations as-is (including read_from_fifo, write_to_fifo, compute ops)
+      // Clone other operations as-is (including read_from_fifo, write_to_fifo,
+      // compute ops)
       builder_.clone(op, value_map_);
     }
   }
@@ -628,17 +640,20 @@ void PathExpansionMaterializer::synthesizeTransferStage(
       // Clone and adapt the template transfer
       mlir::Operation* template_op = transfer_info.template_op;
       mlir::Location loc = template_op->getLoc();
-      
+
       // Cast to DataTransferOp to access its methods
-      auto template_transfer = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(template_op);
+      auto template_transfer =
+          mlir::dyn_cast<mlir::ktdf::DataTransferOp>(template_op);
       assert(template_transfer && "template_op should be a DataTransferOp");
 
-      // Get source - use private resource if specified, otherwise materialize from template
+      // Get source - use private resource if specified, otherwise materialize
+      // from template
       mlir::Value source;
       if (transfer_info.source_private_resource) {
         // Look up the allocated SSA value from the factory
         const PrivateResourceAllocation* alloc =
-            resource_factory_.getAllocation(transfer_info.source_private_resource);
+            resource_factory_.getAllocation(
+                transfer_info.source_private_resource);
         assert(alloc && "Private resource should have been allocated");
         assert(transfer_info.source_slot_index < alloc->ssa_values.size() &&
                "Slot index out of bounds");
@@ -648,12 +663,14 @@ void PathExpansionMaterializer::synthesizeTransferStage(
         source = materializeValue(template_transfer.getSource());
       }
 
-      // Get destination - use private resource if specified, otherwise materialize from template
+      // Get destination - use private resource if specified, otherwise
+      // materialize from template
       mlir::Value destination;
       if (transfer_info.dest_private_resource) {
         // Look up the allocated SSA value from the factory
         const PrivateResourceAllocation* alloc =
-            resource_factory_.getAllocation(transfer_info.dest_private_resource);
+            resource_factory_.getAllocation(
+                transfer_info.dest_private_resource);
         assert(alloc && "Private resource should have been allocated");
         assert(transfer_info.dest_slot_index < alloc->ssa_values.size() &&
                "Slot index out of bounds");

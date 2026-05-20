@@ -23,38 +23,36 @@
 namespace scheduler {
 
 PrivateResourceSpec* PrivateResourceFactory::createMemoryBuffer(
-    ArchitectureGraph::Resource memory_resource,
-    llvm::ArrayRef<int64_t> shape,
+    ArchitectureGraph::Resource memory_resource, llvm::ArrayRef<int64_t> shape,
     mlir::Type element_type) {
   auto spec = std::make_unique<PrivateResourceSpec>();
   spec->kind = PrivateResourceSpec::Kind::kMemoryBuffer;
   spec->memory_resource = memory_resource;
   spec->shape.assign(shape.begin(), shape.end());
   spec->element_type = element_type;
-  
+
   PrivateResourceSpec* ptr = spec.get();
   specs_.push_back(std::move(spec));
   return ptr;
 }
 
 PrivateResourceSpec* PrivateResourceFactory::createFifo(
-    mlir::ktdf::FifoType fifo_type,
-    llvm::ArrayRef<int64_t> elements_per_slot,
+    mlir::ktdf::FifoType fifo_type, llvm::ArrayRef<int64_t> elements_per_slot,
     mlir::Type element_type) {
   auto spec = std::make_unique<PrivateResourceSpec>();
   spec->kind = PrivateResourceSpec::Kind::kFifo;
   spec->fifo_type = fifo_type;
-  spec->elements_per_slot.assign(elements_per_slot.begin(), elements_per_slot.end());
+  spec->elements_per_slot.assign(elements_per_slot.begin(),
+                                 elements_per_slot.end());
   spec->element_type = element_type;
-  
+
   PrivateResourceSpec* ptr = spec.get();
   specs_.push_back(std::move(spec));
   return ptr;
 }
 
 void PrivateResourceFactory::registerAllocation(
-    const PrivateResourceSpec* spec,
-    llvm::ArrayRef<mlir::Value> ssa_values) {
+    const PrivateResourceSpec* spec, llvm::ArrayRef<mlir::Value> ssa_values) {
   auto alloc = std::make_unique<PrivateResourceAllocation>(spec);
   alloc->ssa_values.assign(ssa_values.begin(), ssa_values.end());
   allocations_[spec] = std::move(alloc);
