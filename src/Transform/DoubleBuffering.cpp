@@ -539,7 +539,7 @@ struct DoubleBufferingPass
     SmallVector<std::pair<mlir::ktdf::PipelineOp, SmallVector<CandidateShape>>>
         per_pipeline_shapes;
     module.walk<WalkOrder::PreOrder>([&](mlir::ktdf::PipelineOp pipeline) {
-      auto scope = ::ktdf::common::computePipelineEnclosingScope(pipeline);
+      auto scope = ::ktdf::common::getPipelineEnclosingScope(pipeline);
       if (!isPipelineEligible(pipeline, scope)) {
         return;
       }
@@ -602,7 +602,7 @@ struct DoubleBufferingPass
     }
 
     for (auto& [pipeline, candidates] : per_pipeline_candidates) {
-      auto scope = ::ktdf::common::computePipelineEnclosingScope(pipeline);
+      auto scope = ::ktdf::common::getPipelineEnclosingScope(pipeline);
       rewritePipeline(pipeline, scope, candidates);
     }
   }

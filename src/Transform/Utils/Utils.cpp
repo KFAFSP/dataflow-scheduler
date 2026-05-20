@@ -56,7 +56,8 @@ std::optional<int64_t> getStaticTripCount(mlir::scf::ForOp loop) {
       loop.getLowerBound().getDefiningOp<mlir::arith::ConstantIndexOp>();
   auto ub_const =
       loop.getUpperBound().getDefiningOp<mlir::arith::ConstantIndexOp>();
-  auto step_const = loop.getStep().getDefiningOp<mlir::arith::ConstantIndexOp>();
+  auto step_const =
+      loop.getStep().getDefiningOp<mlir::arith::ConstantIndexOp>();
   if (!lb_const || !ub_const || !step_const) {
     return std::nullopt;
   }
