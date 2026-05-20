@@ -1,3 +1,4 @@
+// For expected output of path-expansion pass look at the basic.out.mlir
 #map = affine_map<(d0) -> (d0)>
 #set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 module {
