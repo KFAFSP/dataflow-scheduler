@@ -201,6 +201,18 @@ mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
   auto new_stage =
       mlir::ktdf::StageOp::create(builder_, loc, depends_in, depends_out);
 
+  // Carry over the applicable_units attribute from the original stage. It is
+  // required downstream (e.g. ParallelizeLoopsAcrossInstancesPass asserts
+  // every stage has it) and the rebuilt stage would otherwise lose it.
+  // For coarsened stages that have no template (no orig_stage) but enclose
+  // an inner pipeline, the union is computed below after the body is
+  // materialized.
+  if (orig_stage) {
+    if (auto applicable_units = orig_stage.getApplicableUnitsAttr()) {
+      new_stage.setApplicableUnitsAttr(applicable_units);
+    }
+  }
+
   // Track the materialized operation
   node_to_materialized_op_[&stage_node] = new_stage.getOperation();
 
@@ -245,6 +257,30 @@ mlir::ktdf::StageOp PipelineTreeMaterializer::materializeStageNode(
     cloneStageBody(orig_stage);
   } else {
     llvm_unreachable("Unmaterialized stage with no children and no template");
+  }
+
+  // If the new stage has no applicable_units yet (e.g. it was synthesized by
+  // coarsening with no template) but its body encloses one or more
+  // ktdf.stage ops, set its applicable_units to the union of those inner
+  // stages' applicable_units. ParallelizeLoopsAcrossInstances requires every
+  // stage to carry the attribute. Inner stages without the attribute are
+  // skipped so legacy inputs still parse cleanly.
+  if (!new_stage.getApplicableUnitsAttr()) {
+    llvm::SmallSetVector<mlir::ktdf::ComponentType, 4> union_units;
+    new_stage.walk([&](mlir::ktdf::StageOp inner_stage) {
+      if (inner_stage == new_stage) return;
+      if (auto attr = inner_stage.getApplicableUnitsAttr()) {
+        for (mlir::ktdf::ComponentType unit : attr.getValue())
+          union_units.insert(unit);
+      }
+    });
+    if (!union_units.empty()) {
+      llvm::SmallVector<mlir::ktdf::ComponentType> units(union_units.begin(),
+                                                         union_units.end());
+      new_stage.setApplicableUnitsAttr(
+          mlir::ktdf::ApplicableUnitsCustomAttr::get(builder_.getContext(),
+                                                    units));
+    }
   }
 
   // Restore insertion point after the stage
