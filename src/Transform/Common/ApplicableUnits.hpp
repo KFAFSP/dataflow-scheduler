@@ -38,7 +38,7 @@ namespace common {
 /// Returns an empty SetVector when the pipeline has no immediate stages
 /// (e.g., a pipeline containing only `ktdf.private`).
 llvm::SmallSetVector<mlir::ktdf::ComponentType, 4>
-computePipelineApplicableUnits(mlir::ktdf::PipelineOp pipeline);
+collectPipelineApplicableUnits(mlir::ktdf::PipelineOp pipeline);
 
 }  // namespace common
 }  // namespace ktdf

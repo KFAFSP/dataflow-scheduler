@@ -78,7 +78,7 @@ int findOutermostLegalTargetDepth(
 
 std::optional<Candidate> findFirstCandidate(mlir::ktdf::PipelineOp pipeline) {
   ktdf::common::PipelineEnclosingScope scope =
-      ktdf::common::computePipelineEnclosingScope(pipeline);
+      ktdf::common::getPipelineEnclosingScope(pipeline);
   if (scope.loops.empty()) {
     return std::nullopt;
   }

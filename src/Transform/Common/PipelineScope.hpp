@@ -47,7 +47,7 @@ struct PipelineEnclosingScope {
 ///
 /// Returns an empty scope if the pipeline has no enclosing scf.for that
 /// qualifies.
-PipelineEnclosingScope computePipelineEnclosingScope(
+PipelineEnclosingScope getPipelineEnclosingScope(
     mlir::ktdf::PipelineOp pipeline);
 
 }  // namespace common

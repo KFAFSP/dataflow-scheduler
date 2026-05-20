@@ -25,7 +25,7 @@ namespace ktdf {
 namespace common {
 
 llvm::SmallSetVector<mlir::ktdf::ComponentType, 4>
-computePipelineApplicableUnits(mlir::ktdf::PipelineOp pipeline) {
+collectPipelineApplicableUnits(mlir::ktdf::PipelineOp pipeline) {
   llvm::SmallSetVector<mlir::ktdf::ComponentType, 4> result;
 
   for (mlir::ktdf::StageOp stage : pipeline.getStages()) {
@@ -35,7 +35,7 @@ computePipelineApplicableUnits(mlir::ktdf::PipelineOp pipeline) {
       llvm::raw_string_ostream os(msg);
       os << "ktdf.stage at " << stage.getLoc()
          << " is missing required `applicable_units` attribute "
-            "(needed by ktdf::common::computePipelineApplicableUnits)";
+            "(needed by ktdf::common::collectPipelineApplicableUnits)";
       llvm::report_fatal_error(llvm::Twine(os.str()));
     }
     for (mlir::ktdf::ComponentType unit : attr.getValue()) {

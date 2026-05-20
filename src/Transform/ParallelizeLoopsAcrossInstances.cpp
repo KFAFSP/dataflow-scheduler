@@ -38,6 +38,7 @@
 #include "src/Transform/Common/ApplicableUnits.hpp"
 #include "src/Transform/Common/PipelineScope.hpp"
 #include "src/Transform/Passes.h"
+#include "src/Transform/Utils/Utils.h"
 #include "src/Utils/SchedulerExtContext.h"
 
 #define PASS_NAME "parallelize-loops-across-instances"
@@ -67,42 +68,12 @@ struct Candidate {
 // Analysis helpers
 //===----------------------------------------------------------------------===//
 
-/// Returns the static trip count of `loop` iff lb, ub, step are all
-/// arith.constant index ops. step must be positive.
-std::optional<int64_t> getStaticTripCount(scf::ForOp loop) {
-  auto lb_const = loop.getLowerBound().getDefiningOp<arith::ConstantIndexOp>();
-  auto ub_const = loop.getUpperBound().getDefiningOp<arith::ConstantIndexOp>();
-  auto step_const = loop.getStep().getDefiningOp<arith::ConstantIndexOp>();
-  if (!lb_const || !ub_const || !step_const) {
-    return std::nullopt;
-  }
-  int64_t lb = lb_const.value();
-  int64_t ub = ub_const.value();
-  int64_t step = step_const.value();
-  if (step <= 0) {
-    return std::nullopt;
-  }
-  if (ub <= lb) {
-    return 0;
-  }
-  return (ub - lb + step - 1) / step;
-}
-
-/// True iff `loop` carries `loop_type = #ktdf.loop_type<parallel_loop>`.
-bool isParallelLoop(scf::ForOp loop) {
-  auto attr = loop->getAttrOfType<mlir::ktdf::LoopTypeAttr>("loop_type");
-  if (!attr) {
-    return false;
-  }
-  return attr.getValue() == mlir::ktdf::LoopType::ParallelLoop;
-}
-
 /// True iff every unit in the pipeline's effective applicable_units is
 /// per-corelet per `ctx`. Returns false if the effective set is empty.
 /// Triggers report_fatal_error if any immediate stage lacks the attribute.
 bool allUnitsAreCoreletLocal(mlir::ktdf::PipelineOp pipeline,
                              const scheduler::SchedulerExtContext& ctx) {
-  auto units = ::ktdf::common::computePipelineApplicableUnits(pipeline);
+  auto units = ::ktdf::common::collectPipelineApplicableUnits(pipeline);
   if (units.empty()) {
     return false;
   }
@@ -120,10 +91,10 @@ template <typename Pred>
 std::optional<std::pair<scf::ForOp, int64_t>> firstMatching(
     llvm::ArrayRef<scf::ForOp> scope_loops_innermost_first, Pred pred) {
   for (scf::ForOp loop : llvm::reverse(scope_loops_innermost_first)) {
-    if (!isParallelLoop(loop)) {
+    if (!scheduler::utils::isParallelLoop(loop)) {
       continue;
     }
-    auto trip = getStaticTripCount(loop);
+    auto trip = scheduler::utils::getStaticTripCount(loop);
     if (!trip.has_value()) {
       continue;
     }
@@ -166,7 +137,7 @@ std::optional<Candidate> findCandidate(
   }
 
   // Step 3: enclosing scope.
-  auto scope = ::ktdf::common::computePipelineEnclosingScope(pipeline);
+  auto scope = ::ktdf::common::getPipelineEnclosingScope(pipeline);
   if (scope.loops.empty()) {
     LLVM_DEBUG(llvm::dbgs()
                << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()

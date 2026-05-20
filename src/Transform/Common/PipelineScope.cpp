@@ -40,7 +40,7 @@ bool loopBodyContainsOnly(mlir::scf::ForOp loop, mlir::Operation* child) {
 
 }  // namespace
 
-PipelineEnclosingScope computePipelineEnclosingScope(
+PipelineEnclosingScope getPipelineEnclosingScope(
     mlir::ktdf::PipelineOp pipeline) {
   PipelineEnclosingScope scope;
   mlir::Operation* current = pipeline.getOperation();
