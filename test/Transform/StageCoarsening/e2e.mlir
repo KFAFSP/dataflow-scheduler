@@ -81,7 +81,7 @@
 // CHECK-NEXT:                     linalg.add ins(%[[VAL_52]]#0, %[[VAL_52]]#1 : memref<64xf16, {{.*}}<SFP_REG>>, memref<64xf16, {{.*}}<SFP_REG>>) outs(%[[VAL_52]]#2 : memref<64xf16, {{.*}}<SFP_REG>>)
 // CHECK-NEXT:                   }
 // CHECK-NEXT:                   ktdf.stage depends_in(%[[VAL_53:.*]]#4 : !ktdf.token) depends_out(none) {
-// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_53]]#2 size [64] to %[[VAL_42]]#2{{\[}}%[[VAL_43]], %[[VAL_44]], %[[VAL_1]]] size [64] : memref<64xf16, {{.*}}<SFP_REG>>, memref<?x?x64xf16, {{.*}}<LX>>
+// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_53]]#2{{\[}}%[[VAL_1]]] size [64] to %[[VAL_42]]#2{{\[}}%[[VAL_43]], %[[VAL_44]], %[[VAL_1]]] size [64] : memref<64xf16, {{.*}}<SFP_REG>>, memref<?x?x64xf16, {{.*}}<LX>>
 // CHECK-NEXT:                   }
 // CHECK-NEXT:                 }
 // CHECK-NEXT:               }
@@ -186,7 +186,7 @@ module {
               }
 
               ktdf.stage depends_in(%res_t3 : !ktdf.token) depends_out(%res_t4 : !ktdf.token) {
-                ktdf.data_transfer from %res_sfp_out size [64] to %res_lx_C[%c0] size [64] : memref<64xf16, #ktdf.memory_space<SFP_REG>>, memref<64xf16, #ktdf.memory_space<LX>>
+                ktdf.data_transfer from %res_sfp_out[%c0] size [64] to %res_lx_C[%c0] size [64] : memref<64xf16, #ktdf.memory_space<SFP_REG>>, memref<64xf16, #ktdf.memory_space<LX>>
               }
 
               ktdf.stage depends_in(%res_t4 : !ktdf.token) depends_out(%res_t5 : !ktdf.token) {

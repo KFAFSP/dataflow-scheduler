@@ -86,7 +86,7 @@
 // CHECK-NEXT:                     %[[VAL_61:.*]] = arith.divsi %[[VAL_60]], %[[VAL_2]] : index
 // CHECK-NEXT:                     %[[VAL_62:.*]] = arith.subi %[[VAL_42]], %[[VAL_1]] : index
 // CHECK-NEXT:                     %[[VAL_63:.*]] = arith.divsi %[[VAL_62]], %[[VAL_4]] : index
-// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_43]]#2 size [64] to %[[VAL_21]]#2{{\[}}%[[VAL_61]], %[[VAL_63]], %[[VAL_1]]] size [64] : memref<64xf16, {{.*}}<SFP_REG>>, memref<2x1x64xf16, {{.*}}<LX>>
+// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_43]]#2{{\[}}%[[VAL_1]]] size [64] to %[[VAL_21]]#2{{\[}}%[[VAL_61]], %[[VAL_63]], %[[VAL_1]]] size [64] : memref<64xf16, {{.*}}<SFP_REG>>, memref<2x1x64xf16, {{.*}}<LX>>
 // CHECK-NEXT:                   }
 // CHECK-NEXT:                 }
 // CHECK-NEXT:               } {loop_type = {{.*}}<parallel_loop>}
@@ -201,7 +201,7 @@ module {
                   }
 
                   ktdf.stage depends_in(%res_t3 : !ktdf.token) depends_out(%res_t4 : !ktdf.token) {
-                    ktdf.data_transfer from %res_sfp_out size [64] to %res_lx_C[%c0] size [64] : memref<64xf16, #ktdf.memory_space<SFP_REG>>, memref<64xf16, #ktdf.memory_space<LX>>
+                    ktdf.data_transfer from %res_sfp_out[%c0] size [64] to %res_lx_C[%c0] size [64] : memref<64xf16, #ktdf.memory_space<SFP_REG>>, memref<64xf16, #ktdf.memory_space<LX>>
                   }
 
                   ktdf.stage depends_in(%res_t4 : !ktdf.token) depends_out(%res_t5 : !ktdf.token) {

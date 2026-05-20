@@ -111,7 +111,7 @@
 // CHECK-NEXT:                     %[[VAL_83:.*]] = arith.divsi %[[VAL_82]], %[[VAL_2]] : index
 // CHECK-NEXT:                     %[[VAL_84:.*]] = arith.subi %[[VAL_64]], %[[VAL_1]] : index
 // CHECK-NEXT:                     %[[VAL_85:.*]] = arith.divsi %[[VAL_84]], %[[VAL_2]] : index
-// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_81]]#2 size [64] to %[[VAL_62]]#2{{\[}}%[[VAL_83]], %[[VAL_85]], %[[VAL_1]]] size [64] : memref<64xf16, {{.*}}<SFP_REG>>, memref<?x?x64xf16, {{.*}}<LX>>
+// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_81]]#2{{\[}}%[[VAL_1]]] size [64] to %[[VAL_62]]#2{{\[}}%[[VAL_83]], %[[VAL_85]], %[[VAL_1]]] size [64] : memref<64xf16, {{.*}}<SFP_REG>>, memref<?x?x64xf16, {{.*}}<LX>>
 // CHECK-NEXT:                   }
 // CHECK-NEXT:                 }
 // CHECK-NEXT:               }
@@ -205,7 +205,7 @@ module {
                 linalg.add ins(%16#3, %16#4 : memref<64xf16, #ktdf.memory_space<SFP_REG>>, memref<64xf16, #ktdf.memory_space<SFP_REG>>) outs(%16#5 : memref<64xf16, #ktdf.memory_space<SFP_REG>>)
               }
               ktdf.stage depends_in(%16#8 : !ktdf.token) depends_out(%16#9 : !ktdf.token) {
-                ktdf.data_transfer from %16#5 size [64] to %16#2[%c0] size [64] : memref<64xf16, #ktdf.memory_space<SFP_REG>>, memref<64xf16, #ktdf.memory_space<LX>>
+                ktdf.data_transfer from %16#5[%c0] size [64] to %16#2[%c0] size [64] : memref<64xf16, #ktdf.memory_space<SFP_REG>>, memref<64xf16, #ktdf.memory_space<LX>>
               }
               ktdf.stage depends_in(%16#9 : !ktdf.token) depends_out(%16#10 : !ktdf.token) {
                 %17 = affine.apply #map2(%arg4)[%arg2]
