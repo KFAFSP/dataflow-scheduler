@@ -36,6 +36,24 @@ namespace scheduler {
 
 namespace {
 
+/// Helper to validate FIFO slot index assignment
+/// Checks that the assigned slot index matches the original result index
+/// from the template transfer operation
+void validateFifoSlotIndex(mlir::Value orig_fifo_value, size_t assigned_slot_idx,
+                           const PrivateResourceSpec* fifo_spec) {
+  if (auto orig_private_result = mlir::dyn_cast<mlir::OpResult>(orig_fifo_value)) {
+    // Find which result index this was in the original private op
+    unsigned orig_result_idx = orig_private_result.getResultNumber();
+    // The slot index we assign should match the original result index
+    // This ensures we maintain the same slot ordering as the original
+    assert(assigned_slot_idx == orig_result_idx &&
+           "expected result index to match our calculated fifo slot index");
+  }
+  // Sanity check: slot index should be within allocated slots
+  assert(assigned_slot_idx < fifo_spec->elements_per_slot.size() &&
+         "Slot index should be within the allocated slots for this FIFO type");
+}
+
 /// Helper to infer resource from memory space attribute
 std::optional<ArchitectureGraph::Resource> inferResourceFromMemorySpace(
     mlir::Attribute memory_space) {
@@ -124,7 +142,7 @@ mlir::FailureOr<StageSummary> analyzeStage(StageNode* stage_node) {
         } else if (auto fifo_type =
                        mlir::dyn_cast<mlir::ktdf::FifoSlotType>(source_type)) {
           if (auto resource =
-                  inferResourceFromFifoType(fifo_type.getFifoType(), false)) {
+                  inferResourceFromFifoType(fifo_type.getFifoType(), true)) {
             summary.input_endpoints.push_back({*resource, std::nullopt});
           }
         }
@@ -140,7 +158,7 @@ mlir::FailureOr<StageSummary> analyzeStage(StageNode* stage_node) {
         } else if (auto fifo_type =
                        mlir::dyn_cast<mlir::ktdf::FifoSlotType>(dest_type)) {
           if (auto resource =
-                  inferResourceFromFifoType(fifo_type.getFifoType(), true)) {
+                  inferResourceFromFifoType(fifo_type.getFifoType(), false)) {
             summary.output_endpoints.push_back({*resource, std::nullopt});
           }
         }
@@ -443,8 +461,10 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
     }
     
     // Track FIFO allocations needed for this stage
-    // Map from fifo_type to list of indices in private_resources
-    llvm::DenseMap<mlir::ktdf::FifoType, llvm::SmallVector<size_t>> fifo_groups;
+    // Map from fifo_type to the PrivateResourceSpec* created by factory
+    llvm::DenseMap<mlir::ktdf::FifoType, PrivateResourceSpec*> fifo_specs;
+    // Track next available slot index for each FIFO type
+    llvm::DenseMap<mlir::ktdf::FifoType, size_t> fifo_next_slot;
     
     // For existing stages, record transfer info for FIFO adaptation
     // Walk through the stage's data transfers and record edge info
@@ -468,7 +488,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
           num_elements *= dim;
         }
       } else if (auto fifo = mlir::dyn_cast<mlir::ktdf::FifoSlotType>(src_type)) {
-        src_res = inferResourceFromFifoType(fifo.getFifoType(), false);
+        src_res = inferResourceFromFifoType(fifo.getFifoType(), true);
         element_type = fifo.getElementType();
         assert(!fifo.isDynamicNumElements() && "Dynamic FIFO sizes not supported in path expansion");
         num_elements = fifo.getStaticNumElements();
@@ -485,7 +505,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
           }
         }
       } else if (auto fifo = mlir::dyn_cast<mlir::ktdf::FifoSlotType>(dest_type)) {
-        dest_res = inferResourceFromFifoType(fifo.getFifoType(), true);
+        dest_res = inferResourceFromFifoType(fifo.getFifoType(), false);
         if (!element_type) {
           element_type = fifo.getElementType();
           assert(!fifo.isDynamicNumElements() && "Dynamic FIFO sizes not supported in path expansion");
@@ -513,7 +533,6 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
             fifo_type = *edge->fifo_type;
           } else {
             // Fallback: infer from resources
-            // Note: Ideally this mapping should be in ArchitectureGraph
             if (*src_res == ArchitectureGraph::Resource::HBM &&
                 *dest_res == ArchitectureGraph::Resource::SFP) {
               fifo_type = mlir::ktdf::FifoType::HbmToSfp;
@@ -531,23 +550,20 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
             }
           }
           
-          // Group FIFO allocations by fifo_type only
+          // Group FIFO allocations by fifo_type
           // All transfers using the same FIFO type will share one fifo.allocate
-          if (fifo_groups.find(fifo_type) == fifo_groups.end()) {
-            // Create new FIFO spec
-            PrivateResourceSpec fifo_spec;
-            fifo_spec.kind = PrivateResourceSpec::Kind::kFifo;
-            fifo_spec.fifo_type = fifo_type;
-            fifo_spec.element_type = element_type;
-            fifo_spec.elements_per_slot.push_back(num_elements);
-            
-            size_t spec_idx = info.private_resources.size();
-            info.private_resources.push_back(fifo_spec);
-            fifo_groups[fifo_type].push_back(spec_idx);
+          if (fifo_specs.find(fifo_type) == fifo_specs.end()) {
+            // Create new FIFO spec via factory with first slot
+            PrivateResourceSpec* spec = plan->resource_factory.createFifo(
+                fifo_type,
+                {num_elements},  // First slot
+                element_type);
+            fifo_specs[fifo_type] = spec;
+            fifo_next_slot[fifo_type] = 0;  // Initialize slot counter
           } else {
-            // Add to existing FIFO allocation
-            size_t spec_idx = fifo_groups[fifo_type][0];
-            info.private_resources[spec_idx].elements_per_slot.push_back(num_elements);
+            // Add another slot to existing FIFO spec
+            PrivateResourceSpec* spec = fifo_specs[fifo_type];
+            spec->elements_per_slot.push_back(num_elements);
           }
         }
         
@@ -556,6 +572,74 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
         transfer_info.hop = *edge;
         transfer_info.source_resource = *src_res;
         transfer_info.dest_resource = *dest_res;
+        
+        // Link FIFO specs to transfer info and assign slot indices
+        if (src_is_fifo) {
+          mlir::ktdf::FifoType fifo_type;
+          if (edge->fifo_type) {
+            fifo_type = *edge->fifo_type;
+          } else {
+            // Infer fifo type from resources (same logic as above)
+            if (*src_res == ArchitectureGraph::Resource::HBM &&
+                *dest_res == ArchitectureGraph::Resource::SFP) {
+              fifo_type = mlir::ktdf::FifoType::HbmToSfp;
+            } else if (*src_res == ArchitectureGraph::Resource::SFP &&
+                       *dest_res == ArchitectureGraph::Resource::HBM) {
+              fifo_type = mlir::ktdf::FifoType::SfpToHbm;
+            } else if (*src_res == ArchitectureGraph::Resource::LX &&
+                       *dest_res == ArchitectureGraph::Resource::SFP) {
+              fifo_type = mlir::ktdf::FifoType::LxluToSfp;
+            } else if (*src_res == ArchitectureGraph::Resource::SFP &&
+                       *dest_res == ArchitectureGraph::Resource::LX) {
+              fifo_type = mlir::ktdf::FifoType::SfpToLxsu;
+            } else {
+              llvm_unreachable("Unsupported FIFO edge");
+            }
+          }
+          transfer_info.source_private_resource = fifo_specs[fifo_type];
+          // Assign and increment slot index for this FIFO type
+          size_t slot_idx = fifo_next_slot[fifo_type]++;
+          transfer_info.source_slot_index = slot_idx;
+          
+          // Validate slot index assignment if this is from the original template
+          if (mlir::isa<mlir::ktdf::FifoSlotType>(src_type)) {
+            validateFifoSlotIndex(transfer.getSource(), slot_idx, fifo_specs[fifo_type]);
+          }
+        }
+        
+        if (dest_is_fifo) {
+          mlir::ktdf::FifoType fifo_type;
+          if (edge->fifo_type) {
+            fifo_type = *edge->fifo_type;
+          } else {
+            // Infer fifo type from resources (same logic as above)
+            if (*src_res == ArchitectureGraph::Resource::HBM &&
+                *dest_res == ArchitectureGraph::Resource::SFP) {
+              fifo_type = mlir::ktdf::FifoType::HbmToSfp;
+            } else if (*src_res == ArchitectureGraph::Resource::SFP &&
+                       *dest_res == ArchitectureGraph::Resource::HBM) {
+              fifo_type = mlir::ktdf::FifoType::SfpToHbm;
+            } else if (*src_res == ArchitectureGraph::Resource::LX &&
+                       *dest_res == ArchitectureGraph::Resource::SFP) {
+              fifo_type = mlir::ktdf::FifoType::LxluToSfp;
+            } else if (*src_res == ArchitectureGraph::Resource::SFP &&
+                       *dest_res == ArchitectureGraph::Resource::LX) {
+              fifo_type = mlir::ktdf::FifoType::SfpToLxsu;
+            } else {
+              llvm_unreachable("Unsupported FIFO edge");
+            }
+          }
+          transfer_info.dest_private_resource = fifo_specs[fifo_type];
+          // Assign and increment slot index for this FIFO type
+          size_t slot_idx = fifo_next_slot[fifo_type]++;
+          transfer_info.dest_slot_index = slot_idx;
+          
+          // Validate slot index assignment if this is from the original template
+          if (mlir::isa<mlir::ktdf::FifoSlotType>(dest_type)) {
+            validateFifoSlotIndex(transfer.getDestination(), slot_idx, fifo_specs[fifo_type]);
+          }
+        }
+        
         info.transfers.push_back(transfer_info);
       }
       
@@ -664,29 +748,24 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
             
             assert(memref_type && "Unable to extract memref type from transfer");
             
-            PrivateResourceSpec spec;
-            spec.kind = PrivateResourceSpec::Kind::kMemoryBuffer;
-            spec.memory_resource = intermediate_resource;
-            spec.element_type = memref_type.getElementType();
-            spec.shape.assign(memref_type.getShape().begin(),
-                              memref_type.getShape().end());
-            
-            // Add to plan's new_resources list and record the index
-            size_t resource_idx = plan->new_resources.size();
-            plan->new_resources.push_back(spec);
+            // Create memory buffer spec using factory
+            PrivateResourceSpec* spec = plan->resource_factory.createMemoryBuffer(
+                intermediate_resource,
+                memref_type.getShape(),
+                memref_type.getElementType());
             
             // Link this transfer to the buffer resource
             // The intermediate resource is the destination of the first hop
             // (from current_resource to intermediate_resource)
-            transfer_info.dest_private_resource_idx = resource_idx;
+            transfer_info.dest_private_resource = spec;
             
             LLVM_DEBUG({
               llvm::dbgs() << "  Recording buffer spec for "
                            << ArchitectureGraph::stringifyResource(intermediate_resource)
                            << " with shape [";
-              for (size_t j = 0; j < spec.shape.size(); ++j) {
-                llvm::dbgs() << spec.shape[j];
-                if (j + 1 < spec.shape.size()) llvm::dbgs() << ", ";
+              for (size_t j = 0; j < spec->shape.size(); ++j) {
+                llvm::dbgs() << spec->shape[j];
+                if (j + 1 < spec->shape.size()) llvm::dbgs() << ", ";
               }
               llvm::dbgs() << "]\n";
             });
@@ -755,7 +834,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   LLVM_DEBUG(llvm::dbgs() << "Plan created with " << plan->stage_info.size()
                           << " stage entries (including "
                           << synthetic_stage_count << " synthetic stages) and "
-                          << plan->new_resources.size() << " new resources\n");
+                          << plan->resource_factory.getSpecs().size() << " new resources\n");
 
   return plan;
 }

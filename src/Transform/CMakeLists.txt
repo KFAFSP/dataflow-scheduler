@@ -15,6 +15,7 @@ add_ktir_dialect_library(KTIRSchedulerTransforms
     PathExpansion.cpp
     PathExpansion/Materializer.cpp
     PathExpansion/Planner.cpp
+    PathExpansion/ResourceFactory.cpp
     PipelineTree/Legalizer.cpp
     ReusePromotion/Common/CandidateSearch.cpp
     ReusePromotion/Common/InvarianceCheck.cpp

@@ -71,6 +71,10 @@ struct StageSummary {
 // Materialization Side Information
 //===----------------------------------------------------------------------===//
 
+/// Forward declarations for pointer-based references
+struct PrivateResourceSpec;
+struct PrivateResourceAllocation;
+
 /// Specification for a new private resource to be allocated
 /// Can represent either a memory buffer or a FIFO
 struct PrivateResourceSpec {
@@ -87,16 +91,65 @@ struct PrivateResourceSpec {
   
   // For Fifo:
   mlir::ktdf::FifoType fifo_type;  // The FIFO type to allocate
-  // How many elements for each slot in the FIFO allocation. 
-  // Note the size of this list represents the number of slots in the fifo.allocate. 
+  // How many elements for each slot in the FIFO allocation.
+  // Note the size of this list represents the number of slots in the fifo.allocate.
   // For example:
   //     %slot1, %slot2 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 2>, !ktdf.fifo.slot<"lxlu-to-sfp", 4>
-  // \p elements_per_slot would be [2, 4]                                           
-  llvm::SmallVector<int64_t> elements_per_slot;  
+  // \p elements_per_slot would be [2, 4]
+  llvm::SmallVector<int64_t> elements_per_slot;
 
   // For both fifo and memory-buffers:
   llvm::SmallVector<int64_t> shape;
   mlir::Type element_type;
+};
+
+/// Represents an allocated private resource with its SSA value(s)
+/// This is created during materialization and tracked by the factory
+struct PrivateResourceAllocation {
+  const PrivateResourceSpec* spec;  // Pointer to the spec that created this
+  
+  // For memory buffers: single SSA value
+  // For FIFOs: one SSA value per slot
+  llvm::SmallVector<mlir::Value> ssa_values;
+  
+  PrivateResourceAllocation(const PrivateResourceSpec* s) : spec(s) {}
+};
+
+/// Factory for managing private resource allocations
+/// This replaces index-based schemes with pointer-based references
+class PrivateResourceFactory {
+public:
+  /// Create a new resource spec and return a pointer to it
+  /// The factory owns the spec and keeps it alive
+  PrivateResourceSpec* createMemoryBuffer(
+      ArchitectureGraph::Resource memory_resource,
+      llvm::ArrayRef<int64_t> shape,
+      mlir::Type element_type);
+  
+  PrivateResourceSpec* createFifo(
+      mlir::ktdf::FifoType fifo_type,
+      llvm::ArrayRef<int64_t> elements_per_slot,
+      mlir::Type element_type);
+  
+  /// Get all resource specs created by this factory
+  llvm::ArrayRef<std::unique_ptr<PrivateResourceSpec>> getSpecs() const {
+    return specs_;
+  }
+  
+  /// Register an allocation for a spec (called during materialization)
+  void registerAllocation(const PrivateResourceSpec* spec,
+                         llvm::ArrayRef<mlir::Value> ssa_values);
+  
+  /// Look up the allocation for a spec
+  const PrivateResourceAllocation* getAllocation(
+      const PrivateResourceSpec* spec) const;
+  
+private:
+  // Owned resource specs
+  llvm::SmallVector<std::unique_ptr<PrivateResourceSpec>> specs_;
+  
+  // Map from spec pointer to its allocation
+  llvm::DenseMap<const PrivateResourceSpec*, std::unique_ptr<PrivateResourceAllocation>> allocations_;
 };
 
 /// Information needed to materialize a transfer operation
@@ -106,9 +159,14 @@ struct TransferMaterializationInfo {
   ArchitectureGraph::Resource source_resource;  // Source resource for this hop
   ArchitectureGraph::Resource dest_resource;    // Destination resource for this hop
   
-  // Index into the stage's private resource list for source/dest
-  std::optional<size_t> source_private_resource_idx;
-  std::optional<size_t> dest_private_resource_idx;
+  // Pointers to private resource specs for source/dest (nullptr if not a private resource)
+  const PrivateResourceSpec* source_private_resource = nullptr;
+  const PrivateResourceSpec* dest_private_resource = nullptr;
+  
+  // For FIFO resources: which slot index to use (0-based)
+  // For memory buffers: always 0 (single SSA value)
+  size_t source_slot_index = 0;
+  size_t dest_slot_index = 0;
 };
 
 /// Side information attached to a StageNode for materialization
@@ -121,11 +179,8 @@ struct StageMaterializationInfo {
   };
 
   Kind kind = Kind::kPreserveOriginal;
-  
-  // Private resources to allocate for this stage (memory buffers and FIFOs)
-  llvm::SmallVector<PrivateResourceSpec> private_resources;
-  
   // For AdaptFifoKinds and SyntheticTransfer:
+  // Contains transfer operations with pointers to private resources
   llvm::SmallVector<TransferMaterializationInfo> transfers;
   
   mlir::ktdf::ComponentType applicable_unit;
@@ -145,8 +200,9 @@ struct PathExpansionPlan {
   // Side information for materialization (indexed by StageNode*)
   llvm::DenseMap<StageNode*, StageMaterializationInfo> stage_info;
   
-  // New private resources to allocate
-  llvm::SmallVector<PrivateResourceSpec> new_resources;
+  // Resource factory that owns all PrivateResourceSpec objects
+  // and tracks their allocations during materialization
+  PrivateResourceFactory resource_factory;
   
   // Whether any changes were made
   bool changed = false;

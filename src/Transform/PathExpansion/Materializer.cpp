@@ -40,7 +40,6 @@ mlir::Operation* PathExpansionMaterializer::materialize(
   // Clear any previous materialization state
   node_to_materialized_op_.clear();
   stage_to_token_map_.clear();
-  resource_index_to_value_.clear();
 
   // Materialize the root and all its children
   materializeTreeNode(root_node);
@@ -279,8 +278,9 @@ void PathExpansionMaterializer::materializePrivateNode(
     result_types.push_back(orig_private.getResult(i).getType());
   }
 
-  // Add new private resources (buffers and FIFOs)
-  for (const PrivateResourceSpec& spec : new_resources_) {
+  // Add new private resources (buffers and FIFOs) from factory
+  for (const auto& spec_ptr : resource_factory_.getSpecs()) {
+    const PrivateResourceSpec& spec = *spec_ptr;
     if (spec.kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
       mlir::Attribute memory_space = getMemorySpaceFromResource(spec.memory_resource);
       mlir::MemRefType memref_type =
@@ -328,35 +328,31 @@ void PathExpansionMaterializer::materializePrivateNode(
     yield_operands.push_back(value_map_.lookup(orig_operand));
   }
 
-  // Allocate new private resources (buffers and FIFOs)
-  size_t new_resource_start_idx = orig_result_count;
-  size_t result_idx = new_resource_start_idx;
-  
-  for (size_t i = 0; i < new_resources_.size(); ++i) {
-    const PrivateResourceSpec& spec = new_resources_[i];
+  // Allocate new private resources (buffers and FIFOs) using factory
+  for (const auto& spec_ptr : resource_factory_.getSpecs()) {
+    const PrivateResourceSpec* spec = spec_ptr.get();
     
-    if (spec.kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
-      mlir::Attribute memory_space = getMemorySpaceFromResource(spec.memory_resource);
+    if (spec->kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
+      mlir::Attribute memory_space = getMemorySpaceFromResource(spec->memory_resource);
       mlir::MemRefType memref_type =
-          mlir::MemRefType::get(spec.shape, spec.element_type,
+          mlir::MemRefType::get(spec->shape, spec->element_type,
                                 mlir::MemRefLayoutAttrInterface{}, memory_space);
 
       auto alloc_op = mlir::memref::AllocOp::create(builder_, loc, memref_type);
 
-      // Store mapping from resource index to SSA value
-      resource_index_to_value_[result_idx] = alloc_op.getResult();
+      // Register allocation with factory
+      resource_factory_.registerAllocation(spec, {alloc_op.getResult()});
 
       // Add to yield operands
       yield_operands.push_back(alloc_op.getResult());
-      result_idx++;
       
-    } else if (spec.kind == PrivateResourceSpec::Kind::kFifo) {
+    } else if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
       // Create FIFO allocation with multiple slots
       llvm::SmallVector<mlir::Type> fifo_slot_types;
-      for (int64_t num_elements : spec.elements_per_slot) {
+      for (int64_t num_elements : spec->elements_per_slot) {
         mlir::ktdf::FifoSlotType fifo_type =
-            mlir::ktdf::FifoSlotType::get(builder_.getContext(), spec.fifo_type,
-                                          num_elements, spec.element_type);
+            mlir::ktdf::FifoSlotType::get(builder_.getContext(), spec->fifo_type,
+                                          num_elements, spec->element_type);
         fifo_slot_types.push_back(fifo_type);
       }
       
@@ -365,22 +361,19 @@ void PathExpansionMaterializer::materializePrivateNode(
       auto fifo_alloc = mlir::ktdf::FifoAllocateOp::create(
           builder_, loc, fifo_slot_types, empty_operands);
       
-      // Store mapping for each slot and add to yield operands
+      // Register allocation with factory (all slots)
+      llvm::SmallVector<mlir::Value> slot_values;
       for (size_t slot_idx = 0; slot_idx < fifo_alloc.getNumResults(); ++slot_idx) {
-        resource_index_to_value_[result_idx] = fifo_alloc.getResult(slot_idx);
+        slot_values.push_back(fifo_alloc.getResult(slot_idx));
         yield_operands.push_back(fifo_alloc.getResult(slot_idx));
-        result_idx++;
       }
+      resource_factory_.registerAllocation(spec, slot_values);
     }
   }
 
   // Create tokens
-  size_t token_start_idx = non_token_result_count;
   for (size_t i = 0; i < stages_with_deps.size(); ++i) {
     auto token_op = mlir::ktdf::CreateTokenOp::create(builder_, loc);
-    resource_index_to_value_[token_start_idx + i] = token_op.getResult();
-
-    // Add to yield operands
     yield_operands.push_back(token_op.getResult());
   }
 
@@ -397,17 +390,12 @@ void PathExpansionMaterializer::materializePrivateNode(
     value_map_.map(orig_private.getResult(i), new_private.getResult(i));
   }
 
-  // Also map all results to resource_index_to_value_ for new stages
-  for (size_t i = 0; i < new_private.getNumResults(); ++i) {
-    resource_index_to_value_[i] = new_private.getResult(i);
-  }
-
   // Reset insertion point to after private op
   builder_.setInsertionPointAfter(new_private);
 
   LLVM_DEBUG(llvm::dbgs() << "  Materialized private node with "
                           << orig_result_count << " original resources, "
-                          << new_resources_.size() << " new buffers, and "
+                          << resource_factory_.getSpecs().size() << " new buffers, and "
                           << stages_with_deps.size() << " tokens\n");
 }
 
@@ -541,24 +529,87 @@ void PathExpansionMaterializer::cloneStageBody(mlir::ktdf::StageOp orig_stage) {
 
 void PathExpansionMaterializer::adaptStageBodyFifoKinds(
     mlir::ktdf::StageOp orig_stage, const StageMaterializationInfo& info) {
-  // Clone the stage body but adapt FIFO types based on transfer info
+  // Clone the stage body but adapt data_transfer operations to use new FIFO resources
   mlir::Block* orig_body = &orig_stage.getBody().front();
+
+  // Build a map from original transfer ops to their transfer info
+  llvm::DenseMap<mlir::Operation*, const TransferMaterializationInfo*> transfer_map;
+  for (const TransferMaterializationInfo& transfer_info : info.transfers) {
+    if (transfer_info.template_op) {
+      transfer_map[transfer_info.template_op] = &transfer_info;
+    }
+  }
 
   for (mlir::Operation& op : *orig_body) {
     if (op.hasTrait<mlir::OpTrait::IsTerminator>()) continue;
 
-    // Check if this is a read_from_fifo or write_to_fifo that needs adaptation
-    if (auto read_op = mlir::dyn_cast<mlir::ktdf::ReadFromFifoOp>(&op)) {
-      // Find corresponding transfer info
-      // For now, clone as-is (full adaptation would require matching with
-      // transfer info)
-      builder_.clone(op, value_map_);
-    } else if (auto write_op = mlir::dyn_cast<mlir::ktdf::WriteToFifoOp>(&op)) {
-      // Find corresponding transfer info
-      // For now, clone as-is
-      builder_.clone(op, value_map_);
+    // Check if this is a data_transfer that needs adaptation
+    if (auto transfer_op = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(&op)) {
+      // Look up the transfer info for this operation
+      auto it = transfer_map.find(&op);
+      if (it != transfer_map.end()) {
+        const TransferMaterializationInfo& transfer_info = *it->second;
+        mlir::Location loc = transfer_op.getLoc();
+
+        // Get source - use private resource if specified, otherwise materialize from template
+        mlir::Value source;
+        if (transfer_info.source_private_resource) {
+          // Look up the allocated SSA value from the factory
+          const PrivateResourceAllocation* alloc =
+              resource_factory_.getAllocation(transfer_info.source_private_resource);
+          assert(alloc && "Private resource should have been allocated");
+          assert(transfer_info.source_slot_index < alloc->ssa_values.size() &&
+                 "Slot index out of bounds");
+          source = alloc->ssa_values[transfer_info.source_slot_index];
+        } else {
+          source = materializeValue(transfer_op.getSource());
+        }
+
+        // Get destination - use private resource if specified, otherwise materialize from template
+        mlir::Value destination;
+        if (transfer_info.dest_private_resource) {
+          // Look up the allocated SSA value from the factory
+          const PrivateResourceAllocation* alloc =
+              resource_factory_.getAllocation(transfer_info.dest_private_resource);
+          assert(alloc && "Private resource should have been allocated");
+          assert(transfer_info.dest_slot_index < alloc->ssa_values.size() &&
+                 "Slot index out of bounds");
+          destination = alloc->ssa_values[transfer_info.dest_slot_index];
+        } else {
+          destination = materializeValue(transfer_op.getDestination());
+        }
+
+        // Get indices and sizes from template
+        llvm::SmallVector<mlir::Value> source_indices;
+        for (mlir::Value idx : transfer_op.getSourceIndices()) {
+          source_indices.push_back(materializeValue(idx));
+        }
+
+        llvm::SmallVector<mlir::OpFoldResult> source_sizes;
+        for (mlir::Value size : transfer_op.getSourceSizes()) {
+          source_sizes.push_back(materializeValue(size));
+        }
+
+        llvm::SmallVector<mlir::Value> dest_indices;
+        for (mlir::Value idx : transfer_op.getDestIndices()) {
+          dest_indices.push_back(materializeValue(idx));
+        }
+
+        llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
+        for (mlir::Value size : transfer_op.getDestSizes()) {
+          dest_sizes.push_back(materializeValue(size));
+        }
+
+        // Create the adapted transfer operation
+        mlir::ktdf::DataTransferOp::create(builder_, loc, source, source_indices,
+                                           source_sizes, destination,
+                                           dest_indices, dest_sizes);
+      } else {
+        // No adaptation needed, clone as-is
+        builder_.clone(op, value_map_);
+      }
     } else {
-      // Clone other operations as-is
+      // Clone other operations as-is (including read_from_fifo, write_to_fifo, compute ops)
       builder_.clone(op, value_map_);
     }
   }
@@ -573,10 +624,35 @@ void PathExpansionMaterializer::synthesizeTransferStage(
       mlir::ktdf::DataTransferOp template_transfer = transfer_info.template_op;
       mlir::Location loc = template_transfer.getLoc();
 
-      // Get source and destination from template, but adapt types based on hop
-      mlir::Value source = materializeValue(template_transfer.getSource());
-      mlir::Value destination =
-          materializeValue(template_transfer.getDestination());
+      // Get source - use private resource if specified, otherwise materialize from template
+      mlir::Value source;
+      if (transfer_info.source_private_resource) {
+        // Look up the allocated SSA value from the factory
+        const PrivateResourceAllocation* alloc =
+            resource_factory_.getAllocation(transfer_info.source_private_resource);
+        assert(alloc && "Private resource should have been allocated");
+        assert(transfer_info.source_slot_index < alloc->ssa_values.size() &&
+               "Slot index out of bounds");
+        // Use the slot index specified in transfer info
+        source = alloc->ssa_values[transfer_info.source_slot_index];
+      } else {
+        source = materializeValue(template_transfer.getSource());
+      }
+
+      // Get destination - use private resource if specified, otherwise materialize from template
+      mlir::Value destination;
+      if (transfer_info.dest_private_resource) {
+        // Look up the allocated SSA value from the factory
+        const PrivateResourceAllocation* alloc =
+            resource_factory_.getAllocation(transfer_info.dest_private_resource);
+        assert(alloc && "Private resource should have been allocated");
+        assert(transfer_info.dest_slot_index < alloc->ssa_values.size() &&
+               "Slot index out of bounds");
+        // Use the slot index specified in transfer info
+        destination = alloc->ssa_values[transfer_info.dest_slot_index];
+      } else {
+        destination = materializeValue(template_transfer.getDestination());
+      }
 
       // Get indices and sizes from template
       llvm::SmallVector<mlir::Value> source_indices;

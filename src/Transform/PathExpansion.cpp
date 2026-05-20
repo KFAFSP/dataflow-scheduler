@@ -128,7 +128,7 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
   mlir::IRMapping value_map;
 
   scheduler::PathExpansionMaterializer materializer(
-      builder, value_map, plan->stage_info, plan->new_resources);
+      builder, value_map, plan->stage_info, plan->resource_factory);
 
   // Set insertion point before the original pipeline
   builder.setInsertionPoint(pipeline_op);

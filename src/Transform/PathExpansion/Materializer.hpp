@@ -55,16 +55,16 @@ class PathExpansionMaterializer {
   /// \param builder The MLIR builder for creating operations
   /// \param value_map The value mapping for SSA values
   /// \param stage_info Map from StageNode to materialization info
-  /// \param new_resources List of new private resources to allocate
+  /// \param resource_factory Factory that owns and tracks private resources
   PathExpansionMaterializer(
       mlir::OpBuilder& builder,
       mlir::IRMapping& value_map,
       const llvm::DenseMap<StageNode*, StageMaterializationInfo>& stage_info,
-      const llvm::SmallVector<PrivateResourceSpec>& new_resources)
+      PrivateResourceFactory& resource_factory)
       : builder_(builder),
         value_map_(value_map),
         stage_info_(stage_info),
-        new_resources_(new_resources) {}
+        resource_factory_(resource_factory) {}
 
   /// Materialize the entire tree starting from the given node
   /// Returns the root operation created
@@ -133,8 +133,8 @@ class PathExpansionMaterializer {
   /// Map from StageNode to materialization info
   const llvm::DenseMap<StageNode*, StageMaterializationInfo>& stage_info_;
   
-  /// List of new private resources to allocate
-  const llvm::SmallVector<PrivateResourceSpec>& new_resources_;
+  /// Resource factory that owns and tracks private resources
+  PrivateResourceFactory& resource_factory_;
   
   /// Tracking map from tree nodes to their materialized operations
   llvm::DenseMap<const PipelineTreeNode*, mlir::Operation*> node_to_materialized_op_;
@@ -142,10 +142,6 @@ class PathExpansionMaterializer {
   /// Mapping from stages to their corresponding token values (results of ktdf.private op)
   /// This is used to fill in depends_in/depends_out when materializing stages
   llvm::DenseMap<StageNode*, mlir::Value> stage_to_token_map_;
-  
-  /// Mapping from PrivateResourceSpec index to SSA value
-  /// Used to resolve references to private resources during stage materialization
-  llvm::DenseMap<size_t, mlir::Value> resource_index_to_value_;
 };
 
 }  // namespace scheduler
