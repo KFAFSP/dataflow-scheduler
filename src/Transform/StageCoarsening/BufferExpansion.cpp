@@ -74,6 +74,8 @@
 
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
 #include "src/Analysis/StageGrouping.hpp"
 #include "src/Utils/OperationUtils.hpp"
@@ -81,6 +83,36 @@
 #define DEBUG_TYPE "buffer-expansion"
 
 namespace scheduler {
+
+namespace {
+
+// Given an AffineMap `original` of shape (d0..d_{m-1}) -> (e0, ..., e_{r-1}),
+// produce a new map (d0..d_{m+n-1}) -> (d0, d1, ..., d_{n-1}, e0', ..., e_{r-1}')
+// where each e_i' is e_i with its dim positions shifted by +n.
+static mlir::AffineMap prependIdentityDims(mlir::AffineMap original,
+                                           unsigned n,
+                                           mlir::MLIRContext* ctx) {
+  if (n == 0) return original;
+  unsigned old_dims = original.getNumDims();
+  unsigned new_dims = old_dims + n;
+
+  llvm::SmallVector<mlir::AffineExpr> new_results;
+  new_results.reserve(n + original.getNumResults());
+
+  // Leading identity dims for the prepended indices.
+  for (unsigned i = 0; i < n; ++i) {
+    new_results.push_back(mlir::getAffineDimExpr(i, ctx));
+  }
+
+  // Original results, shifted up by n.
+  for (mlir::AffineExpr e : original.getResults()) {
+    new_results.push_back(e.shiftDims(/*numDims=*/old_dims, /*shift=*/n));
+  }
+
+  return mlir::AffineMap::get(new_dims, /*symbolCount=*/0, new_results, ctx);
+}
+
+}  // namespace
 
 //===----------------------------------------------------------------------===//
 // StageCoarseningBufferCloner Implementation
@@ -318,9 +350,27 @@ mlir::ktdf::DataTransferOp StageCoarseningBufferCloner::cloneDataTransfer(
   llvm::SmallVector<mlir::OpFoldResult> dst_sizes =
       transfer_op.getMixedDestSizes();
 
+  // Extend the source/dest affine maps with identity dims for the
+  // expansion-prepended indices, in lockstep with new_src_indices /
+  // new_dst_indices growth above.
+  unsigned src_prepend = src_info ? src_info->loop_ivs.size() : 0;
+  unsigned dst_prepend = dst_info ? dst_info->loop_ivs.size() : 0;
+  mlir::MLIRContext* ctx = transfer_op->getContext();
+
+  mlir::AffineMap new_src_map;
+  if (transfer_op.isSourceMemRef()) {
+    mlir::AffineMap orig = transfer_op.getSourceMapAttr().getValue();
+    new_src_map = prependIdentityDims(orig, src_prepend, ctx);
+  }
+  mlir::AffineMap new_dst_map;
+  if (transfer_op.isDestMemRef()) {
+    mlir::AffineMap orig = transfer_op.getDestMapAttr().getValue();
+    new_dst_map = prependIdentityDims(orig, dst_prepend, ctx);
+  }
+
   auto new_transfer = mlir::ktdf::DataTransferOp::create(
-      builder, transfer_op.getLoc(), src, new_src_indices, src_sizes, dst,
-      new_dst_indices, dst_sizes);
+      builder, transfer_op.getLoc(), src, new_src_map, new_src_indices,
+      src_sizes, dst, new_dst_map, new_dst_indices, dst_sizes);
 
   return new_transfer;
 }
