@@ -42,8 +42,8 @@ void buildAliasSet(mlir::Value seed, llvm::DenseSet<mlir::Value>& aliases) {
       mlir::Operation* user = use.getOwner();
       // Ops that produce an aliased memref from their input.
       if (mlir::isa<mlir::memref::CastOp, mlir::memref::ViewOp,
-                    mlir::memref::SubViewOp, mlir::memref::ReinterpretCastOp>(
-              user)) {
+                    mlir::memref::SubViewOp, mlir::memref::ReinterpretCastOp,
+                    mlir::memref::MemorySpaceCastOp>(user)) {
         for (mlir::Value result : user->getResults()) {
           worklist.push_back(result);
         }

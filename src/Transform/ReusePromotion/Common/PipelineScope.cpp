@@ -30,16 +30,12 @@ namespace {
 /// loop's required scf.yield terminator).
 bool loopBodyContainsOnly(mlir::scf::ForOp loop, mlir::Operation* child) {
   mlir::Block& body = loop.getRegion().front();
-  int non_terminator_count = 0;
-  mlir::Operation* only_non_terminator = nullptr;
-  for (mlir::Operation& op : body) {
-    if (op.hasTrait<mlir::OpTrait::IsTerminator>()) {
-      continue;
-    }
-    ++non_terminator_count;
-    only_non_terminator = &op;
+  if (body.getOperations().size() == 2 &&
+      body.getTerminator()->getPrevNode() == child) {
+    return true;
+  } else {
+    return false;
   }
-  return non_terminator_count == 1 && only_non_terminator == child;
 }
 
 }  // namespace

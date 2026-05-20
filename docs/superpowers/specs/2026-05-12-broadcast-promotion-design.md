@@ -116,7 +116,7 @@ void runOnOperation() override {
 }
 ```
 
-`tryHoistOneBroadcast` walks pipelines in post-order, finds the first hoistable `ktdf.data_transfer`, performs one hoist, and returns whether work was done. Option A: one hoist per iteration, re-scan after each — every iteration of the fixed point sees fresh, consistent IR.
+`tryHoistOneBroadcast` walks pipelines in post-order, finds the first hoistable `ktdf.data_transfer`, performs one hoist, and returns whether work was done. one hoist per iteration, re-scan after each — every iteration of the fixed point sees fresh, consistent IR. Please note that hoisting a tranfer can influence another transfer as the pipeline scoping gets effected with the introduction of sibling pipelines. Another approach is to consider all hoistable transfers, collectively perform transformation for each transfer which can increase the complexity of the pass and is deferred to future as need arises.
 
 ### Shared utilities (namespace `ktdf::reuse`)
 

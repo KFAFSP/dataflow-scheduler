@@ -644,16 +644,15 @@ void ParallelOp::build(::mlir::OpBuilder& builder,
                        ::mlir::OperationState& state,
                        ::mlir::ValueRange lower_bounds,
                        ::mlir::ValueRange upper_bounds,
-                       ::mlir::ValueRange steps,
-                       int64_t num_instances) {
+                       ::mlir::ValueRange steps, int64_t num_instances) {
   state.addOperands(lower_bounds);
   state.addOperands(upper_bounds);
   state.addOperands(steps);
-  state.addAttribute("operandSegmentSizes",
-                     builder.getDenseI32ArrayAttr({
-                         static_cast<int32_t>(lower_bounds.size()),
-                         static_cast<int32_t>(upper_bounds.size()),
-                         static_cast<int32_t>(steps.size())}));
+  state.addAttribute(
+      "operandSegmentSizes",
+      builder.getDenseI32ArrayAttr({static_cast<int32_t>(lower_bounds.size()),
+                                    static_cast<int32_t>(upper_bounds.size()),
+                                    static_cast<int32_t>(steps.size())}));
   state.addAttribute("num_instances", builder.getI64IntegerAttr(num_instances));
 
   // Create the body region with a single block. The block has one index
@@ -742,11 +741,11 @@ ParseResult ParallelOp::parse(OpAsmParser& parser, OperationState& result) {
     return failure();
   }
 
-  result.addAttribute("operandSegmentSizes",
-                      builder.getDenseI32ArrayAttr({
-                          static_cast<int32_t>(lbs.size()),
-                          static_cast<int32_t>(ubs.size()),
-                          static_cast<int32_t>(steps.size())}));
+  result.addAttribute(
+      "operandSegmentSizes",
+      builder.getDenseI32ArrayAttr({static_cast<int32_t>(lbs.size()),
+                                    static_cast<int32_t>(ubs.size()),
+                                    static_cast<int32_t>(steps.size())}));
 
   // Parse the region using the named block arguments.
   Region* body = result.addRegion();
@@ -790,9 +789,9 @@ void ParallelOp::print(OpAsmPrinter& p) {
                 /*printBlockTerminators=*/true);
 
   // Print remaining attributes (suppress the ones already printed inline).
-  p.printOptionalAttrDict((*this)->getAttrs(),
-                          /*elidedAttrs=*/{"operandSegmentSizes",
-                                           "num_instances"});
+  p.printOptionalAttrDict(
+      (*this)->getAttrs(),
+      /*elidedAttrs=*/{"operandSegmentSizes", "num_instances"});
 }
 
 LogicalResult ParallelOp::verify() {
@@ -812,7 +811,8 @@ LogicalResult ParallelOp::verify() {
   }
 
   if (getNumInstances() < 1) {
-    return emitOpError("expected num_instances >= 1, got ") << getNumInstances();
+    return emitOpError("expected num_instances >= 1, got ")
+           << getNumInstances();
   }
 
   Block& block = getBody().front();
