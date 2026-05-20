@@ -486,21 +486,119 @@ These are not part of the final plan output.
 
 ### Planning Algorithm
 
-The planner operates in clear phases:
+The planner operates in clear, progressive phases that separate concerns and build up the complete plan incrementally:
+
+#### Initial Analysis Phase
 
 1. **Analyze** - inspect original stages, infer endpoints and paths (creates temporary `StageSummary` records)
 2. **Compare** - check original path against architecture graph's shortest path
 3. **Decide** - determine if changes are needed
-4. **Update PipelineTree** - directly modify the tree structure:
-   - Add new unmaterialized stage nodes for inserted stages
-   - Update stage dependencies
-   - Mark nodes with materialization info
-5. **Record side info** - store minimal materialization details in side maps
+
+If no changes are needed, return early with `changed = false`.
+
+#### Progressive Planning Phase (4 Steps)
+
+The planning phase progressively completes the plan through four distinct steps, each building on the previous:
+
+**Step 1: Connection Legalization**
+- Walk through original sorted stages (e.g., 3 stages for basic.mlir)
+- For each adjacent pair, check if their connection is legal via architecture graph
+- If illegal, query `findShortestPath` to determine intermediate hops
+- Insert unmaterialized intermediate stage nodes into PipelineTree
+- Create `StageMaterializationInfo` for each stage with:
+  - `kind` set appropriately (kPreserveOriginal, kAdaptFifoKinds, or kSyntheticTransfer)
+  - `applicable_unit` filled in for compute stages
+  - `transfers` list initially empty
+- Update dependencies to maintain proper ordering
+- Output: Expanded sorted stages (e.g., 5 stages for basic.mlir)
+
+**Step 2: Original Stage Transfer Analysis**
+- Walk through expanded stages, focusing on original stages (non-null operations)
+- For each [`ktdf.data_transfer`](../src/Dialects/KTDF/KTDFOps.td) operation:
+  - Check if adjacent stage (in sorted order) is an intermediate stage
+  - If yes, create `PrivateResourceSpec` for intermediate memory resource
+  - Create `TransferMaterializationInfo` and add to stage's transfers list
+  - Set `source_private_resource` or `dest_private_resource` based on direction
+- Output: Memory buffer specs created, transfers populated for original stages
+
+**Step 3: FIFO Operation Analysis**
+- Walk through expanded stages (original)
+- For each [`ktdf.read_from_fifo`](../src/Dialects/KTDF/KTDFOps.td:146) or [`ktdf.write_to_fifo`](../src/Dialects/KTDF/KTDFOps.td:197):
+  - Check if this stage faces an intermediate stage
+  - Query architecture graph edge for correct FIFO type (not from illegal input IR)
+  - Create or extend `PrivateResourceSpec` for FIFO
+  - Assign slot indices incrementally per FIFO type
+  - Create `TransferMaterializationInfo` linking FIFO to transfer
+- Output: FIFO specs created, transfers updated with FIFO resources and slot indices
+
+**Step 4: Intermediate Stage Transfer Population**
+- Walk through intermediate stages (those with null operations)
+- For each intermediate stage:
+  - Examine predecessor stage's transfers targeting this intermediate
+  - Examine successor stage's transfers sourcing from this intermediate
+  - Create corresponding `TransferMaterializationInfo` entries
+  - Reuse `PrivateResourceSpec` pointers and slot indices from neighboring stages
+- Output: Complete transfer info for all stages
+
+#### Why This Progressive Approach
+
+This 4-step algorithm solves a critical problem in the original implementation:
+
+**Problem**: When input IR contains illegal connections (e.g., HBM→SFP with `hbm-to-sfp` FIFO), the planner cannot correctly infer FIFO types without first determining what intermediate stages are needed.
+
+**Solution**: By separating connection legalization (Step 1) from FIFO analysis (Step 3), the algorithm:
+1. First establishes the complete legal stage structure
+2. Then queries the architecture graph for correct FIFO types based on actual legal edges
+3. Avoids trying to infer FIFO types from illegal connections in the input IR
+
+**Benefits**:
+- Clear separation of concerns: structure, memory, FIFOs, and intermediate stages
+- Each step has complete information from previous steps
+- Debug output at each step provides visibility into the transformation
+- Easier to maintain and extend
+- Correct FIFO type inference based on legal architecture edges
+
+#### Debug Output
+
+Each step produces clear debug output showing:
+- Current stage list with classifications (original vs synthetic)
+- Resources allocated in this step
+- Transfers created or updated
+- State of `StageMaterializationInfo` for affected stages
+
+Example debug output for basic.mlir:
+```
+=== Step 1: Connection Legalization ===
+Original stages: 3
+Expanded stages: 5
+  Stage 0: HBM (transfer-only, original)
+  Stage 3: LX (transfer-only, synthetic)
+  Stage 1: SFP (compute, original)
+  Stage 4: LX (transfer-only, synthetic)
+  Stage 2: HBM (transfer-only, original)
+
+=== Step 2: Original Stage Transfer Analysis ===
+Stage 0: 2 transfers to LX buffers
+Stage 2: 1 transfer from LX buffer
+Memory resources: 3 LX buffers
+
+=== Step 3: FIFO Operation Analysis ===
+Stage 1: 2 FIFO reads (lxlu-to-sfp), 1 FIFO write (sfp-to-lxsu)
+FIFO resources: 2 FIFO types
+
+=== Step 4: Intermediate Stage Transfer Population ===
+Stage 3: 4 transfers (2 HBM→LX, 2 LX→SFP)
+Stage 4: 2 transfers (1 SFP→LX, 1 LX→HBM)
+
+=== Planning Complete ===
+Total stages: 5
+Total private resources: 5 (3 LX buffers, 2 FIFOs)
+```
 
 The output is:
 - Modified [`PipelineTree`](../src/Analysis/PipelineTree.hpp) with final stage DAG
-- Side information map for materialization
-- List of new private resources
+- Complete side information map for materialization
+- All private resource specs with proper linkage
 
 ### No Redundant Abstractions
 
