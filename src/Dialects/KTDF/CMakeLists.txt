@@ -30,5 +30,6 @@ add_ktir_dialect_library(KTIRKTDFDialect
 mlir_target_link_libraries(KTIRKTDFDialect PUBLIC
   MLIRIR
   MLIRInferTypeOpInterface
-  # FIXME: Determine actual link dependencies.
+  MLIRControlFlowInterfaces
+  MLIRDialectUtils
 )

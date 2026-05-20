@@ -5,6 +5,9 @@ add_ktir_dialect_library(KTIRSchedulerAnalysis
 
   LINK_LIBS PUBLIC
     KTIRKTDFDialect
+    KTIRSchedulerUtils
 )
 
-# FIXME: Clearly, MLIR libs are not being linked.
+mlir_target_link_libraries(KTIRSchedulerAnalysis PRIVATE
+  MLIRSCFDialect
+)

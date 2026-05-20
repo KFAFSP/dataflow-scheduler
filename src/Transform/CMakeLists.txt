@@ -33,8 +33,17 @@ add_ktir_dialect_library(KTIRSchedulerTransforms
 
   LINK_LIBS PUBLIC
     KTIRKTDFDialect
+    KTIRKtdpDialect
     KTIRSchedulerUtils
     KTIRSchedulerAnalysis
 )
 
-# FIXME: Clearly, MLIR libs are not being linked.
+mlir_target_link_libraries(KTIRSchedulerTransforms PUBLIC
+  MLIRIR
+  MLIRPass
+  MLIRTransformUtils
+  MLIRSCFUtils
+  MLIRMathDialect
+  MLIRLinalgDialect
+  MLIRLinalgTransforms
+)

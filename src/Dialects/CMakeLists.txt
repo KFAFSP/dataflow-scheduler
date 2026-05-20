@@ -6,6 +6,17 @@ add_ktir_library(KTIRSchedulerInitMLIRDialects
   PARTIAL_SOURCES_INTENDED
 )
 
+mlir_target_link_libraries(KTIRSchedulerInitMLIRDialects PUBLIC
+  MLIRAffineDialect
+  MLIRArithDialect
+  MLIRFuncDialect
+  MLIRLinalgDialect
+  MLIRMathDialect
+  MLIRMemRefDialect
+  MLIRSCFDialect
+  MLIRTensorDialect
+)
+
 add_ktir_library(KTIRSchedulerInitKTIRDialects 
     init-ktir-dialects.cpp
 
@@ -34,5 +45,3 @@ add_ktir_library(KTIRSchedulerInitAllDialects
     KTIRSchedulerInitKTIRDialects
     KTIRSchedulerInitSchedulerDialects
 )
-
-# FIXME: Clearly, MLIR libs are not being linked.
