@@ -641,6 +641,15 @@ void DataTransferOp::print(OpAsmPrinter& p) {
   p << " : " << getSource().getType() << ", " << getDestination().getType();
 }
 
+NamedAttribute DataTransferOp::getAffineMapAttrForMemRef(Value memref) {
+  if (memref == getSource()) {
+    return {StringAttr::get(getContext(), "source_map"), getSourceMapAttr()};
+  }
+  assert(memref == getDestination() &&
+         "memref must be either source or destination of this op");
+  return {StringAttr::get(getContext(), "dest_map"), getDestMapAttr()};
+}
+
 //===----------------------------------------------------------------------===//
 // ReadFromFifoOp
 //===----------------------------------------------------------------------===//

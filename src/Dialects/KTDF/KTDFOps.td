@@ -482,7 +482,7 @@ def KTDF_StageOp : KTDF_Op<"stage", [
 
 def KTDF_DataTransferOp : KTDF_Op<"data_transfer", [
     AttrSizedOperandSegments,
-    DeclareOpInterfaceMethods<AffineMapAccessInterface>
+    AffineMapAccessInterface
   ]> {
   let summary = "Transfer data between memory locations and FIFO slots";
   let description = [{
@@ -660,6 +660,10 @@ def KTDF_DataTransferOp : KTDF_Op<"data_transfer", [
       ArrayRef<int64_t> sizes = *getStaticDestSizes();
       return SmallVector<int64_t>(sizes.begin(), sizes.end());
     }
+
+    /// Implements AffineMapAccessInterface.
+    /// Returns the AffineMapAttr associated with 'memref'.
+    NamedAttribute getAffineMapAttrForMemRef(Value memref);
   }];
 }
 
