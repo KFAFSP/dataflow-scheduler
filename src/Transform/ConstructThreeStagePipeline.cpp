@@ -723,36 +723,21 @@ static std::optional<AffineMap> findIndexingMapForStoreSource(
   return std::nullopt;
 }
 
-// Project loop_ivs and tile_sizes through indexing_map to produce one entry
-// per result dim of the map. Indices are computed via affine::expandAffineMap
-// (handles arbitrary affine expressions). Sizes are derived per result expr:
+// Project tile_sizes through indexing_map to produce one entry per result
+// dim of the map. Sizes are derived per result expr:
 //   - AffineDimExpr  d_k  -> tile_sizes[k]   (projection of one iterator dim)
 //   - AffineConstantExpr -> 1                (broadcast/squeeze: that source
 //                                             dim is accessed at a fixed index)
 // Other expressions (e.g. d0 + d1) are not currently supported and produce
 // an error.
-static LogicalResult projectIvsAndSizesThroughIndexingMap(
-    OpBuilder& builder, Location loc, AffineMap indexing_map,
-    ValueRange loop_ivs, ArrayRef<int64_t> tile_sizes,
-    SmallVectorImpl<Value>& projected_indices,
+static LogicalResult projectSizesThroughIndexingMap(
+    AffineMap indexing_map, ArrayRef<int64_t> tile_sizes,
     SmallVectorImpl<int64_t>& projected_sizes,
     function_ref<InFlightDiagnostic()> emit_error) {
   assert(indexing_map.getNumSymbols() == 0 &&
          "linalg indexing maps are expected to have no symbols");
-  assert(indexing_map.getNumDims() == loop_ivs.size() &&
-         indexing_map.getNumDims() == tile_sizes.size() &&
+  assert(indexing_map.getNumDims() == tile_sizes.size() &&
          "indexing map dims must match the iteration-space rank");
-
-  std::optional<SmallVector<Value, 8>> expanded =
-      affine::expandAffineMap(builder, loc, indexing_map, loop_ivs);
-  if (!expanded) {
-    std::string buf;
-    llvm::raw_string_ostream os(buf);
-    indexing_map.print(os);
-    emit_error() << "failed to expand operand indexing map " << buf;
-    return failure();
-  }
-  projected_indices.assign(expanded->begin(), expanded->end());
 
   for (AffineExpr result : indexing_map.getResults()) {
     if (auto dim = dyn_cast<AffineDimExpr>(result)) {
@@ -836,34 +821,30 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
       return;
     }
 
-    // Project loop IVs and tile_sizes through the operand's indexing map so
-    // that the resulting data_transfer indices/sizes have one entry per
-    // source-memref dimension instead of one per iteration-space dimension.
-    SmallVector<Value> access_tile_indices;
+    // Project tile_sizes through the operand's indexing map.
     SmallVector<int64_t> access_tile_sizes;
-    if (failed(projectIvsAndSizesThroughIndexingMap(
-            builder, loc, *indexing_map, loop_ivs, tile_sizes,
-            access_tile_indices, access_tile_sizes,
+    if (failed(projectSizesThroughIndexingMap(
+            *indexing_map, tile_sizes, access_tile_sizes,
             [&]() { return err_anchor->emitError(); }))) {
       signalPassFailure();
       return;
     }
 
-    // Get the FIFO slot from ktdf.private results
+    // Get the FIFO slot from ktdf.private results.
     Value fifo_slot = private_op.getResult(private_result_offset + i);
 
-    // Create data_transfer with direction based on is_load
-    // Use access_tile_value which will be replaced with reinterpret_cast later
+    // The fifo side gets a null AffineMap; the access-tile (memref) side
+    // gets the linalg operand's indexing map directly. loop_ivs feeds the
+    // map's dim inputs.
+    AffineMap null_map;
     if (is_load) {
-      // Load: from access_tile to FIFO slot
-      mlir::ktdf::DataTransferOp::create(builder, loc, access_tile_value,
-                                         access_tile_indices, access_tile_sizes,
-                                         fifo_slot, ValueRange{}, fifo_sizes);
-    } else {
-      // Store: from FIFO slot to access_tile
       mlir::ktdf::DataTransferOp::create(
-          builder, loc, fifo_slot, ValueRange{}, fifo_sizes, access_tile_value,
-          access_tile_indices, access_tile_sizes);
+          builder, loc, access_tile_value, *indexing_map, loop_ivs,
+          access_tile_sizes, fifo_slot, null_map, ValueRange{}, fifo_sizes);
+    } else {
+      mlir::ktdf::DataTransferOp::create(
+          builder, loc, fifo_slot, null_map, ValueRange{}, fifo_sizes,
+          access_tile_value, *indexing_map, loop_ivs, access_tile_sizes);
     }
   }
 }
