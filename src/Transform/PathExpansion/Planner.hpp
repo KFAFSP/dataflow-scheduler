@@ -71,12 +71,44 @@ struct StageSummary {
 // Materialization Side Information
 //===----------------------------------------------------------------------===//
 
+/// Specification for a new private resource to be allocated
+/// Can represent either a memory buffer or a FIFO
+struct PrivateResourceSpec {
+  enum class Kind {
+    kUnknown,
+    kMemoryBuffer,  // Allocate a memref in the specified memory space
+    kFifo,          // Allocate a FIFO with the specified type
+  };
+  
+  Kind kind = Kind::kUnknown;
+  
+  // For Memory Buffer:
+  ArchitectureGraph::Resource memory_resource;  // LX, HBM, etc.
+  
+  // For Fifo:
+  mlir::ktdf::FifoType fifo_type;  // The FIFO type to allocate
+  // How many elements for each slot in the FIFO allocation. 
+  // Note the size of this list represents the number of slots in the fifo.allocate. 
+  // For example:
+  //     %slot1, %slot2 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 2>, !ktdf.fifo.slot<"lxlu-to-sfp", 4>
+  // \p elements_per_slot would be [2, 4]                                           
+  llvm::SmallVector<int64_t> elements_per_slot;  
+
+  // For both fifo and memory-buffers:
+  llvm::SmallVector<int64_t> shape;
+  mlir::Type element_type;
+};
+
 /// Information needed to materialize a transfer operation
 struct TransferMaterializationInfo {
-  mlir::ktdf::DataTransferOp template_op;  // Template to derive from
+  mlir::ktdf::DataTransferOp template_op;  // Template to derive from (can be null for synthetic)
   ArchitectureGraph::EdgeInfo hop;         // Architecture hop this implements
   ArchitectureGraph::Resource source_resource;  // Source resource for this hop
   ArchitectureGraph::Resource dest_resource;    // Destination resource for this hop
+  
+  // Index into the stage's private resource list for source/dest
+  std::optional<size_t> source_private_resource_idx;
+  std::optional<size_t> dest_private_resource_idx;
 };
 
 /// Side information attached to a StageNode for materialization
@@ -90,17 +122,13 @@ struct StageMaterializationInfo {
 
   Kind kind = Kind::kPreserveOriginal;
   
+  // Private resources to allocate for this stage (memory buffers and FIFOs)
+  llvm::SmallVector<PrivateResourceSpec> private_resources;
+  
   // For AdaptFifoKinds and SyntheticTransfer:
   llvm::SmallVector<TransferMaterializationInfo> transfers;
   
   mlir::ktdf::ComponentType applicable_unit;
-};
-
-/// Specification for a new private resource to be allocated
-struct PrivateResourceSpec {
-  ArchitectureGraph::Resource resource; // resource to use when allocating buffers (eg LX)
-  mlir::Type element_type;
-  llvm::SmallVector<int64_t> shape;
 };
 
 //===----------------------------------------------------------------------===//

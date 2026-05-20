@@ -279,13 +279,23 @@ void PathExpansionMaterializer::materializePrivateNode(
     result_types.push_back(orig_private.getResult(i).getType());
   }
 
-  // Add new buffer resources
+  // Add new private resources (buffers and FIFOs)
   for (const PrivateResourceSpec& spec : new_resources_) {
-    mlir::Attribute memory_space = getMemorySpaceFromResource(spec.resource);
-    mlir::MemRefType memref_type =
-        mlir::MemRefType::get(spec.shape, spec.element_type,
-                              mlir::MemRefLayoutAttrInterface{}, memory_space);
-    result_types.push_back(memref_type);
+    if (spec.kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
+      mlir::Attribute memory_space = getMemorySpaceFromResource(spec.memory_resource);
+      mlir::MemRefType memref_type =
+          mlir::MemRefType::get(spec.shape, spec.element_type,
+                                mlir::MemRefLayoutAttrInterface{}, memory_space);
+      result_types.push_back(memref_type);
+    } else if (spec.kind == PrivateResourceSpec::Kind::kFifo) {
+      // Add one result type per FIFO slot
+      for (int64_t num_elements : spec.elements_per_slot) {
+        mlir::ktdf::FifoSlotType fifo_type =
+            mlir::ktdf::FifoSlotType::get(builder_.getContext(), spec.fifo_type,
+                                          num_elements, spec.element_type);
+        result_types.push_back(fifo_type);
+      }
+    }
   }
 
   size_t non_token_result_count = result_types.size();
@@ -318,22 +328,50 @@ void PathExpansionMaterializer::materializePrivateNode(
     yield_operands.push_back(value_map_.lookup(orig_operand));
   }
 
-  // Allocate new buffer resources
+  // Allocate new private resources (buffers and FIFOs)
   size_t new_resource_start_idx = orig_result_count;
+  size_t result_idx = new_resource_start_idx;
+  
   for (size_t i = 0; i < new_resources_.size(); ++i) {
     const PrivateResourceSpec& spec = new_resources_[i];
-    mlir::Attribute memory_space = getMemorySpaceFromResource(spec.resource);
-    mlir::MemRefType memref_type =
-        mlir::MemRefType::get(spec.shape, spec.element_type,
-                              mlir::MemRefLayoutAttrInterface{}, memory_space);
+    
+    if (spec.kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
+      mlir::Attribute memory_space = getMemorySpaceFromResource(spec.memory_resource);
+      mlir::MemRefType memref_type =
+          mlir::MemRefType::get(spec.shape, spec.element_type,
+                                mlir::MemRefLayoutAttrInterface{}, memory_space);
 
-    auto alloc_op = mlir::memref::AllocOp::create(builder_, loc, memref_type);
+      auto alloc_op = mlir::memref::AllocOp::create(builder_, loc, memref_type);
 
-    // Store mapping from resource index to SSA value
-    resource_index_to_value_[new_resource_start_idx + i] = alloc_op.getResult();
+      // Store mapping from resource index to SSA value
+      resource_index_to_value_[result_idx] = alloc_op.getResult();
 
-    // Add to yield operands
-    yield_operands.push_back(alloc_op.getResult());
+      // Add to yield operands
+      yield_operands.push_back(alloc_op.getResult());
+      result_idx++;
+      
+    } else if (spec.kind == PrivateResourceSpec::Kind::kFifo) {
+      // Create FIFO allocation with multiple slots
+      llvm::SmallVector<mlir::Type> fifo_slot_types;
+      for (int64_t num_elements : spec.elements_per_slot) {
+        mlir::ktdf::FifoSlotType fifo_type =
+            mlir::ktdf::FifoSlotType::get(builder_.getContext(), spec.fifo_type,
+                                          num_elements, spec.element_type);
+        fifo_slot_types.push_back(fifo_type);
+      }
+      
+      // FifoAllocateOp::create requires: builder, location, result types, operands (empty), attributes (empty)
+      llvm::SmallVector<mlir::Value> empty_operands;
+      auto fifo_alloc = mlir::ktdf::FifoAllocateOp::create(
+          builder_, loc, fifo_slot_types, empty_operands);
+      
+      // Store mapping for each slot and add to yield operands
+      for (size_t slot_idx = 0; slot_idx < fifo_alloc.getNumResults(); ++slot_idx) {
+        resource_index_to_value_[result_idx] = fifo_alloc.getResult(slot_idx);
+        yield_operands.push_back(fifo_alloc.getResult(slot_idx));
+        result_idx++;
+      }
+    }
   }
 
   // Create tokens
