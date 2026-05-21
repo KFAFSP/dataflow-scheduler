@@ -41,6 +41,18 @@ set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/bin)
 # Set project-specific output directories.
 set(KTIR_BINARY_DIR ${CMAKE_BINARY_DIR})
 
+if(KTIR_ENABLE_PYTHON_BINDINGS)
+  if(NOT MLIR_PYTHON_PACKAGE_PREFIX)
+    set(MLIR_PYTHON_PACKAGE_PREFIX "mlir_ktir" CACHE STRING "" FORCE)
+  endif()
+  if(NOT MLIR_BINDINGS_PYTHON_NB_DOMAIN)
+    set(MLIR_BINDINGS_PYTHON_NB_DOMAIN "mlir_ktir" CACHE STRING "" FORCE)
+  endif()
+  if(NOT MLIR_BINDINGS_PYTHON_INSTALL_PREFIX)
+    set(MLIR_BINDINGS_PYTHON_INSTALL_PREFIX "python_packages/${MLIR_PYTHON_PACKAGE_PREFIX}" CACHE STRING "" FORCE)
+  endif()
+endif()
+
 # Include KTIR CMake module.
 # Until the projects are merged, some part of the build system is external.
 add_subdirectory(external)
@@ -55,6 +67,13 @@ include(AddKTIR)
 # Apply target properties for this project globally.
 include_directories(SYSTEM ${PROJECT_BINARY_DIR})
 include_directories(${PROJECT_SOURCE_DIR})
+
+if(KTIR_ENABLE_PYTHON_BINDINGS)
+  set(MLIR_ENABLE_BINDINGS_PYTHON ON)
+  include(MLIRDetectPythonEnv)
+  mlir_configure_python_dev_packages()
+  add_subdirectory(python)
+endif()
 
 add_subdirectory(src)
 add_subdirectory(tools)
