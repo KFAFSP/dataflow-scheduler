@@ -33,6 +33,7 @@
 #include "src/Transform/Passes.h"
 #include "src/Transform/PathExpansion/Materializer.hpp"
 #include "src/Transform/PathExpansion/Planner.hpp"
+#include "src/Transform/Utils/Utils.h"
 #include "src/Utils/OperationUtils.hpp"
 
 namespace ktdf {
@@ -142,6 +143,17 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
   }
 
   LLVM_DEBUG(llvm::dbgs() << "  Materialization succeeded\n");
+
+  auto new_pipeline = mlir::dyn_cast<mlir::ktdf::PipelineOp>(new_pipeline_op);
+  if (!new_pipeline) {
+    return mlir::failure();
+  }
+
+  if (mlir::failed(
+          scheduler::utils::cleanupPrivateOpsInPipeline(new_pipeline))) {
+    LLVM_DEBUG(llvm::dbgs() << "  Private cleanup failed\n");
+    return mlir::failure();
+  }
 
   // Erase the original pipeline
   pipeline_op.erase();

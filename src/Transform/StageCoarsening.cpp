@@ -52,6 +52,7 @@
 #include "src/Transform/StageCoarsening/BufferExpansion.hpp"
 #include "src/Transform/StageCoarsening/Materializer.hpp"
 #include "src/Transform/StageCoarsening/ScopeCorrection.hpp"
+#include "src/Transform/Utils/Utils.h"
 #include "src/Utils/OperationUtils.hpp"
 
 namespace ktdf {
@@ -649,6 +650,23 @@ void StageCoarseningPass::GenerateTransformedIR(
 
   DEBUG_WITH_TYPE(VerboseDebug, {
     llvm::dbgs() << "IR after materialization:\n";
+    new_outer_pipeline->dump();
+  });
+
+  auto new_outer_pipeline_op =
+      mlir::dyn_cast<mlir::ktdf::PipelineOp>(new_outer_pipeline);
+  if (!new_outer_pipeline_op) {
+    return;
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "\n--- Cleaning Up Private Ops ---\n");
+  if (mlir::failed(scheduler::utils::cleanupPrivateOpsInPipeline(
+          new_outer_pipeline_op))) {
+    return;
+  }
+
+  DEBUG_WITH_TYPE(VerboseDebug, {
+    llvm::dbgs() << "IR after private cleanup:\n";
     new_outer_pipeline->dump();
   });
 

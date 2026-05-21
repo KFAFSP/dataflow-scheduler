@@ -423,12 +423,6 @@ void StageCoarseningMaterializer::materializePrivateNodeFromTemplate(
   builder_.setInsertionPointToStart(&tmp_block);
 
   for (mlir::Operation& op : orig_body.without_terminator()) {
-    // Skip stale ktdf.create_token ops - we'll create new ones
-    if (mlir::isa<mlir::ktdf::CreateTokenOp>(&op)) {
-      LLVM_DEBUG(llvm::dbgs() << "      Skipping stale create_token op\n");
-      continue;
-    }
-
     if (auto alloc_op = mlir::dyn_cast<mlir::memref::AllocOp>(&op)) {
       if (buffer_cloner_) {
         mlir::memref::AllocOp new_op =
@@ -448,8 +442,9 @@ void StageCoarseningMaterializer::materializePrivateNodeFromTemplate(
     builder_.clone(op, value_map_);
   }
 
-  // Create new ktdf.create_token ops only for stages with dependencies
-  // These tokens will be used for stage dependencies
+  // Create new ktdf.create_token ops only for stages with dependencies.
+  // A separate private-op cleanup step will remove any stale cloned token
+  // resources.
   for (StageNode* stage : stages_with_deps) {
     mlir::Value new_token =
         mlir::ktdf::CreateTokenOp::create(builder_, orig_private.getLoc())
@@ -460,27 +455,22 @@ void StageCoarseningMaterializer::materializePrivateNodeFromTemplate(
                             << stage->getStageId() << "\n");
   }
 
-  // Get the yield operation and determine result types from mapped operands
+  // Get the yield operation and determine result types from mapped operands.
   auto orig_yield =
       mlir::cast<mlir::ktdf::PrivateYieldOp>(orig_body.getTerminator());
 
   llvm::SmallVector<mlir::Type> result_types;
   llvm::SmallVector<mlir::Value> new_yield_operands;
 
-  // First, add all non-token yielded values (buffers, etc.)
-  size_t non_token_count = 0;
   for (mlir::Value yielded_val : orig_yield.getOperands()) {
-    // Skip old token values - we'll yield the new tokens instead
-    if (mlir::isa<mlir::ktdf::TokenType>(yielded_val.getType())) {
-      continue;
-    }
     mlir::Value mapped_val = value_map_.lookupOrDefault(yielded_val);
     new_yield_operands.push_back(mapped_val);
     result_types.push_back(mapped_val.getType());
-    non_token_count++;
   }
 
-  // Now add the new tokens to the yield operands
+  size_t orig_result_count = new_yield_operands.size();
+
+  // Append the new tokens to the yield operands.
   for (mlir::Value new_token : new_tokens) {
     new_yield_operands.push_back(new_token);
     result_types.push_back(new_token.getType());
@@ -505,21 +495,13 @@ void StageCoarseningMaterializer::materializePrivateNodeFromTemplate(
   mlir::ktdf::PrivateYieldOp::create(builder_, orig_yield.getLoc(),
                                      new_yield_operands);
 
-  // Map original private results to new private results (non-token results
-  // only)
-  size_t non_token_result_idx = 0;
-  for (mlir::Value orig_result : orig_private.getResults()) {
-    if (!mlir::isa<mlir::ktdf::TokenType>(orig_result.getType())) {
-      // This is a non-token result (e.g., buffer), map it to the corresponding
-      // new result
-      mlir::Value new_result = new_private.getResult(non_token_result_idx);
-      value_map_.map(orig_result, new_result);
-      non_token_result_idx++;
-    }
+  // Map original private results to the corresponding cloned private results.
+  for (auto [idx, orig_result] : llvm::enumerate(orig_private.getResults())) {
+    value_map_.map(orig_result, new_private.getResult(idx));
   }
 
-  // Build the stage-to-token mapping (tokens start after non-token results)
-  buildStageToTokenMapping(stages_with_deps, new_private, non_token_count);
+  // Build the stage-to-token mapping (new tokens start after original results).
+  buildStageToTokenMapping(stages_with_deps, new_private, orig_result_count);
 
   // Restore insertion point
   builder_.setInsertionPointAfter(new_private);

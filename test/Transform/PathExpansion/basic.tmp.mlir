@@ -32,32 +32,43 @@ module {
     scf.for %arg1 = %c0 to %c1_0 step %c1_1 {
       scf.for %arg2 = %c0_2 to %c64_3 step %c64_4 {
         ktdf.pipeline {
-          %9:6 = ktdf.private -> (!ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, !ktdf.token, !ktdf.token, !ktdf.token) {
+          %9:10 = ktdf.private -> (memref<1x64xf16, #ktdf.memory_space<LX>>, memref<1x64xf16, #ktdf.memory_space<LX>>, memref<1x64xf16, #ktdf.memory_space<LX>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, !ktdf.token, !ktdf.token, !ktdf.token, !ktdf.token) {
+            %alloc = memref.alloc() : memref<1x64xf16, #ktdf.memory_space<LX>>
+            %alloc_10 = memref.alloc() : memref<1x64xf16, #ktdf.memory_space<LX>>
+            %alloc_11 = memref.alloc() : memref<1x64xf16, #ktdf.memory_space<LX>>
             %10:2 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
             %11 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>
             %12 = ktdf.create_token : !ktdf.token
             %13 = ktdf.create_token : !ktdf.token
             %14 = ktdf.create_token : !ktdf.token
-            ktdf.private_yield %10#0, %10#1, %11, %12, %13, %14 : !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, !ktdf.token, !ktdf.token, !ktdf.token
+            %15 = ktdf.create_token : !ktdf.token
+            ktdf.private_yield %alloc, %alloc_10, %alloc_11, %10#0, %10#1, %11, %12, %13, %14, %15 : memref<1x64xf16, #ktdf.memory_space<LX>>, memref<1x64xf16, #ktdf.memory_space<LX>>, memref<1x64xf16, #ktdf.memory_space<LX>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>, !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, !ktdf.token, !ktdf.token, !ktdf.token, !ktdf.token
           }
-          ktdf.stage depends_in(none) depends_out(%9#3 : !ktdf.token) {
-            ktdf.data_transfer from %reinterpret_cast[%arg1, %arg2] size [1, 64] to %9#0 size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
-            ktdf.data_transfer from %reinterpret_cast_7[%arg1, %arg2] size [1, 64] to %9#1 size [64] : memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
-          }
-          ktdf.stage depends_in(%9#3 : !ktdf.token) depends_out(%9#4 : !ktdf.token) {
-            %10 = ktdf.read_from_fifo %9#0 : <"lxlu-to-sfp", 64xf16> -> tensor<64xf16>
-            %11 = ktdf.read_from_fifo %9#1 : <"lxlu-to-sfp", 64xf16> -> tensor<64xf16>
+          ktdf.stage depends_in(none) depends_out(%9#6 : !ktdf.token) {
+            ktdf.data_transfer from %reinterpret_cast[%arg1, %arg2] size [] to %9#0 size [] : memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>, memref<1x64xf16, #ktdf.memory_space<LX>>
+            ktdf.data_transfer from %reinterpret_cast_7[%arg1, %arg2] size [] to %9#1 size [] : memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>, memref<1x64xf16, #ktdf.memory_space<LX>>
+          } {applicable_units = #ktdf.applicable_units<[L3LU]>}
+          ktdf.stage depends_in(%9#6 : !ktdf.token) depends_out(%9#7 : !ktdf.token) {
+            ktdf.data_transfer from %9#0 size [] to %9#3 size [] : memref<1x64xf16, #ktdf.memory_space<LX>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+            ktdf.data_transfer from %9#1 size [] to %9#4 size [] : memref<1x64xf16, #ktdf.memory_space<LX>>, !ktdf.fifo.slot<"lxlu-to-sfp", 64xf16>
+          } {applicable_units = #ktdf.applicable_units<[LXLU]>}
+          ktdf.stage depends_in(%9#7 : !ktdf.token) depends_out(%9#8 : !ktdf.token) {
+            %10 = ktdf.read_from_fifo %9#3 : <"lxlu-to-sfp", 64xf16> -> tensor<64xf16>
+            %11 = ktdf.read_from_fifo %9#4 : <"lxlu-to-sfp", 64xf16> -> tensor<64xf16>
             %12 = tensor.empty() : tensor<64xf16>
             %13 = linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel"]} ins(%10, %11 : tensor<64xf16>, tensor<64xf16>) outs(%12 : tensor<64xf16>) {
             ^bb0(%in: f16, %in_10: f16, %out: f16):
               %14 = arith.addf %in, %in_10 : f16
               linalg.yield %14 : f16
             } -> tensor<64xf16>
-            ktdf.write_to_fifo %13, %9#2 : tensor<64xf16>, <"sfp-to-lxsu", 64xf16>
+            ktdf.write_to_fifo %13, %9#5 : tensor<64xf16>, <"sfp-to-lxsu", 64xf16>
           } {applicable_units = #ktdf.applicable_units<[SFP]>}
-          ktdf.stage depends_in(%9#4 : !ktdf.token) depends_out(%9#5 : !ktdf.token) {
-            ktdf.data_transfer from %9#2 size [64] to %reinterpret_cast_9[%arg1, %arg2] size [1, 64] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>
-          }
+          ktdf.stage depends_in(%9#8 : !ktdf.token) depends_out(%9#9 : !ktdf.token) {
+            ktdf.data_transfer from %9#5 size [] to %9#2 size [] : !ktdf.fifo.slot<"sfp-to-lxsu", 64xf16>, memref<1x64xf16, #ktdf.memory_space<LX>>
+          } {applicable_units = #ktdf.applicable_units<[LXSU]>}
+          ktdf.stage depends_in(%9#9 : !ktdf.token) depends_out(none) {
+            ktdf.data_transfer from %9#2 size [] to %reinterpret_cast_9[%arg1, %arg2] size [] : memref<1x64xf16, #ktdf.memory_space<LX>>, memref<1x64xf16, strided<[64, 1], offset: ?>, #ktdf.memory_space<HBM>>
+          } {applicable_units = #ktdf.applicable_units<[L3SU]>}
         }
       } {loop_type = #ktdf.loop_type<parallel_loop>}
     } {loop_type = #ktdf.loop_type<parallel_loop>}
