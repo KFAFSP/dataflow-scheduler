@@ -39,7 +39,7 @@ void AgenDialect::initialize() {
       >();
   addAttributes<
 #define GET_ATTRDEF_LIST
-#include "src/dialects/Agen/AgenOpsAttributes.cpp.inc"
+#include "src/dialects/Agen/AgenAttributes.cpp.inc"
       >();
 }
 

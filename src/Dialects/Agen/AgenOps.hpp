@@ -26,7 +26,7 @@
 #include "src/Dialects/Agen/AgenEnums.hpp.inc"
 #include "src/Dialects/Agen/AgenOpsDialect.hpp.inc"
 #define GET_ATTRDEF_CLASSES
-#include "src/Dialects/Agen/AgenOpsAttributes.hpp.inc"
+#include "src/Dialects/Agen/AgenAttributes.hpp.inc"
 
 static llvm::StringRef getDbgNameAttrStrName() { return "dbgName"; }
 
