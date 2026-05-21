@@ -64,6 +64,7 @@ unsigned SchedulerExtContext::getNumCorelets() const { return 2; }
 bool SchedulerExtContext::isPerCoreletUnit(
     mlir::ktdf::ComponentType unit) const {
   switch (unit) {
+    case mlir::ktdf::ComponentType::PE:
     case mlir::ktdf::ComponentType::SFP:
     case mlir::ktdf::ComponentType::LXLU:
     case mlir::ktdf::ComponentType::LXSU:

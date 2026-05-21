@@ -81,8 +81,8 @@ bool isParallelLoop(mlir::scf::ForOp loop) {
     return false;
   }
   return attr.getValue() == mlir::ktdf::LoopType::ParallelLoop;
+}
 
-  
 mlir::LogicalResult cleanupPrivateOp(mlir::ktdf::PrivateOp private_op) {
   mlir::Block* body = private_op.getBodyBlock();
   auto yield_op = private_op.getYieldOp();
