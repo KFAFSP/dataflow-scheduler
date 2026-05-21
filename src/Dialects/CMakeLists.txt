@@ -1,4 +1,8 @@
+add_subdirectory(Agen)
+add_subdirectory(Dataflow)
 add_subdirectory(KTDF)
+add_subdirectory(Uniform)
+add_subdirectory(VectorChain)
 
 add_ktir_library(KTIRSchedulerInitMLIRDialects 
     init-mlir-dialects.cpp
@@ -33,6 +37,10 @@ add_ktir_library(KTIRSchedulerInitSchedulerDialects
 
   LINK_LIBS PUBLIC
     KTIRKTDFDialect
+    KTIRAgenDialect
+    KTIRDataflowDialect
+    KTIRUniformDialect
+    KTIRVectorChainDialect
 )
 
 add_ktir_library(KTIRSchedulerInitAllDialects 

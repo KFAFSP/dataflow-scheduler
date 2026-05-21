@@ -19,7 +19,11 @@
 #define SCHEDULER_SRC_DIALECTS_INCLUDES_SCHEDULER_DIALECTS_H
 
 #include "mlir/IR/DialectRegistry.h"
+#include "src/Dialects/Agen/AgenOps.hpp"
+#include "src/Dialects/Dataflow/DataflowOps.hpp"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
+#include "src/Dialects/Uniform/UniformOps.hpp"
+#include "src/Dialects/VectorChain/VectorChainOps.hpp"
 
 // Future scheduler dialects can be added here
 // ...

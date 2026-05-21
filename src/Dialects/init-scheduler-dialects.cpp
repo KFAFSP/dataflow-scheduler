@@ -25,6 +25,10 @@ namespace scheduler {
 void registerSchedulerDialects(mlir::DialectRegistry& registry) {
   // clang-format off
   registry.insert<mlir::ktdf::KTDFDialect>();
+  registry.insert<mlir::agen::AgenDialect>();
+  registry.insert<mlir::dataflow::DataflowDialect>();
+  registry.insert<mlir::uniform::UniformDialect>();
+  registry.insert<mlir::vectorchain::VectorChainDialect>();
   // Future scheduler dialects can be added here
   // clang-format on
 }

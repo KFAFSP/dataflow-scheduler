@@ -1,0 +1,715 @@
+//===--------------------------- UniformOps.cpp----------------------------===//
+//
+// IBM Confidential
+// (C) Copyright IBM Corp. 2023, 2025
+//
+// =============================================================================
+//
+// This file defines the operations in the Uniform operation set.
+//
+//===----------------------------------------------------------------------===//
+#include "src/Dialects/Uniform/UniformOps.hpp"
+
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/DialectImplementation.h"
+#include "src/Dialects/Dataflow/DataflowOps.hpp"
+#include "src/Dialects/Uniform/UniformOpsDialect.cpp.inc"
+#include "src/OpTraits/OpTraits.hpp"
+#include "src/dt_exception.hpp"
+using namespace mlir;
+using namespace uniform;
+
+//===----------------------------------------------------------------------===//
+// UniformDialect
+//===----------------------------------------------------------------------===//
+
+void UniformDialect::initialize() {
+  addOperations<
+#define GET_OP_LIST
+#include "src/Dialects/Uniform/UniformOps.cpp.inc"
+      >();
+}
+
+//===----------------------------------------------------------------------===//
+// UniformizeRegionsOp
+//===----------------------------------------------------------------------===//
+
+// syntax:
+// %results = uniform.uniformize_regions ->(index) {
+//   (%arg0 -> %1, %2) {
+//     Region1
+//   }
+//   (%arg1 -> %3) {
+//     Region2
+//   }
+// }
+ParseResult UniformizeRegionsOp::parse(OpAsmParser& parser,
+                                       OperationState& result) {
+  auto& builder = parser.getBuilder();
+  auto index_type = builder.getIndexType();
+
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> unit_list;
+  OpAsmParser::Argument region_arg;
+  region_arg.type = index_type;
+  SmallVector<int32_t, 1> list_sizes;
+  auto* body = result.addRegion();
+
+  auto op_result =
+      parser.parseOptionalArrowTypeList(result.types) || parser.parseLBrace();
+
+  while (parser.parseOptionalLParen().succeeded()) {
+    op_result = op_result || parser.parseArgument(region_arg) ||
+                parser.parseArrow() || parser.parseOperandList(unit_list) ||
+                parser.parseRParen() || parser.parseRegion(*body, {region_arg});
+    list_sizes.push_back(unit_list.size());
+    op_result = op_result ||
+                parser.resolveOperands(unit_list, index_type, result.operands);
+    unit_list.clear();
+    UniformizeRegionsOp::ensureTerminator(*body, builder, result.location);
+    body = result.addRegion();
+  }
+  result.regions.pop_back();  // pop the empty region
+  op_result = op_result || parser.parseOptionalRBrace() ||
+              parser.parseOptionalAttrDict(result.attributes);
+  result.addAttribute(getListSizesAttrStrName(),
+                      builder.getI32ArrayAttr(list_sizes));
+
+  return failure(op_result);
+}
+
+void UniformizeRegionsOp::print(OpAsmPrinter& p) {
+  auto& op = *this;
+  auto num_regions = op.getRegions().size();
+
+  p.printArrowTypeList(op.getResultTypes());
+
+  p << " {";
+  p.increaseIndent();
+  for (int i = 0; i < num_regions; i++) {
+    p.printNewline();
+    p << '(' << op.getRegionArg(i) << " -> ";
+    p.printOperands(op.getRegionUnitList(i));
+    p << ')';
+    p.printRegion(op.getRegion(i), false, true);
+  }
+  p.decreaseIndent();
+  p.printNewline();
+  p << '}';
+
+  // Print all non-hidden attributes
+  llvm::SmallVector<StringRef, 3> named_attr = {"list_sizes", "newly_added"};
+  p.printOptionalAttrDict(op->getAttrs(), named_attr);
+}
+
+LogicalResult UniformizeRegionsOp::verify() {
+  auto& op = *this;
+  DT_CHECK(op.getRegions().size() >= 1);
+  DT_CHECK(op.getRegions().size() == op.getListSizes().size());
+
+  // check unit sizes are the same as list of sizes
+  int size = op.getUnits().size();
+  int accu_size = 0;
+  for (int i = 0; i < op.getListSizes().size(); i++) {
+    accu_size +=
+        mlir::cast<IntegerAttr>(op.getListSizes().getValue()[i]).getInt();
+  }
+  DT_CHECK_MSG(accu_size == size,
+               "unit size has to be matched to the list sizes contents.");
+
+  // no duplication in units
+  llvm::DenseSet<mlir::Value> units;
+  for (auto unit : op.getUnits()) {
+    if (units.contains(unit)) {
+      op.emitError("duplicated unit SSAs found!");
+      return failure();
+    } else {
+      units.insert(unit);
+    }
+  }
+
+  // verify units of unit_lists are either get_unit or create_group
+  for (int idx = 0; idx < op.getRegions().size(); idx++) {
+    auto units = op.getRegionUnitList(idx);
+    if (units.size() == 1) {
+      auto def_op = units.front().getDefiningOp();
+      if (!isa<dataflow::GetUnitOp, dataflow::CreateGroupOp>(def_op)) {
+        op.emitError(
+            "region's unit_list must be programUnitOp or createGroupOp type!");
+        return failure();
+      }
+    } else {
+      for (auto unit : units) {
+        if (!isa<dataflow::GetUnitOp>(unit.getDefiningOp())) {
+          op.emitError(
+              "when unit_list size > 1, all units must be programUnitOp!");
+          return failure();
+        }
+      }
+    }
+  }
+
+  // yieldOp's operand sizes are equal to results' size.
+  int result_size = op.getResults().size();
+  for (auto& region : op.getRegions()) {
+    if (region.getBlocks().front().getTerminator()->getNumOperands() !=
+        result_size) {
+      op.emitError(
+          "The size of the operands in the yieldOp of a uniformize_regionsOp "
+          "region differs from the size of its results.");
+      return failure();
+    }
+  }
+  return success();
+}
+
+ValueRange UniformizeRegionsOp::getRegionUnitList(int pos) {
+  int drop = 0;
+  int keep =
+      mlir::cast<IntegerAttr>(this->getListSizes().getValue()[pos]).getInt();
+  for (auto idx = 0; idx < pos; idx++) {
+    drop +=
+        mlir::cast<IntegerAttr>(this->getListSizes().getValue()[idx]).getInt();
+  }
+  return this->getUnits().slice(drop, keep);
+}
+
+std::optional<ValueRange> UniformizeRegionsOp::getRegionUnitList(Value arg) {
+  int size = this->getListSizes().size();
+  for (int idx = 0; idx < size; idx++) {
+    if (arg == getRegionArg(idx)) {
+      return getRegionUnitList(idx);
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<Region*> UniformizeRegionsOp::getSpecificRegion(Value arg) {
+  int size = this->getListSizes().size();
+  for (int idx = 0; idx < size; idx++) {
+    if (arg == getRegionArg(idx)) {
+      return &getRegion(idx);
+    }
+  }
+  return std::nullopt;
+}
+
+Region* UniformizeRegionsOp::getRegionFromUnit(Value unit) {
+  int idx_in_unit_list = 0;
+  for (auto get_unit : this->getUnits()) {
+    if (get_unit == unit) break;
+    ++idx_in_unit_list;
+  }
+
+  int num_units_visited = 0;
+  auto list_sizes = this->getListSizes();
+  for (int i = 0; i < list_sizes.size(); ++i) {
+    num_units_visited += mlir::cast<IntegerAttr>(list_sizes[i]).getInt();
+    if (num_units_visited > idx_in_unit_list) return &this->getRegion(i);
+  }
+  return nullptr;
+}
+
+//===----------------------------------------------------------------------===//
+// EqualizePatternOp
+//===----------------------------------------------------------------------===//
+
+// syntax:
+// uniform.equalize_pattern
+//   (%arg0 -> %1, %2) {
+//     Region1
+//   }
+//   (%arg1 -> %3) {
+//     Region2
+//   }
+// }
+ParseResult EqualizePatternOp::parse(OpAsmParser& parser,
+                                     OperationState& result) {
+  auto& builder = parser.getBuilder();
+  auto index_type = builder.getIndexType();
+
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> unit_list;
+  OpAsmParser::Argument region_arg;
+  region_arg.type = index_type;
+  SmallVector<int32_t, 1> list_sizes;
+  auto* body = result.addRegion();
+
+  auto op_result = parser.parseLBrace().failed();
+
+  while (parser.parseOptionalLParen().succeeded()) {
+    op_result = op_result || parser.parseArgument(region_arg) ||
+                parser.parseArrow() || parser.parseOperandList(unit_list) ||
+                parser.parseRParen() || parser.parseRegion(*body, {region_arg});
+    list_sizes.push_back(unit_list.size());
+    op_result = op_result ||
+                parser.resolveOperands(unit_list, index_type, result.operands);
+    unit_list.clear();
+    UniformizeRegionsOp::ensureTerminator(*body, builder, result.location);
+    body = result.addRegion();
+  }
+  result.regions.pop_back();  // pop the empty region
+  op_result = op_result || parser.parseOptionalRBrace();
+  result.addAttribute(getListSizesAttrStrName(),
+                      builder.getI32ArrayAttr(list_sizes));
+
+  return failure(op_result);
+}
+
+void EqualizePatternOp::print(OpAsmPrinter& p) {
+  auto& op = *this;
+  auto num_regions = op.getRegions().size();
+
+  p << " {";
+  p.increaseIndent();
+  for (int i = 0; i < num_regions; i++) {
+    p.printNewline();
+    p << '(' << op.getRegionArg(i) << " -> ";
+    p.printOperands(op.getRegionUnitList(i));
+    p << ')';
+    p.printRegion(op.getRegion(i), false, true);
+  }
+  p.decreaseIndent();
+  p.printNewline();
+  p << '}';
+}
+
+LogicalResult EqualizePatternOp::verify() {
+  auto& op = *this;
+  DT_CHECK(op.getRegions().size() >= 1);
+  DT_CHECK(op.getRegions().size() == op.getListSizes().size());
+
+  // no duplication in units
+  int size = op.getUnits().size();
+  for (int i = 0; i < size - 1; i++) {
+    for (int j = i + 1; j < size; j++) {
+      if (op.getUnits()[i] == op.getUnits()[j]) {
+        op.emitError("duplicated unit SSAs found!");
+        return failure();
+      }
+    }
+  }
+
+  // verify units of unit_lists are either get_unit or create_group
+  for (int idx = 0; idx < op.getRegions().size(); idx++) {
+    auto units = op.getRegionUnitList(idx);
+    if (units.size() == 1) {
+      auto def_op = units.front().getDefiningOp();
+      if (!isa<dataflow::GetUnitOp, dataflow::CreateGroupOp>(def_op)) {
+        op.emitError(
+            "region's unit_list must be programUnitOp or createGroupOp type!");
+        return failure();
+      }
+    } else {
+      for (auto unit : units) {
+        if (!isa<dataflow::GetUnitOp>(unit.getDefiningOp())) {
+          op.emitError(
+              "when unit_list size > 1, all units must be programUnitOp!");
+          return failure();
+        }
+      }
+    }
+  }
+
+  // all regions should have the same number of operations
+  int region_size = op.getRegions().size();
+  DT_CHECK(region_size > 1);
+  int operation_size = op.getRegion(0).front().getOperations().size();
+  for (int idx = 1; idx < region_size; idx++) {
+    if (op.getRegion(idx).front().getOperations().size() != operation_size) {
+      op.emitError("regions have different operation size.");
+      return failure();
+    }
+  }
+  // all regions should contain the same sequence of operations.
+  SmallVector<OperationName> op_names;
+  for (auto& each_op : op.getRegion(0).front().getOperations()) {
+    op_names.push_back(each_op.getName());
+  }
+  for (int region_idx = 1; region_idx < region_size; region_idx++) {
+    auto& region = op.getRegion(region_idx);
+    int op_idx = 0;
+    for (auto& each_op : region.front().getOperations()) {
+      if (each_op.getName() != op_names[op_idx]) {
+        op.emitError("Operation sequences different.");
+        return failure();
+      }
+      op_idx++;
+    }
+  }
+  return success();
+}
+
+ValueRange EqualizePatternOp::getRegionUnitList(int pos) {
+  int drop = 0;
+  int keep =
+      mlir::cast<IntegerAttr>(this->getListSizes().getValue()[pos]).getInt();
+  for (auto idx = 0; idx < pos; idx++) {
+    drop +=
+        mlir::cast<IntegerAttr>(this->getListSizes().getValue()[idx]).getInt();
+  }
+  return this->getUnits().slice(drop, keep);
+}
+
+std::optional<ValueRange> EqualizePatternOp::getRegionUnitList(Value arg) {
+  int size = this->getListSizes().size();
+  for (int idx = 0; idx < size; idx++) {
+    if (arg == getRegionArg(idx)) {
+      return getRegionUnitList(idx);
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<Region*> EqualizePatternOp::getSpecificRegion(Value arg) {
+  int size = this->getListSizes().size();
+  for (int idx = 0; idx < size; idx++) {
+    if (arg == getRegionArg(idx)) {
+      return &getRegion(idx);
+    }
+  }
+  return std::nullopt;
+}
+
+Region* EqualizePatternOp::getRegionFromUnit(Value unit) {
+  int idx_in_unit_list = 0;
+  for (auto get_unit : this->getUnits()) {
+    if (get_unit == unit) break;
+    ++idx_in_unit_list;
+  }
+
+  int num_units_visited = 0;
+  auto list_sizes = this->getListSizes();
+  for (int i = 0; i < list_sizes.size(); ++i) {
+    num_units_visited += mlir::cast<IntegerAttr>(list_sizes[i]).getInt();
+    if (num_units_visited > idx_in_unit_list) return &this->getRegion(i);
+  }
+  return nullptr;
+}
+
+//===----------------------------------------------------------------------===//
+// DefImmutableMappingOp
+//===----------------------------------------------------------------------===//
+
+// syntax:%result = uniform.def_immutable_mapping([%1 -> %2],[%3 -> %4]):index
+ParseResult DefImmutableMappingOp::parse(OpAsmParser& parser,
+                                         OperationState& result) {
+  auto& builder = parser.getBuilder();
+  auto index_type = builder.getIndexType();
+
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> keys, values;
+  OpAsmParser::UnresolvedOperand key, value;
+  auto op_result = parser.parseLParen().failed();
+  while (parser.parseOptionalLSquare().succeeded()) {
+    op_result = op_result || parser.parseOperand(key) || parser.parseArrow() ||
+                parser.parseOperand(value) || parser.parseRSquare();
+    auto parse_result = parser.parseOptionalComma();
+    keys.push_back(key);
+    values.push_back(value);
+  }
+  Type result_type;
+  op_result =
+      op_result || parser.parseRParen() || parser.parseColonType(result_type);
+
+  Type value_type;
+  if (parser.parseOptionalComma().succeeded()) {
+    op_result = op_result || parser.parseType(value_type);
+  } else {
+    value_type = builder.getIndexType();
+  }
+
+  result.types.push_back(result_type);
+  int size = keys.size();
+  result.attributes.push_back(
+      builder.getNamedAttr(getOperandSegmentSizesAttrName(OperationName(
+                               getOperationName(), builder.getContext())),
+                           builder.getDenseI32ArrayAttr({size, size})));
+  op_result = op_result ||
+              parser.resolveOperands(keys, index_type, result.operands) ||
+              parser.resolveOperands(values, value_type, result.operands);
+
+  return failure(op_result);
+}
+
+void DefImmutableMappingOp::print(OpAsmPrinter& p) {
+  auto& op = *this;
+
+  Type value_type = op.getType();
+  int size = op.getKeys().size();
+  p << '(';
+  for (int i = 0; i < size; i++) {
+    p << '[';
+    p.printOperand(op.getKeys()[i]);
+    p << " -> ";
+    value_type = op.getValues()[i].getType();
+    p.printOperand(op.getValues()[i]);
+    p << ']';
+    if (i < size - 1) p << ", ";
+  }
+  p << "):";
+  p.printType(op.getResult().getType());
+
+  if (value_type != op.getResult().getType()) {
+    p << ", ";
+    p.printType(value_type);
+  }
+}
+
+LogicalResult DefImmutableMappingOp::verify() {
+  auto& op = *this;
+  auto key0 = op.getKeys()[0].getDefiningOp<dataflow::GetUnitOp>();
+  if (key0) {
+    for (auto key : op.getKeys()) {
+      if (!isa<dataflow::GetUnitOp>(key.getDefiningOp())) {
+        op.emitError("All Keys are not of same type\n");
+        return failure();
+      }
+    }
+  }
+  auto I = op.getValues().begin(), E = op.getValues().end();
+  if (I != E) {
+    auto firstValDef = (*I++).getDefiningOp();
+    if (firstValDef->hasTrait<OpTrait::ScalarValue>()) {
+      // A mix of scalar op value such as scalar_add, scalar_sub may appear as
+      // map values. The scalar values will need to resolve to compile-time
+      // constants but verification is only confirming homogeneity or potential
+      // for the map values to resolve to scalar constants.
+      for (; I != E; ++I) {
+        if (!(*I).getDefiningOp()->hasTrait<OpTrait::ScalarValue>()) {
+          op.emitError("All map values are expected to be scalar values.");
+          return failure();
+        }
+      }
+    } else {
+      // If the map values are not scalar values then homogeneity is determined
+      // by the specific op.
+      for (; I != E; ++I) {
+        if (firstValDef->getName() != (*I).getDefiningOp()->getName()) {
+          op.emitError("All map values should be of same type.");
+          return failure();
+        }
+      }
+    }
+  }
+  return success();
+}
+
+std::optional<Value> DefImmutableMappingOp::getValue(Value key) {
+  auto& op = *this;
+
+  int size = op.getKeys().size();
+
+  for (int i = 0; i < size; i++) {
+    if (key == op.getKeys()[i]) {
+      return op.getValues()[i];
+    }
+  }
+  return std::nullopt;
+}
+
+SmallVector<std::optional<Value>> DefImmutableMappingOp::getValuesFromKeys(
+    SmallVector<Value>& keys) {
+  SmallVector<std::optional<Value>> values;
+
+  llvm::DenseMap<Value, Value> map;
+
+  auto& op = *this;
+  int size = op.getKeys().size();
+
+  auto map_keys = op.getKeys();
+  auto map_values = op.getValues();
+  for (int i = 0; i < size; i++) {
+    map[map_keys[i]] = map_values[i];
+  }
+
+  for (auto key : keys) {
+    auto record = map.find(key);
+    if (record != map.end()) {
+      values.push_back(record->second);
+    } else {
+      values.push_back(std::nullopt);
+    }
+  }
+
+  return values;
+}
+
+std::vector<std::optional<Value>> DefImmutableMappingOp::getValuesFromKeys(
+    std::vector<Value>& keys) {
+  std::vector<std::optional<Value>> values;
+  llvm::DenseMap<Value, Value> map;
+
+  auto& op = *this;
+  int size = op.getKeys().size();
+
+  auto map_keys = op.getKeys();
+  auto map_values = op.getValues();
+  for (int i = 0; i < size; i++) {
+    map[map_keys[i]] = map_values[i];
+  }
+
+  for (auto key : keys) {
+    auto record = map.find(key);
+    if (record != map.end()) {
+      values.emplace_back(record->second);
+    } else {
+      values.emplace_back(std::nullopt);
+    }
+  }
+
+  return values;
+}
+
+std::vector<mlir::Value> DefImmutableMappingOp::getNonNullValuesFromKeys(
+    std::vector<mlir::Value>& keys) {
+  std::vector<mlir::Value> values;
+
+  llvm::DenseMap<Value, Value> map;
+
+  auto& op = *this;
+  int size = op.getKeys().size();
+
+  auto map_keys = op.getKeys();
+  auto map_values = op.getValues();
+  for (int i = 0; i < size; i++) {
+    map[map_keys[i]] = map_values[i];
+  }
+
+  for (auto key : keys) {
+    auto record = map.find(key);
+    if (record != map.end()) {
+      values.push_back(record->second);
+    }
+  }
+
+  return values;
+}
+
+SmallVector<mlir::Value> DefImmutableMappingOp::getNonNullValuesFromKeys(
+    SmallVector<mlir::Value>& keys) {
+  SmallVector<mlir::Value> values;
+
+  llvm::DenseMap<Value, Value> map;
+
+  auto& op = *this;
+  int size = op.getKeys().size();
+
+  auto map_keys = op.getKeys();
+  auto map_values = op.getValues();
+  for (int i = 0; i < size; i++) {
+    map[map_keys[i]] = map_values[i];
+  }
+
+  for (auto key : keys) {
+    auto record = map.find(key);
+    if (record != map.end()) {
+      values.push_back(record->second);
+    }
+  }
+
+  return values;
+}
+
+//===----------------------------------------------------------------------===//
+// QueryMapOp
+//===----------------------------------------------------------------------===//
+
+// syntax:%result = uniform.query_map(map:%2, key:%1) : index
+ParseResult QueryMapOp::parse(OpAsmParser& parser, OperationState& result) {
+  auto& builder = parser.getBuilder();
+  auto index_type = builder.getIndexType();
+
+  OpAsmParser::UnresolvedOperand map, key;
+  Type result_type;
+
+  auto op_result = parser.parseLParen() || parser.parseKeyword("map") ||
+                   parser.parseColon() || parser.parseOperand(map) ||
+                   parser.parseComma() || parser.parseKeyword("key") ||
+                   parser.parseColon() || parser.parseOperand(key) ||
+                   parser.parseRParen() || parser.parseColonType(result_type);
+  result.types.push_back(result_type);
+  op_result = op_result ||
+              parser.resolveOperand(map, index_type, result.operands) ||
+              parser.resolveOperand(key, index_type, result.operands);
+
+  return failure(op_result);
+}
+
+void QueryMapOp::print(OpAsmPrinter& p) {
+  auto& op = *this;
+
+  p << "(map:";
+  p.printOperand(op.getMap());
+  p << ", key:";
+  p.printOperand(op.getKey());
+  p << ") : ";
+  p.printType(op.getResult().getType());
+}
+
+LogicalResult QueryMapOp::verify() {
+  auto& op = *this;
+  if (dyn_cast<BlockArgument>(op.getKey())) {
+    auto parent_op = op.getKey().getParentRegion()->getParentOp();
+    if (!isa<uniform::UniformizeRegionsOp, uniform::EqualizePatternOp,
+             dataflow::ProgramUnitOp>(parent_op)) {
+      op.emitError(
+          "key's parentOp must be uniformizeRegionsOp or EqualizePatternOp.");
+      return failure();
+    }
+  } else if (!isa<dataflow::GetUnitOp>(op.getKey().getDefiningOp())) {
+    op.emitError("key's defOp must be GetUnitOp.");
+    return failure();
+  }
+  if (!op.getMap().getDefiningOp<DefImmutableMappingOp>()) {
+    op.emitError("map's defOp must be def_immutable_mappingOp.");
+    return failure();
+  }
+  return success();
+}
+
+void QueryMapOp::getAllQueriedValues(SmallVector<Value>& values) {
+  auto& op = *this;
+  auto map_op = op.getMap().getDefiningOp<uniform::DefImmutableMappingOp>();
+  auto parametric_key = op.getKey();
+  SmallVector<Value> all_keys;
+  if (isa<BlockArgument>(parametric_key)) {
+    auto key_parent_op = dyn_cast<BlockArgument>(parametric_key)
+                             .getParentRegion()
+                             ->getParentOp();
+    if (auto prog_unit_op = dyn_cast<dataflow::ProgramUnitOp>(key_parent_op)) {
+      all_keys = prog_unit_op.getUnits();
+    } else if (isa<uniform::UniformizeRegionsOp, uniform::EqualizePatternOp>(
+                   key_parent_op)) {
+      std::optional<mlir::ValueRange> list;
+      if (auto uniformize_op =
+              dyn_cast<uniform::UniformizeRegionsOp>(key_parent_op)) {
+        list = uniformize_op.getRegionUnitList(parametric_key);
+      } else if (auto equalize_op =
+                     dyn_cast<uniform::EqualizePatternOp>(key_parent_op)) {
+        list = equalize_op.getRegionUnitList(parametric_key);
+      }
+      if (list.has_value()) {
+        all_keys = list.value();
+        if (list.value().size() == 1) {
+          if (auto create_group_op =
+                  list.value()
+                      .front()
+                      .getDefiningOp<dataflow::CreateGroupOp>()) {
+            all_keys = create_group_op.getUnitIds();
+          }
+        } else if (list.value().size() == 0) {
+          op->emitError("key's unit list is empty.");
+          return;
+        }
+      }
+    }
+  } else if (auto prog_op =
+                 parametric_key.getDefiningOp<dataflow::ProgramUnitOp>()) {
+    all_keys.push_back(parametric_key);
+  }
+  values = map_op.getNonNullValuesFromKeys(all_keys);
+}
+
+//===----------------------------------------------------------------------===//
+// TableGen'd op method definitions
+//===----------------------------------------------------------------------===//
+#define GET_OP_CLASSES
+#include "src/Dialects/Uniform/UniformOps.cpp.inc"
