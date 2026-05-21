@@ -330,6 +330,10 @@ void PathExpansionMaterializer::materializePrivateNode(
   }
 
   // Allocate new private resources (buffers and FIFOs) using factory
+  // Track the starting index for new resources in the private op results
+  size_t new_resource_start_idx = non_token_result_count;
+  size_t current_result_idx = orig_result_count;
+
   for (const auto& spec_ptr : resource_factory_.getSpecs()) {
     const PrivateResourceSpec* spec = spec_ptr.get();
 
@@ -342,11 +346,12 @@ void PathExpansionMaterializer::materializePrivateNode(
 
       auto alloc_op = mlir::memref::AllocOp::create(builder_, loc, memref_type);
 
-      // Register allocation with factory
-      resource_factory_.registerAllocation(spec, {alloc_op.getResult()});
-
       // Add to yield operands
       yield_operands.push_back(alloc_op.getResult());
+
+      // Note: We'll register the private op result after creating the private
+      // op
+      current_result_idx++;
 
     } else if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
       // Create FIFO allocation with multiple slots
@@ -364,14 +369,15 @@ void PathExpansionMaterializer::materializePrivateNode(
       auto fifo_alloc = mlir::ktdf::FifoAllocateOp::create(
           builder_, loc, fifo_slot_types, empty_operands);
 
-      // Register allocation with factory (all slots)
-      llvm::SmallVector<mlir::Value> slot_values;
+      // Add all slots to yield operands
       for (size_t slot_idx = 0; slot_idx < fifo_alloc.getNumResults();
            ++slot_idx) {
-        slot_values.push_back(fifo_alloc.getResult(slot_idx));
         yield_operands.push_back(fifo_alloc.getResult(slot_idx));
       }
-      resource_factory_.registerAllocation(spec, slot_values);
+
+      // Note: We'll register the private op results after creating the private
+      // op
+      current_result_idx += fifo_alloc.getNumResults();
     }
   }
 
@@ -392,6 +398,29 @@ void PathExpansionMaterializer::materializePrivateNode(
   // This allows stages to reference the correct resources
   for (size_t i = 0; i < orig_result_count; ++i) {
     value_map_.map(orig_private.getResult(i), new_private.getResult(i));
+  }
+
+  // Now register the private op results with the factory
+  // These are the SSA values that stages can legally reference
+  current_result_idx = orig_result_count;
+  for (const auto& spec_ptr : resource_factory_.getSpecs()) {
+    const PrivateResourceSpec* spec = spec_ptr.get();
+
+    if (spec->kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
+      // Register the private op result (not the alloc result)
+      resource_factory_.registerAllocation(
+          spec, {new_private.getResult(current_result_idx)});
+      current_result_idx++;
+    } else if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
+      // Register all FIFO slot results from the private op
+      llvm::SmallVector<mlir::Value> slot_values;
+      for (size_t slot_idx = 0; slot_idx < spec->elements_per_slot.size();
+           ++slot_idx) {
+        slot_values.push_back(new_private.getResult(current_result_idx));
+        current_result_idx++;
+      }
+      resource_factory_.registerAllocation(spec, slot_values);
+    }
   }
 
   // Reset insertion point to after private op
