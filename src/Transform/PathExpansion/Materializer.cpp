@@ -653,9 +653,51 @@ void PathExpansionMaterializer::adaptStageBodyFifoKinds(
         // No adaptation needed, clone as-is
         builder_.clone(op, value_map_);
       }
+    } else if (auto read_op = mlir::dyn_cast<mlir::ktdf::ReadFromFifoOp>(&op)) {
+      // Handle read_from_fifo - need to adapt to use new FIFO slot
+      auto it = transfer_map.find(&op);
+      if (it != transfer_map.end()) {
+        const TransferMaterializationInfo& transfer_info = *it->second;
+        assert(transfer_info.source_private_resource &&
+               "read_from_fifo should have source private resource");
+        
+        // Get the new FIFO slot
+        const PrivateResourceAllocation* alloc =
+            resource_factory_.getAllocation(transfer_info.source_private_resource);
+        assert(alloc && "Private resource should have been allocated");
+        assert(transfer_info.source_slot_index < alloc->ssa_values.size());
+        mlir::Value new_fifo_slot = alloc->ssa_values[transfer_info.source_slot_index];
+        
+        // Create new read_from_fifo with the new FIFO slot
+        auto new_read = mlir::ktdf::ReadFromFifoOp::create(
+            builder_, read_op.getLoc(), read_op.getResult().getType(), new_fifo_slot);
+        value_map_.map(read_op.getResult(), new_read.getResult());
+      } else {
+        builder_.clone(op, value_map_);
+      }
+    } else if (auto write_op = mlir::dyn_cast<mlir::ktdf::WriteToFifoOp>(&op)) {
+      // Handle write_to_fifo - need to adapt to use new FIFO slot
+      auto it = transfer_map.find(&op);
+      if (it != transfer_map.end()) {
+        const TransferMaterializationInfo& transfer_info = *it->second;
+        assert(transfer_info.dest_private_resource &&
+               "write_to_fifo should have dest private resource");
+        
+        // Get the new FIFO slot
+        const PrivateResourceAllocation* alloc =
+            resource_factory_.getAllocation(transfer_info.dest_private_resource);
+        assert(alloc && "Private resource should have been allocated");
+        assert(transfer_info.dest_slot_index < alloc->ssa_values.size());
+        mlir::Value new_fifo_slot = alloc->ssa_values[transfer_info.dest_slot_index];
+        
+        // Create new write_to_fifo with the new FIFO slot
+        mlir::Value data = materializeValue(write_op.getData());
+        mlir::ktdf::WriteToFifoOp::create(builder_, write_op.getLoc(), data, new_fifo_slot);
+      } else {
+        builder_.clone(op, value_map_);
+      }
     } else {
-      // Clone other operations as-is (including read_from_fifo, write_to_fifo,
-      // compute ops)
+      // Clone other operations as-is (compute ops, etc.)
       builder_.clone(op, value_map_);
     }
   }
