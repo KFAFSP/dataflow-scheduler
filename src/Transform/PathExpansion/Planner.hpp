@@ -101,6 +101,9 @@ struct PrivateResourceSpec {
   // For both fifo and memory-buffers:
   llvm::SmallVector<int64_t> shape;
   mlir::Type element_type;
+
+  void print(llvm::raw_ostream &os) const;
+  void dump() const;
 };
 
 /// Represents an allocated private resource with its SSA value(s)
@@ -167,6 +170,9 @@ struct TransferMaterializationInfo {
   // For memory buffers: always 0 (single SSA value)
   size_t source_slot_index = 0;
   size_t dest_slot_index = 0;
+
+  void print(llvm::raw_ostream &os) const;
+  void dump() const;
 };
 
 /// Side information attached to a StageNode for materialization
@@ -190,6 +196,9 @@ struct StageMaterializationInfo {
   
   // which unit this stage runs on
   mlir::ktdf::ComponentType applicable_unit;
+
+  void print(llvm::raw_ostream &os) const;
+  void dump() const;
 };
 
 //===----------------------------------------------------------------------===//

@@ -29,6 +29,7 @@
 #include "src/Analysis/ArchitectureGraph.hpp"
 #include "src/Analysis/PipelineTree.hpp"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
+#include "src/Utils/OperationUtils.hpp"
 
 #define DEBUG_TYPE "path-expansion-planner"
 
@@ -130,22 +131,7 @@ static void debugPrintStageList(llvm::raw_ostream& os,
     // Print materialization info if available
     if (plan && plan->stage_info.count(stage)) {
       const StageMaterializationInfo& info = plan->stage_info.at(stage);
-      os << " kind=";
-      switch (info.kind) {
-        case StageMaterializationInfo::Kind::kPreserveOriginal:
-          os << "PreserveOriginal";
-          break;
-        case StageMaterializationInfo::Kind::kAdaptFifoKinds:
-          os << "AdaptFifoKinds";
-          break;
-        case StageMaterializationInfo::Kind::kAdaptTransfer:
-          os << "AdaptTransfer";
-          break;
-        case StageMaterializationInfo::Kind::kSyntheticTransfer:
-          os << "SyntheticTransfer";
-          break;
-      }
-      os << ", transfers=" << info.transfers.size();
+      info.print(os);
     }
     os << "\n";
   }
@@ -165,6 +151,122 @@ static void debugPrintResourceSpecs(llvm::raw_ostream& os,
   }
   os << "  Memory buffers: " << mem_count << "\n";
   os << "  FIFOs: " << fifo_count << "\n";
+}
+
+}  // anonymous namespace
+
+//===----------------------------------------------------------------------===//
+// Print Functions for Data Structures
+//===----------------------------------------------------------------------===//
+
+void PrivateResourceSpec::print(llvm::raw_ostream& os) const {
+  switch (kind) {
+    case Kind::kMemoryBuffer:
+      os << "MemoryBuffer(resource="
+         << ArchitectureGraph::stringifyResource(memory_resource)
+         << ", shape=[";
+      for (size_t i = 0; i < shape.size(); ++i) {
+        os << shape[i];
+        if (i + 1 < shape.size()) os << "x";
+      }
+      os << "], element_type=" << element_type << ")";
+      break;
+    case Kind::kFifo:
+      os << "Fifo(type=" << mlir::ktdf::stringifyFifoType(fifo_type)
+         << ", slots=[";
+      for (size_t i = 0; i < elements_per_slot.size(); ++i) {
+        os << elements_per_slot[i];
+        if (i + 1 < elements_per_slot.size()) os << ", ";
+      }
+      os << "], element_type=" << element_type << ")";
+      break;
+    case Kind::kUnknown:
+      os << "Unknown";
+      break;
+  }
+}
+
+void PrivateResourceSpec::dump() const {
+  print(llvm::dbgs());
+  llvm::dbgs() << "\n";
+}
+
+void TransferMaterializationInfo::print(llvm::raw_ostream& os) const {
+  os << "Transfer(" << ArchitectureGraph::stringifyResource(source_resource)
+     << " -> " << ArchitectureGraph::stringifyResource(dest_resource);
+
+  if (source_private_resource) {
+    os << ", source=";
+#if 1
+    source_private_resource->print(os);
+#else
+    if (source_private_resource->kind == PrivateResourceSpec::Kind::kFifo) {
+      os << "FIFO[" << source_slot_index << "]";
+    } else {
+      os << "Buffer";
+    }
+#endif
+  }
+
+  if (dest_private_resource) {
+    os << ", dest=";
+#if 1
+    dest_private_resource->print(os);
+#else
+    if (dest_private_resource->kind == PrivateResourceSpec::Kind::kFifo) {
+      os << "FIFO[" << dest_slot_index << "]";
+    } else {
+      os << "Buffer";
+    }
+#endif
+  }
+
+  if (template_op) {
+    os << ", template=";
+    scheduler::utils::printLocation(os, template_op);
+  } else {
+    os << ", synthetic";
+  }
+
+  os << ")";
+}
+
+void TransferMaterializationInfo::dump() const {
+  print(llvm::dbgs());
+  llvm::dbgs() << "\n";
+}
+
+void StageMaterializationInfo::print(llvm::raw_ostream& os) const {
+  os << " kind=";
+  switch (kind) {
+    case StageMaterializationInfo::Kind::kPreserveOriginal:
+      os << "PreserveOriginal";
+      break;
+    case StageMaterializationInfo::Kind::kAdaptFifoKinds:
+      os << "AdaptFifoKinds";
+      break;
+    case StageMaterializationInfo::Kind::kAdaptTransfer:
+      os << "AdaptTransfer";
+      break;
+    case StageMaterializationInfo::Kind::kSyntheticTransfer:
+      os << "SyntheticTransfer";
+      break;
+  }
+  os << ", applicable_unit:"
+     << mlir::ktdf::stringifyComponentType(applicable_unit);
+  os << ", transfers=" << transfers.size();
+
+#if 1
+  os << "\nTransfers:\n";
+  for (const TransferMaterializationInfo& ti : transfers) {
+    ti.print(os);
+    os << "\n";
+  }
+#endif
+}
+void StageMaterializationInfo::dump() const {
+  print(llvm::dbgs());
+  llvm::dbgs() << "\n";
 }
 
 /// Analyze a single stage and create its summary
@@ -248,8 +350,6 @@ mlir::FailureOr<StageSummary> analyzeStage(StageNode* stage_node) {
 
   return summary;
 }
-
-}  // anonymous namespace
 
 //===----------------------------------------------------------------------===//
 // Stage DAG Validation Functions
@@ -639,39 +739,22 @@ static mlir::LogicalResult analyzeOriginalStageTransfers(
       // Determine which side is the intermediate memory resource
       ArchitectureGraph::Resource intermediate_resource;
       ArchitectureGraph::Resource current_resource = *stage_info.stage_resource;
-      bool intermediate_is_source = false;
-
-      mlir::MemRefType memref_type;
-
-      if (src_is_memref) {
-        // Source is memref (intermediate memory), dest is FIFO or other
-        auto src_memref = mlir::cast<mlir::MemRefType>(src_type);
-        memref_type = src_memref;
-        intermediate_is_source = true;
-
-        // Get intermediate resource from prev stage
-        if (prev_is_intermediate) {
-          assert(plan->stage_info.count(prev_stage) &&
-                 "Intermediate stage should have info");
-          intermediate_resource = *plan->stage_info[prev_stage].stage_resource;
-        } else {
-          return mlir::WalkResult::advance();
-        }
-      } else {
-        // Dest is memref (intermediate memory), source is FIFO or other
-        auto dest_memref = mlir::cast<mlir::MemRefType>(dest_type);
-        memref_type = dest_memref;
-        intermediate_is_source = false;
-
-        // Get intermediate resource from next stage
-        if (next_is_intermediate) {
-          assert(plan->stage_info.count(next_stage) &&
-                 "Intermediate stage should have info");
-          intermediate_resource = *plan->stage_info[next_stage].stage_resource;
-        } else {
-          return mlir::WalkResult::advance();
-        }
+      bool intermediate_is_source =
+          prev_is_intermediate;  // assumes at most one intermediate node in
+                                 // between every pair of original stages.
+      if (prev_is_intermediate) {
+        assert(plan->stage_info.count(prev_stage) &&
+               "Intermediate stage should have info");
+        intermediate_resource = *plan->stage_info[prev_stage].stage_resource;
+      } else if (next_is_intermediate) {
+        assert(plan->stage_info.count(next_stage) &&
+               "Intermediate stage should have info");
+        intermediate_resource = *plan->stage_info[next_stage].stage_resource;
       }
+
+      mlir::MemRefType memref_type =
+          src_is_memref ? mlir::cast<mlir::MemRefType>(src_type)
+                        : mlir::cast<mlir::MemRefType>(dest_type);
 
       // Create memory buffer spec for the intermediate resource
       PrivateResourceSpec* buffer_spec =
