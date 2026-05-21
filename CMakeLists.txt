@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
+# Add custom modules to the search path.
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+
 project(ktir-scheduler LANGUAGES C CXX)
 
 # Set defaults for compiler features and options.
@@ -63,6 +66,7 @@ include_directories(
 include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}/external/ktir-mlir-frontend/include)
 include(AddKTIR)
+include(clang-format)
 
 # Apply target properties for this project globally.
 include_directories(SYSTEM ${PROJECT_BINARY_DIR})
