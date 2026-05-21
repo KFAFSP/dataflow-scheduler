@@ -683,26 +683,24 @@ void ConstructThreeStagePipelinePass::cleanupOperations() {
 // std::nullopt if no such operand is found.
 static std::optional<AffineMap> findIndexingMapForLoadResult(
     linalg::LinalgOp linalg_op, Value tensor_value) {
-  for (Value v : {tensor_value}) {
-    for (Operation* user : v.getUsers()) {
-      if (user == linalg_op.getOperation()) {
-        for (OpOperand& operand : user->getOpOperands()) {
-          if (operand.get() == v)
-            return linalg_op.getMatchingIndexingMap(&operand);
-        }
-      }
-      if (auto extract = dyn_cast<tensor::ExtractSliceOp>(user)) {
-        for (Operation* eu : extract.getResult().getUsers()) {
-          if (eu == linalg_op.getOperation()) {
-            for (OpOperand& operand : eu->getOpOperands()) {
-              if (operand.get() == extract.getResult())
-                return linalg_op.getMatchingIndexingMap(&operand);
-            }
-          }
-        }
-      }
+  // Helper to find indexing map for a value used by linalg_op
+  auto findMapForValue = [&](Value v) -> std::optional<AffineMap> {
+    for (OpOperand& operand : linalg_op->getOpOperands()) {
+      if (operand.get() == v) return linalg_op.getMatchingIndexingMap(&operand);
+    }
+    return std::nullopt;
+  };
+
+  // Check direct use
+  if (auto map = findMapForValue(tensor_value)) return map;
+
+  // Check through extract_slice
+  for (Operation* user : tensor_value.getUsers()) {
+    if (auto extract = dyn_cast<tensor::ExtractSliceOp>(user)) {
+      if (auto map = findMapForValue(extract.getResult())) return map;
     }
   }
+
   return std::nullopt;
 }
 
@@ -751,10 +749,10 @@ static LogicalResult projectSizesThroughIndexingMap(
     std::string buf;
     llvm::raw_string_ostream os(buf);
     result.print(os);
-    emit_error() << "operand indexing map has an unsupported result expression ("
-                 << buf
-                 << "); only single-dim projections and constant indices are "
-                    "supported";
+    emit_error()
+        << "operand indexing map has an unsupported result expression (" << buf
+        << "); only single-dim projections and constant indices are "
+           "supported";
     return failure();
   }
   return success();
@@ -800,16 +798,16 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
     Operation* err_anchor;
     if (is_load) {
       ktdp::LoadOp load_op = load_ops_[i];
-      access_tile_value = load_op.getOperand();
+      access_tile_value = load_op.getAccessTile();
       err_anchor = load_op.getOperation();
       indexing_map =
           findIndexingMapForLoadResult(linalg_op, load_op.getResult());
     } else {
       ktdp::StoreOp store_op = store_ops_[i];
-      access_tile_value = store_op.getOperation()->getOperand(1);
+      access_tile_value = store_op.getAccessTile();
       err_anchor = store_op.getOperation();
-      indexing_map = findIndexingMapForStoreSource(
-          linalg_op, store_op.getOperation()->getOperand(0));
+      indexing_map =
+          findIndexingMapForStoreSource(linalg_op, store_op.getDataTile());
     }
 
     if (!indexing_map) {
@@ -916,7 +914,8 @@ void ConstructThreeStagePipelinePass::createComputeOps(
     auto extract_it = load_to_extract.find(load_op.getResult());
     if (extract_it == load_to_extract.end()) {
       load_op.emitError(
-          "no tensor.extract_slice user found; cannot determine the per-operand "
+          "no tensor.extract_slice user found; cannot determine the "
+          "per-operand "
           "tile type for ktdf.read_from_fifo");
       signalPassFailure();
       return;
@@ -1104,8 +1103,9 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     std::optional<SmallVector<Value, 8>> per_dim_indices =
         affine::expandAffineMap(builder, loc, base_map, expand_operands);
     if (!per_dim_indices) {
-      access_tile.emitError("Failed to expand base_map into per-dimension "
-                            "indices");
+      access_tile.emitError(
+          "Failed to expand base_map into per-dimension "
+          "indices");
       signalPassFailure();
       return;
     }
