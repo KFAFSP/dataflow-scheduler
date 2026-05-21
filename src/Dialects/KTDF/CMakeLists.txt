@@ -32,4 +32,5 @@ mlir_target_link_libraries(KTIRKTDFDialect PUBLIC
   MLIRInferTypeOpInterface
   MLIRControlFlowInterfaces
   MLIRDialectUtils
+  MLIRSCFDialect
 )
