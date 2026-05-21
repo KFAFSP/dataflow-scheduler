@@ -317,6 +317,10 @@ void ComputeGroupExtractionPass::extractComputeGroup(
 
   OpBuilder builder(top_level_module);
 
+  // Get the original function to copy its attributes
+  auto original_func = group.first_load->getParentOfType<func::FuncOp>();
+  assert(original_func && "Compute group must be inside a function");
+
   // Collect operations to move (from first_load to last_store inclusive)
   llvm::SmallVector<Operation*> ops_to_move;
   bool collecting = false;
@@ -366,6 +370,10 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   auto func_op =
       func::FuncOp::create(top_level_module.getLoc(), func_name, func_type);
   func_op.setPrivate();
+  // Copy grid attribute from original function if it exists
+  if (auto grid_attr = original_func->getAttr("grid")) {
+    func_op->setAttr("grid", grid_attr);
+  }
   extracted_module.push_back(func_op);
 
   // Create a dummy function that calls the extracted function to prevent

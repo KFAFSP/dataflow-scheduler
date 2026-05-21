@@ -6,7 +6,7 @@
 // CHECK: #[[$ATTR_1:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK: #[[$ATTR_2:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 2 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK:   module {
-// CHECK:           func.func @add() {
+// CHECK:           func.func @add() attributes {grid = [2, 2]} {
 // CHECK:             call @"local-schedule-0"() : () -> ()
 // CHECK:             return
 // CHECK:           }
@@ -14,7 +14,7 @@
 // CHECK:         }
 
 // CHECK:   module {
-// CHECK:           func.func private @"local-schedule-0"() {
+// CHECK:           func.func private @"local-schedule-0"() attributes {grid = [2, 2]} {
 // CHECK:             %[[CONSTANT_0:.*]] = arith.constant 1024 : index
 // CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
 // CHECK:             %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
@@ -43,7 +43,7 @@
 
 
 module {
-  func.func @add() {
+  func.func @add() attributes {grid = [2, 2]} {
     %c0 = arith.constant 0 : index
     %tile_size = arith.constant 3 : index
     %A_start_address = arith.constant 1024 : index
