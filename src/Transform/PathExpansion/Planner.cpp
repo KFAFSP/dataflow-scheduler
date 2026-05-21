@@ -46,9 +46,18 @@ void validateFifoSlotIndex(mlir::Value orig_fifo_value,
           mlir::dyn_cast<mlir::OpResult>(orig_fifo_value)) {
     // Find which result index this was in the original private op
     unsigned orig_result_idx = orig_private_result.getResultNumber();
+    auto priv_op = orig_fifo_value.getDefiningOp<mlir::ktdf::PrivateOp>();
+    assert(priv_op);
+    mlir::ktdf::PrivateYieldOp yield = priv_op.getYieldOp();
+    assert(orig_result_idx < yield.getOperands().size());
+    mlir::Value fifo_slot_value = yield.getOperands()[orig_result_idx];
+    mlir::OpResult fifo_alloc_result =
+        mlir::dyn_cast<mlir::OpResult>(fifo_slot_value);
+    assert(fifo_alloc_result);
+
     // The slot index we assign should match the original result index
     // This ensures we maintain the same slot ordering as the original
-    assert(assigned_slot_idx == orig_result_idx &&
+    assert(assigned_slot_idx == fifo_alloc_result.getResultNumber() &&
            "expected result index to match our calculated fifo slot index");
   }
   // Sanity check: slot index should be within allocated slots
