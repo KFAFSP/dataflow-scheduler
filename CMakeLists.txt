@@ -81,4 +81,7 @@ endif()
 
 add_subdirectory(src)
 add_subdirectory(tools)
+
+add_custom_target(check-all)
+add_dependencies(check-all check-ktir)
 add_subdirectory(test)
