@@ -121,6 +121,46 @@ std::optional<ArchitectureGraph::Resource> inferResourceFromPrivateSpec(
   return std::nullopt;
 }
 
+/// Helper to infer resource from a stage by inspecting its first data transfer
+/// This is useful for intermediate stages that don't have anchor resources
+/// and aren't first or last stages
+std::optional<ArchitectureGraph::Resource> inferResourceFromStage(
+    mlir::ktdf::StageOp stage_op) {
+  if (!stage_op) return std::nullopt;
+
+  // Find the first data transfer operation in the stage
+  mlir::ktdf::DataTransferOp first_transfer = nullptr;
+  stage_op.walk([&](mlir::ktdf::DataTransferOp transfer_op) {
+    if (!first_transfer) {
+      first_transfer = transfer_op;
+      return mlir::WalkResult::interrupt();
+    }
+    return mlir::WalkResult::advance();
+  });
+
+  if (!first_transfer) return std::nullopt;
+
+  // Check if source is a FIFO - if so, this stage is consuming from that FIFO
+  if (auto source_type = first_transfer.getSource().getType()) {
+    if (auto fifo_type = mlir::dyn_cast<mlir::ktdf::FifoSlotType>(source_type)) {
+      // Stage is consuming from FIFO, so it's on the consumer side
+      return inferResourceFromFifoType(fifo_type.getFifoType(),
+                                       /*is_producer_side=*/false);
+    }
+  }
+
+  // Check if destination is a FIFO - if so, this stage is producing to that FIFO
+  if (auto dest_type = first_transfer.getDestination().getType()) {
+    if (auto fifo_type = mlir::dyn_cast<mlir::ktdf::FifoSlotType>(dest_type)) {
+      // Stage is producing to FIFO, so it's on the producer side
+      return inferResourceFromFifoType(fifo_type.getFifoType(),
+                                       /*is_producer_side=*/true);
+    }
+  }
+
+  return std::nullopt;
+}
+
 //===----------------------------------------------------------------------===//
 // Debug Output Helpers
 //===----------------------------------------------------------------------===//
@@ -587,6 +627,13 @@ static mlir::FailureOr<llvm::SmallVector<StageNode*>> legalizeStageConnections(
     } else if (i == original_sorted_stages.size() - 1 &&
                !current_summary.output_endpoints.empty()) {
       current_resource = current_summary.output_endpoints[0].resource;
+    } else {
+      // For intermediate stages without anchor resources, try to infer from
+      // the stage's data transfer operations
+      auto stage_op = mlir::dyn_cast<mlir::ktdf::StageOp>(current_stage->getOperation());
+      if (stage_op) {
+        current_resource = inferResourceFromStage(stage_op);
+      }
     }
 
     assert(current_resource && "Unable to determine resource for stage");
@@ -627,8 +674,19 @@ static mlir::FailureOr<llvm::SmallVector<StageNode*>> legalizeStageConnections(
       std::optional<ArchitectureGraph::Resource> next_resource;
       if (next_summary.anchor_resource) {
         next_resource = next_summary.anchor_resource;
-      } else if (!next_summary.output_endpoints.empty()) {
+      } else if (i + 1 == 0 && !next_summary.input_endpoints.empty()) {
+        next_resource = next_summary.input_endpoints[0].resource;
+      } else if (i + 1 == original_sorted_stages.size() - 1 &&
+               !next_summary.output_endpoints.empty()) {
         next_resource = next_summary.output_endpoints[0].resource;
+      } else {
+        // For intermediate stages without anchor resources, try to infer from
+        // the stage's data transfer operations
+        StageNode* next_stage = original_sorted_stages[i + 1];
+        auto next_stage_op = mlir::dyn_cast<mlir::ktdf::StageOp>(next_stage->getOperation());
+        if (next_stage_op) {
+          next_resource = inferResourceFromStage(next_stage_op);
+        }
       }
 
       assert(next_resource && "Unable to determine resource for next stage");
@@ -781,6 +839,16 @@ static mlir::LogicalResult analyzeStageTransfers(
         intermediate_is_source ? intermediate_resource : current_resource;
     transfer_info.dest_resource =
         intermediate_is_source ? current_resource : intermediate_resource;
+
+    // Copy indices and sizes from template transfer
+    transfer_info.source_indices.append(transfer.getSourceIndices().begin(),
+                                        transfer.getSourceIndices().end());
+    transfer_info.source_sizes.append(transfer.getSourceSizes().begin(),
+                                      transfer.getSourceSizes().end());
+    transfer_info.dest_indices.append(transfer.getDestIndices().begin(),
+                                      transfer.getDestIndices().end());
+    transfer_info.dest_sizes.append(transfer.getDestSizes().begin(),
+                                    transfer.getDestSizes().end());
 
     // Link the buffer spec
     if (intermediate_is_source) {
@@ -995,6 +1063,10 @@ static mlir::LogicalResult analyzeFifoOperations(
       transfer_info.hop = *edge;
       transfer_info.source_resource = source_resource;
       transfer_info.dest_resource = dest_resource;
+
+      // Note: FIFO operations (read_from_fifo/write_to_fifo) don't have
+      // indices and sizes - they work with tensors. The indices and sizes
+      // will remain empty for these operations.
 
       // Link the FIFO spec to the appropriate side
       if (is_read) {
