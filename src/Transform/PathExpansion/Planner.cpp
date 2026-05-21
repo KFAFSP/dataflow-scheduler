@@ -105,6 +105,22 @@ std::optional<ArchitectureGraph::Resource> inferResourceFromFifoType(
   return std::nullopt;
 }
 
+/// Helper to infer resource from a PrivateResourceSpec
+/// For memory buffers, returns the memory resource
+/// For FIFOs, returns the resource on the specified side (producer or consumer)
+std::optional<ArchitectureGraph::Resource> inferResourceFromPrivateSpec(
+    const PrivateResourceSpec* spec, bool is_producer_side) {
+  if (!spec) return std::nullopt;
+  
+  if (spec->kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
+    return spec->memory_resource;
+  } else if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
+    return inferResourceFromFifoType(spec->fifo_type, is_producer_side);
+  }
+  
+  return std::nullopt;
+}
+
 //===----------------------------------------------------------------------===//
 // Debug Output Helpers
 //===----------------------------------------------------------------------===//
@@ -1063,41 +1079,12 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       // Create corresponding transfer for intermediate stage
       // This transfer goes FROM the intermediate resource TO the next stage
 
-      // Get next stage's resource
-      assert(plan->stage_info.count(next_stage) &&
-             "Next stage should have info");
-      ArchitectureGraph::Resource next_resource =
-          *plan->stage_info[next_stage].stage_resource;
-
-      // Get edge info for intermediate -> next hop
-      ArchitectureGraph::NodeId intermediate_node =
-          arch_graph.getNodeIdForResource(intermediate_resource);
-      ArchitectureGraph::NodeId next_node =
-          arch_graph.getNodeIdForResource(next_resource);
-
-      std::optional<ArchitectureGraph::EdgeInfo> edge =
-          arch_graph.getEdgeInfo(intermediate_node, next_node);
-
-      assert(edge && "Edge should exist for legal hop");
-
-      // Create transfer info for intermediate stage
-      TransferMaterializationInfo transfer_info;
-      transfer_info.template_op = nullptr;  // Synthetic transfer, no template
-      transfer_info.hop = *edge;
-      transfer_info.source_resource = intermediate_resource;
-      transfer_info.dest_resource = next_resource;
-
       // Reuse the private resource from prev_transfer's destination as our
       // source
       assert(prev_transfer.dest_private_resource);
-      transfer_info.source_private_resource =
+      const PrivateResourceSpec* source_resource_spec =
           prev_transfer.dest_private_resource;
-      transfer_info.source_slot_index = prev_transfer.dest_slot_index;
 
-      // Copy indices and sizes from prev_transfer's destination
-      // The intermediate stage reads from what the previous stage wrote to
-      transfer_info.source_indices = prev_transfer.dest_indices;
-      transfer_info.source_sizes = prev_transfer.dest_sizes;
 
       // Look for matching transfer in next stage to get destination resource
       // Find a transfer in next_stage that has intermediate_resource as source
@@ -1121,6 +1108,37 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
         }
       }
       assert(dest_resource_spec);
+
+      // Infer actual source and destination resources from the private resource specs
+      std::optional<ArchitectureGraph::Resource> inferred_source_resource =
+          inferResourceFromPrivateSpec(source_resource_spec, true);  // producer side
+      std::optional<ArchitectureGraph::Resource> inferred_dest_resource =
+          inferResourceFromPrivateSpec(dest_resource_spec, false);  // consumer side
+      
+      assert(inferred_source_resource && inferred_dest_resource &&
+             "Should be able to infer resources from private specs");
+
+      // Get edge info for the actual hop
+      ArchitectureGraph::NodeId source_node =
+          arch_graph.getNodeIdForResource(*inferred_source_resource);
+      ArchitectureGraph::NodeId dest_node =
+          arch_graph.getNodeIdForResource(*inferred_dest_resource);
+
+      std::optional<ArchitectureGraph::EdgeInfo> edge =
+          arch_graph.getEdgeInfo(source_node, dest_node);
+
+      assert(edge && "Edge should exist for legal hop");
+
+      // Create transfer info for intermediate stage
+      TransferMaterializationInfo transfer_info;
+      transfer_info.template_op = nullptr;  // Synthetic transfer, no template
+      transfer_info.hop = *edge;
+      transfer_info.source_resource = *inferred_source_resource;
+      transfer_info.dest_resource = *inferred_dest_resource;
+      transfer_info.source_private_resource = source_resource_spec;
+      transfer_info.source_slot_index = prev_transfer.dest_slot_index;
+      transfer_info.source_indices = prev_transfer.dest_indices;
+      transfer_info.source_sizes = prev_transfer.dest_sizes;
       transfer_info.dest_private_resource = dest_resource_spec;
       transfer_info.dest_slot_index = dest_slot_idx;
       transfer_info.dest_indices = dest_indices_from_next;
@@ -1131,9 +1149,9 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       LLVM_DEBUG({
         llvm::dbgs() << "    Created transfer: "
                      << ArchitectureGraph::stringifyResource(
-                            intermediate_resource)
+                            *inferred_source_resource)
                      << " -> "
-                     << ArchitectureGraph::stringifyResource(next_resource);
+                     << ArchitectureGraph::stringifyResource(*inferred_dest_resource);
         if (transfer_info.source_private_resource) {
           llvm::dbgs() << " (source: ";
           if (transfer_info.source_private_resource->kind ==
