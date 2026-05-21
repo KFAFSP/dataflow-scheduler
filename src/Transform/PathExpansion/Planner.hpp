@@ -202,7 +202,7 @@ struct StageMaterializationInfo {
   llvm::SmallVector<TransferMaterializationInfo, 4> transfers;
   
   // which unit this stage runs on
-  mlir::ktdf::ComponentType applicable_unit;
+  std::optional<mlir::ktdf::ComponentType> applicable_unit;
 
   void print(llvm::raw_ostream &os) const;
   void dump() const;

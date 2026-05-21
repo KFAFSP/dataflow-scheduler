@@ -111,13 +111,13 @@ std::optional<ArchitectureGraph::Resource> inferResourceFromFifoType(
 std::optional<ArchitectureGraph::Resource> inferResourceFromPrivateSpec(
     const PrivateResourceSpec* spec, bool is_producer_side) {
   if (!spec) return std::nullopt;
-  
+
   if (spec->kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
     return spec->memory_resource;
   } else if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
     return inferResourceFromFifoType(spec->fifo_type, is_producer_side);
   }
-  
+
   return std::nullopt;
 }
 
@@ -268,8 +268,12 @@ void StageMaterializationInfo::print(llvm::raw_ostream& os) const {
       os << "SyntheticTransfer";
       break;
   }
-  os << ", applicable_unit:"
-     << mlir::ktdf::stringifyComponentType(applicable_unit);
+  os << ", applicable_unit:";
+  if (applicable_unit.has_value()) {
+    os << mlir::ktdf::stringifyComponentType(*applicable_unit);
+  } else {
+    os << "none";
+  }
   os << ", transfers=" << transfers.size();
 
 #if 1
@@ -692,6 +696,127 @@ static mlir::FailureOr<llvm::SmallVector<StageNode*>> legalizeStageConnections(
 // Step 2: Analyze Original Stage Transfers
 //===----------------------------------------------------------------------===//
 
+/// Step 2 (single stage): Analyze data transfers in a stage that faces
+/// intermediate stages.
+static mlir::LogicalResult analyzeStageTransfers(
+    StageNode* current_stage, StageNode* prev_stage, StageNode* next_stage,
+    const ArchitectureGraph& arch_graph, StageMaterializationInfo& stage_info,
+    PathExpansionPlan* plan) {
+  bool prev_is_intermediate =
+      prev_stage && (prev_stage->getOperation() == nullptr);
+  bool next_is_intermediate =
+      next_stage && (next_stage->getOperation() == nullptr);
+
+  // If this stage doesn't face any intermediate stages, skip it
+  if (!prev_is_intermediate && !next_is_intermediate) {
+    return mlir::success();
+  }
+
+  // Walk through data transfer operations
+  mlir::ktdf::StageOp stage_op =
+      mlir::cast<mlir::ktdf::StageOp>(current_stage->getOperation());
+
+  stage_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
+    mlir::Type src_type = transfer.getSource().getType();
+    mlir::Type dest_type = transfer.getDestination().getType();
+
+    // Determine if this transfer involves an intermediate stage
+    // Transfers to/from intermediate stages will have memref types on one
+    // side
+    bool src_is_memref = mlir::isa<mlir::MemRefType>(src_type);
+    bool dest_is_memref = mlir::isa<mlir::MemRefType>(dest_type);
+
+    // Skip if both are memrefs or neither (not facing intermediate)
+    if (src_is_memref == dest_is_memref) {
+      return mlir::WalkResult::advance();
+    }
+
+    // Determine which side is the intermediate memory resource
+    ArchitectureGraph::Resource intermediate_resource;
+    ArchitectureGraph::Resource current_resource = *stage_info.stage_resource;
+    bool intermediate_is_source =
+        prev_is_intermediate;  // assumes at most one intermediate node in
+                               // between every pair of original stages.
+    if (prev_is_intermediate) {
+      assert(plan->stage_info.count(prev_stage) &&
+             "Intermediate stage should have info");
+      intermediate_resource = *plan->stage_info[prev_stage].stage_resource;
+    } else if (next_is_intermediate) {
+      assert(plan->stage_info.count(next_stage) &&
+             "Intermediate stage should have info");
+      intermediate_resource = *plan->stage_info[next_stage].stage_resource;
+    }
+
+    mlir::MemRefType memref_type =
+        src_is_memref ? mlir::cast<mlir::MemRefType>(src_type)
+                      : mlir::cast<mlir::MemRefType>(dest_type);
+
+    // Create memory buffer spec for the intermediate resource
+    PrivateResourceSpec* buffer_spec =
+        plan->resource_factory.createMemoryBuffer(intermediate_resource,
+                                                  memref_type.getShape(),
+                                                  memref_type.getElementType());
+
+    // Get architecture edge info
+    ArchitectureGraph::NodeId intermediate_node =
+        arch_graph.getNodeIdForResource(intermediate_resource);
+    ArchitectureGraph::NodeId current_node =
+        arch_graph.getNodeIdForResource(current_resource);
+
+    ArchitectureGraph::NodeId src_node =
+        intermediate_is_source ? intermediate_node : current_node;
+    ArchitectureGraph::NodeId dest_node =
+        intermediate_is_source ? current_node : intermediate_node;
+
+    std::optional<ArchitectureGraph::EdgeInfo> edge =
+        arch_graph.getEdgeInfo(src_node, dest_node);
+
+    assert(edge && "Edge should exist for legal hop");
+
+    // Create transfer materialization info
+    TransferMaterializationInfo transfer_info;
+    transfer_info.template_op = transfer;
+    transfer_info.hop = *edge;
+    transfer_info.source_resource =
+        intermediate_is_source ? intermediate_resource : current_resource;
+    transfer_info.dest_resource =
+        intermediate_is_source ? current_resource : intermediate_resource;
+
+    // Link the buffer spec
+    if (intermediate_is_source) {
+      transfer_info.source_private_resource = buffer_spec;
+      transfer_info.source_slot_index = 0;  // Memory buffers use slot 0
+    } else {
+      transfer_info.dest_private_resource = buffer_spec;
+      transfer_info.dest_slot_index = 0;  // Memory buffers use slot 0
+    }
+
+    stage_info.transfers.push_back(transfer_info);
+
+    // Update stage kind to kAdaptTransfer since we're modifying transfers
+    if (stage_info.kind == StageMaterializationInfo::Kind::kPreserveOriginal) {
+      stage_info.kind = StageMaterializationInfo::Kind::kAdaptTransfer;
+    }
+
+    LLVM_DEBUG({
+      llvm::dbgs() << "  Stage " << current_stage->getStageId()
+                   << ": Created buffer spec for "
+                   << ArchitectureGraph::stringifyResource(
+                          intermediate_resource)
+                   << " shape=[";
+      for (size_t j = 0; j < buffer_spec->shape.size(); ++j) {
+        llvm::dbgs() << buffer_spec->shape[j];
+        if (j + 1 < buffer_spec->shape.size()) llvm::dbgs() << "x";
+      }
+      llvm::dbgs() << "], element=" << memref_type.getElementType() << "\n";
+    });
+
+    return mlir::WalkResult::advance();
+  });
+
+  return mlir::success();
+}
+
 /// Step 2: Analyze data transfers in original stages that are
 /// intermediate-stage facing, and for each data transfer create a
 /// TransferMaterializationInfo in the StageMaterializationInfo::transfers list
@@ -723,118 +848,11 @@ static mlir::LogicalResult analyzeOriginalStageTransfers(
     StageNode* next_stage =
         (i + 1 < sorted_stages.size()) ? sorted_stages[i + 1] : nullptr;
 
-    bool prev_is_intermediate =
-        prev_stage && (prev_stage->getOperation() == nullptr);
-    bool next_is_intermediate =
-        next_stage && (next_stage->getOperation() == nullptr);
-
-    // If this stage doesn't face any intermediate stages, skip it
-    if (!prev_is_intermediate && !next_is_intermediate) {
-      continue;
+    if (mlir::failed(analyzeStageTransfers(current_stage, prev_stage,
+                                           next_stage, arch_graph, stage_info,
+                                           plan))) {
+      return mlir::failure();
     }
-
-    // Walk through data transfer operations
-    mlir::ktdf::StageOp stage_op =
-        mlir::cast<mlir::ktdf::StageOp>(current_stage->getOperation());
-
-    stage_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
-      mlir::Type src_type = transfer.getSource().getType();
-      mlir::Type dest_type = transfer.getDestination().getType();
-
-      // Determine if this transfer involves an intermediate stage
-      // Transfers to/from intermediate stages will have memref types on one
-      // side
-      bool src_is_memref = mlir::isa<mlir::MemRefType>(src_type);
-      bool dest_is_memref = mlir::isa<mlir::MemRefType>(dest_type);
-
-      // Skip if both are memrefs or neither (not facing intermediate)
-      if (src_is_memref == dest_is_memref) {
-        return mlir::WalkResult::advance();
-      }
-
-      // Determine which side is the intermediate memory resource
-      ArchitectureGraph::Resource intermediate_resource;
-      ArchitectureGraph::Resource current_resource = *stage_info.stage_resource;
-      bool intermediate_is_source =
-          prev_is_intermediate;  // assumes at most one intermediate node in
-                                 // between every pair of original stages.
-      if (prev_is_intermediate) {
-        assert(plan->stage_info.count(prev_stage) &&
-               "Intermediate stage should have info");
-        intermediate_resource = *plan->stage_info[prev_stage].stage_resource;
-      } else if (next_is_intermediate) {
-        assert(plan->stage_info.count(next_stage) &&
-               "Intermediate stage should have info");
-        intermediate_resource = *plan->stage_info[next_stage].stage_resource;
-      }
-
-      mlir::MemRefType memref_type =
-          src_is_memref ? mlir::cast<mlir::MemRefType>(src_type)
-                        : mlir::cast<mlir::MemRefType>(dest_type);
-
-      // Create memory buffer spec for the intermediate resource
-      PrivateResourceSpec* buffer_spec =
-          plan->resource_factory.createMemoryBuffer(
-              intermediate_resource, memref_type.getShape(),
-              memref_type.getElementType());
-
-      // Get architecture edge info
-      ArchitectureGraph::NodeId intermediate_node =
-          arch_graph.getNodeIdForResource(intermediate_resource);
-      ArchitectureGraph::NodeId current_node =
-          arch_graph.getNodeIdForResource(current_resource);
-
-      ArchitectureGraph::NodeId src_node =
-          intermediate_is_source ? intermediate_node : current_node;
-      ArchitectureGraph::NodeId dest_node =
-          intermediate_is_source ? current_node : intermediate_node;
-
-      std::optional<ArchitectureGraph::EdgeInfo> edge =
-          arch_graph.getEdgeInfo(src_node, dest_node);
-
-      assert(edge && "Edge should exist for legal hop");
-
-      // Create transfer materialization info
-      TransferMaterializationInfo transfer_info;
-      transfer_info.template_op = transfer;
-      transfer_info.hop = *edge;
-      transfer_info.source_resource =
-          intermediate_is_source ? intermediate_resource : current_resource;
-      transfer_info.dest_resource =
-          intermediate_is_source ? current_resource : intermediate_resource;
-
-      // Link the buffer spec
-      if (intermediate_is_source) {
-        transfer_info.source_private_resource = buffer_spec;
-        transfer_info.source_slot_index = 0;  // Memory buffers use slot 0
-      } else {
-        transfer_info.dest_private_resource = buffer_spec;
-        transfer_info.dest_slot_index = 0;  // Memory buffers use slot 0
-      }
-
-      stage_info.transfers.push_back(transfer_info);
-
-      // Update stage kind to kAdaptTransfer since we're modifying transfers
-      if (stage_info.kind ==
-          StageMaterializationInfo::Kind::kPreserveOriginal) {
-        stage_info.kind = StageMaterializationInfo::Kind::kAdaptTransfer;
-      }
-
-      LLVM_DEBUG({
-        llvm::dbgs() << "  Stage " << current_stage->getStageId()
-                     << ": Created buffer spec for "
-                     << ArchitectureGraph::stringifyResource(
-                            intermediate_resource)
-                     << " shape=[";
-        for (size_t j = 0; j < buffer_spec->shape.size(); ++j) {
-          llvm::dbgs() << buffer_spec->shape[j];
-          if (j + 1 < buffer_spec->shape.size()) llvm::dbgs() << "x";
-        }
-        llvm::dbgs() << "], element=" << memref_type.getElementType() << "\n";
-      });
-
-      return mlir::WalkResult::advance();
-    });
   }
 
   return mlir::success();
@@ -1085,7 +1103,6 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       const PrivateResourceSpec* source_resource_spec =
           prev_transfer.dest_private_resource;
 
-
       // Look for matching transfer in next stage to get destination resource
       // Find a transfer in next_stage that has intermediate_resource as source
       const PrivateResourceSpec* dest_resource_spec = nullptr;
@@ -1109,12 +1126,15 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       }
       assert(dest_resource_spec);
 
-      // Infer actual source and destination resources from the private resource specs
+      // Infer actual source and destination resources from the private resource
+      // specs
       std::optional<ArchitectureGraph::Resource> inferred_source_resource =
-          inferResourceFromPrivateSpec(source_resource_spec, true);  // producer side
+          inferResourceFromPrivateSpec(source_resource_spec,
+                                       true);  // producer side
       std::optional<ArchitectureGraph::Resource> inferred_dest_resource =
-          inferResourceFromPrivateSpec(dest_resource_spec, false);  // consumer side
-      
+          inferResourceFromPrivateSpec(dest_resource_spec,
+                                       false);  // consumer side
+
       assert(inferred_source_resource && inferred_dest_resource &&
              "Should be able to infer resources from private specs");
 
@@ -1147,11 +1167,11 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       stage_info.transfers.push_back(transfer_info);
 
       LLVM_DEBUG({
-        llvm::dbgs() << "    Created transfer: "
-                     << ArchitectureGraph::stringifyResource(
-                            *inferred_source_resource)
-                     << " -> "
-                     << ArchitectureGraph::stringifyResource(*inferred_dest_resource);
+        llvm::dbgs()
+            << "    Created transfer: "
+            << ArchitectureGraph::stringifyResource(*inferred_source_resource)
+            << " -> "
+            << ArchitectureGraph::stringifyResource(*inferred_dest_resource);
         if (transfer_info.source_private_resource) {
           llvm::dbgs() << " (source: ";
           if (transfer_info.source_private_resource->kind ==
@@ -1174,6 +1194,131 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
         }
         llvm::dbgs() << "\n";
       });
+    }
+  }
+
+  return mlir::success();
+}
+
+//===----------------------------------------------------------------------===//
+// Step 5: Assign Applicable Units
+//===----------------------------------------------------------------------===//
+
+/// Step 5 (single stage): Assign applicable unit to a stage based on its
+/// transfer source/dest resources. For transfer stages, query the architecture
+/// graph to get the transfer unit (component) that handles the transfer between
+/// the source and destination resources. For example: LX -> SFP uses LXLU, SFP
+/// -> LX uses LXSU. For non-transfer stages, use the anchor resource if
+/// available, otherwise use the first transfer.
+static mlir::LogicalResult assignApplicableUnit(
+    StageNode* stage, const ArchitectureGraph& arch_graph,
+    StageMaterializationInfo& stage_info) {
+  // Skip if already has an applicable unit assigned
+  if (stage_info.applicable_unit.has_value()) {
+    return mlir::success();
+  }
+
+  // Determine the applicable unit based on stage kind
+  if (stage_info.kind == StageMaterializationInfo::Kind::kAdaptTransfer ||
+      stage_info.kind == StageMaterializationInfo::Kind::kSyntheticTransfer) {
+    // For transfer stages, use the transfer unit from the architecture graph
+    if (stage_info.transfers.empty()) return mlir::success();
+
+    const TransferMaterializationInfo& transfer = stage_info.transfers[0];
+
+    // Query the architecture graph for the edge between source and dest
+    ArchitectureGraph::NodeId source_node =
+        arch_graph.getNodeIdForResource(transfer.source_resource);
+    ArchitectureGraph::NodeId dest_node =
+        arch_graph.getNodeIdForResource(transfer.dest_resource);
+
+    std::optional<ArchitectureGraph::EdgeInfo> edge =
+        arch_graph.getEdgeInfo(source_node, dest_node);
+
+    if (!edge) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "  Warning: No edge found for "
+                 << ArchitectureGraph::stringifyResource(
+                        transfer.source_resource)
+                 << " -> "
+                 << ArchitectureGraph::stringifyResource(transfer.dest_resource)
+                 << "\n");
+      return mlir::success();
+    }
+
+    // Assign the transfer unit as the applicable unit
+    if (edge->transfer_unit) {
+      stage_info.applicable_unit = *edge->transfer_unit;
+      LLVM_DEBUG(llvm::dbgs()
+                 << "  Stage " << stage->getStageId()
+                 << ": Assigned applicable unit "
+                 << mlir::ktdf::stringifyComponentType(*edge->transfer_unit)
+                 << " for "
+                 << ArchitectureGraph::stringifyResource(
+                        transfer.source_resource)
+                 << " -> "
+                 << ArchitectureGraph::stringifyResource(transfer.dest_resource)
+                 << "\n");
+    }
+  } else {
+    // For non-transfer stages (kPreserveOriginal, kAdaptFifoKinds)
+    // Use the stage resource if available
+    if (stage_info.stage_resource) {
+      ArchitectureGraph::Resource resource = *stage_info.stage_resource;
+
+      // Map resource to component type
+      // For compute resources, the component is the resource itself
+      if (resource == ArchitectureGraph::Resource::SFP) {
+        stage_info.applicable_unit = mlir::ktdf::ComponentType::SFP;
+        LLVM_DEBUG(llvm::dbgs()
+                   << "  Stage " << stage->getStageId()
+                   << ": Assigned applicable unit SFP from stage resource\n");
+      } else if (resource == ArchitectureGraph::Resource::PE) {
+        stage_info.applicable_unit = mlir::ktdf::ComponentType::PE;
+        LLVM_DEBUG(llvm::dbgs()
+                   << "  Stage " << stage->getStageId()
+                   << ": Assigned applicable unit PE from stage resource\n");
+      }
+      // Memory resources (HBM, LX) don't have a direct component mapping
+    } else if (!stage_info.transfers.empty()) {
+      // Fallback: use the first transfer's edge to determine the unit
+      const TransferMaterializationInfo& transfer = stage_info.transfers[0];
+
+      ArchitectureGraph::NodeId source_node =
+          arch_graph.getNodeIdForResource(transfer.source_resource);
+      ArchitectureGraph::NodeId dest_node =
+          arch_graph.getNodeIdForResource(transfer.dest_resource);
+
+      std::optional<ArchitectureGraph::EdgeInfo> edge =
+          arch_graph.getEdgeInfo(source_node, dest_node);
+
+      if (edge && edge->transfer_unit) {
+        stage_info.applicable_unit = *edge->transfer_unit;
+        LLVM_DEBUG(llvm::dbgs()
+                   << "  Stage " << stage->getStageId()
+                   << ": Assigned applicable unit "
+                   << mlir::ktdf::stringifyComponentType(*edge->transfer_unit)
+                   << " from first transfer\n");
+      }
+    }
+  }
+
+  return mlir::success();
+}
+
+/// Step 5: Assign applicable units to all stages.
+static mlir::LogicalResult assignApplicableUnits(
+    llvm::ArrayRef<StageNode*> sorted_stages,
+    const ArchitectureGraph& arch_graph, PathExpansionPlan* plan) {
+  LLVM_DEBUG(llvm::dbgs() << "Assigning applicable units for "
+                          << sorted_stages.size() << " stages\n");
+
+  for (StageNode* stage : sorted_stages) {
+    // Skip stages that don't have materialization info
+    if (plan->stage_info.count(stage) == 0) continue;
+    StageMaterializationInfo& stage_info = plan->stage_info[stage];
+    if (mlir::failed(assignApplicableUnit(stage, arch_graph, stage_info))) {
+      return mlir::failure();
     }
   }
 
@@ -1351,6 +1496,15 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   }
   LLVM_DEBUG(debugPrintStageList(llvm::dbgs(), expanded_stages, plan.get(),
                                  "After Step 4"));
+
+  // STEP 5: Assign applicable units
+  LLVM_DEBUG(llvm::dbgs() << "\n=== Step 5: Assign Applicable Units ===\n");
+  if (mlir::failed(
+          assignApplicableUnits(expanded_stages, arch_graph, plan.get()))) {
+    return nullptr;
+  }
+  LLVM_DEBUG(debugPrintStageList(llvm::dbgs(), expanded_stages, plan.get(),
+                                 "After Step 5"));
 
   // Final summary
   LLVM_DEBUG({

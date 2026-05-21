@@ -498,9 +498,9 @@ mlir::ktdf::StageOp PathExpansionMaterializer::materializeStageNode(
   if (info_it != stage_info_.end() &&
       info_it->second.kind !=
           StageMaterializationInfo::Kind::kPreserveOriginal) {
-    if (info_it->second.applicable_unit != mlir::ktdf::ComponentType{}) {
+    if (info_it->second.applicable_unit.has_value()) {
       llvm::SmallVector<mlir::ktdf::ComponentType> units = {
-          info_it->second.applicable_unit};
+          *info_it->second.applicable_unit};
       auto applicable_units_attr = mlir::ktdf::ApplicableUnitsCustomAttr::get(
           builder_.getContext(), units);
       new_stage.setApplicableUnitsAttr(applicable_units_attr);
