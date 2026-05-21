@@ -170,6 +170,13 @@ struct TransferMaterializationInfo {
   // For memory buffers: always 0 (single SSA value)
   size_t source_slot_index = 0;
   size_t dest_slot_index = 0;
+  
+  // Indices and sizes for the transfer (captured from template or neighboring transfers)
+  // These are stored as Values that will be materialized during code generation
+  llvm::SmallVector<mlir::Value> source_indices;
+  llvm::SmallVector<mlir::Value> source_sizes;
+  llvm::SmallVector<mlir::Value> dest_indices;
+  llvm::SmallVector<mlir::Value> dest_sizes;
 
   void print(llvm::raw_ostream &os) const;
   void dump() const;
@@ -192,7 +199,7 @@ struct StageMaterializationInfo {
   
   // For AdaptFifoKinds, AdaptTransfer, and SyntheticTransfer:
   // Contains transfer operations with pointers to private resources
-  llvm::SmallVector<TransferMaterializationInfo> transfers;
+  llvm::SmallVector<TransferMaterializationInfo, 4> transfers;
   
   // which unit this stage runs on
   mlir::ktdf::ComponentType applicable_unit;

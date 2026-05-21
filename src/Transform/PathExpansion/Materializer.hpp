@@ -104,6 +104,10 @@ class PathExpansionMaterializer {
   void adaptStageBodyFifoKinds(mlir::ktdf::StageOp orig_stage,
                                const StageMaterializationInfo& info);
 
+  /// Helper to adapt transfer stage with new source/dest resources (for kAdaptTransfer)
+  void adaptTransferStage(mlir::ktdf::StageOp orig_stage,
+                         const StageMaterializationInfo& info);
+
   /// Helper to synthesize a new transfer stage (for kSyntheticTransfer)
   void synthesizeTransferStage(const StageMaterializationInfo& info);
 

@@ -196,7 +196,7 @@ void TransferMaterializationInfo::print(llvm::raw_ostream& os) const {
      << " -> " << ArchitectureGraph::stringifyResource(dest_resource);
 
   if (source_private_resource) {
-    os << ", source=";
+    os << ", priv_source=";
 #if 1
     source_private_resource->print(os);
 #else
@@ -209,7 +209,7 @@ void TransferMaterializationInfo::print(llvm::raw_ostream& os) const {
   }
 
   if (dest_private_resource) {
-    os << ", dest=";
+    os << ", priv_dest=";
 #if 1
     dest_private_resource->print(os);
 #else
@@ -1004,6 +1004,10 @@ static mlir::LogicalResult analyzeFifoOperations(
 /// stage, create a corresponding TransferMaterializationInfo for the
 /// intermediate stage, reusing the source/dest private resources and slot
 /// indexes from the corresponding transfer in the neighboring stage.
+/// Note: For a typical A -> B -> C chain where B is the intermediate stage,
+/// this assumes that for every data transfer in A there is a corresponding
+/// data/fifo transfer in C, and we are just adding a corresponding data
+/// transfer in B.
 static mlir::LogicalResult populateIntermediateStageTransfers(
     llvm::ArrayRef<StageNode*> sorted_stages,
     const ArchitectureGraph& arch_graph, PathExpansionPlan* plan) {
@@ -1050,6 +1054,8 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
     if (plan->stage_info.count(prev_stage) == 0) continue;
     StageMaterializationInfo& prev_info = plan->stage_info[prev_stage];
 
+    llvm::SmallPtrSet<const TransferMaterializationInfo*, 4>
+        visited_next_transfer;
     for (const TransferMaterializationInfo& prev_transfer :
          prev_info.transfers) {
       // Check if this transfer's destination is the intermediate resource
@@ -1083,32 +1089,42 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
 
       // Reuse the private resource from prev_transfer's destination as our
       // source
+      assert(prev_transfer.dest_private_resource);
       transfer_info.source_private_resource =
           prev_transfer.dest_private_resource;
       transfer_info.source_slot_index = prev_transfer.dest_slot_index;
+
+      // Copy indices and sizes from prev_transfer's destination
+      // The intermediate stage reads from what the previous stage wrote to
+      transfer_info.source_indices = prev_transfer.dest_indices;
+      transfer_info.source_sizes = prev_transfer.dest_sizes;
 
       // Look for matching transfer in next stage to get destination resource
       // Find a transfer in next_stage that has intermediate_resource as source
       const PrivateResourceSpec* dest_resource_spec = nullptr;
       size_t dest_slot_idx = 0;
-
-      if (plan->stage_info.count(next_stage)) {
-        StageMaterializationInfo& next_info = plan->stage_info[next_stage];
-        for (const TransferMaterializationInfo& next_transfer :
-             next_info.transfers) {
-          if (next_transfer.source_resource == intermediate_resource &&
-              next_transfer.source_private_resource ==
-                  transfer_info.source_private_resource) {
-            // Found matching transfer - use its destination
-            dest_resource_spec = next_transfer.dest_private_resource;
-            dest_slot_idx = next_transfer.dest_slot_index;
-            break;
-          }
+      llvm::SmallVector<mlir::Value> dest_indices_from_next;
+      llvm::SmallVector<mlir::Value> dest_sizes_from_next;
+      assert(plan->stage_info.count(next_stage));
+      StageMaterializationInfo& next_info = plan->stage_info[next_stage];
+      for (const TransferMaterializationInfo& next_transfer :
+           next_info.transfers) {
+        if (visited_next_transfer.contains(&next_transfer)) continue;
+        if (next_transfer.source_resource == intermediate_resource) {
+          // Found matching transfer - use its source and indices/sizes
+          dest_resource_spec = next_transfer.source_private_resource;
+          dest_slot_idx = next_transfer.source_slot_index;
+          dest_indices_from_next = next_transfer.source_indices;
+          dest_sizes_from_next = next_transfer.source_sizes;
+          visited_next_transfer.insert(&next_transfer);
+          break;
         }
       }
-
+      assert(dest_resource_spec);
       transfer_info.dest_private_resource = dest_resource_spec;
       transfer_info.dest_slot_index = dest_slot_idx;
+      transfer_info.dest_indices = dest_indices_from_next;
+      transfer_info.dest_sizes = dest_sizes_from_next;
 
       stage_info.transfers.push_back(transfer_info);
 

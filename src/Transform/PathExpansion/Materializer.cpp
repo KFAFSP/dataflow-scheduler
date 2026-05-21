@@ -525,22 +525,20 @@ mlir::ktdf::StageOp PathExpansionMaterializer::materializeStageNode(
 
     switch (info.kind) {
       case StageMaterializationInfo::Kind::kPreserveOriginal:
-        if (template_op) {
-          cloneStageBody(mlir::cast<mlir::ktdf::StageOp>(template_op));
-        }
+        assert(template_op);
+        cloneStageBody(mlir::cast<mlir::ktdf::StageOp>(template_op));
         break;
 
       case StageMaterializationInfo::Kind::kAdaptFifoKinds:
-        if (template_op) {
-          adaptStageBodyFifoKinds(mlir::cast<mlir::ktdf::StageOp>(template_op),
-                                  info);
-        }
+        assert(template_op);
+        adaptStageBodyFifoKinds(mlir::cast<mlir::ktdf::StageOp>(template_op),
+                                info);
         break;
 
       case StageMaterializationInfo::Kind::kAdaptTransfer:
-        // TODO: Implement transfer adaptation
-        // For now, treat as synthetic transfer
-        [[fallthrough]];
+        assert(template_op);
+        adaptTransferStage(mlir::cast<mlir::ktdf::StageOp>(template_op), info);
+        break;
 
       case StageMaterializationInfo::Kind::kSyntheticTransfer:
         synthesizeTransferStage(info);
@@ -660,17 +658,20 @@ void PathExpansionMaterializer::adaptStageBodyFifoKinds(
         const TransferMaterializationInfo& transfer_info = *it->second;
         assert(transfer_info.source_private_resource &&
                "read_from_fifo should have source private resource");
-        
+
         // Get the new FIFO slot
         const PrivateResourceAllocation* alloc =
-            resource_factory_.getAllocation(transfer_info.source_private_resource);
+            resource_factory_.getAllocation(
+                transfer_info.source_private_resource);
         assert(alloc && "Private resource should have been allocated");
         assert(transfer_info.source_slot_index < alloc->ssa_values.size());
-        mlir::Value new_fifo_slot = alloc->ssa_values[transfer_info.source_slot_index];
-        
+        mlir::Value new_fifo_slot =
+            alloc->ssa_values[transfer_info.source_slot_index];
+
         // Create new read_from_fifo with the new FIFO slot
         auto new_read = mlir::ktdf::ReadFromFifoOp::create(
-            builder_, read_op.getLoc(), read_op.getResult().getType(), new_fifo_slot);
+            builder_, read_op.getLoc(), read_op.getResult().getType(),
+            new_fifo_slot);
         value_map_.map(read_op.getResult(), new_read.getResult());
       } else {
         builder_.clone(op, value_map_);
@@ -682,17 +683,20 @@ void PathExpansionMaterializer::adaptStageBodyFifoKinds(
         const TransferMaterializationInfo& transfer_info = *it->second;
         assert(transfer_info.dest_private_resource &&
                "write_to_fifo should have dest private resource");
-        
+
         // Get the new FIFO slot
         const PrivateResourceAllocation* alloc =
-            resource_factory_.getAllocation(transfer_info.dest_private_resource);
+            resource_factory_.getAllocation(
+                transfer_info.dest_private_resource);
         assert(alloc && "Private resource should have been allocated");
         assert(transfer_info.dest_slot_index < alloc->ssa_values.size());
-        mlir::Value new_fifo_slot = alloc->ssa_values[transfer_info.dest_slot_index];
-        
+        mlir::Value new_fifo_slot =
+            alloc->ssa_values[transfer_info.dest_slot_index];
+
         // Create new write_to_fifo with the new FIFO slot
         mlir::Value data = materializeValue(write_op.getData());
-        mlir::ktdf::WriteToFifoOp::create(builder_, write_op.getLoc(), data, new_fifo_slot);
+        mlir::ktdf::WriteToFifoOp::create(builder_, write_op.getLoc(), data,
+                                          new_fifo_slot);
       } else {
         builder_.clone(op, value_map_);
       }
@@ -703,80 +707,155 @@ void PathExpansionMaterializer::adaptStageBodyFifoKinds(
   }
 }
 
+void PathExpansionMaterializer::adaptTransferStage(
+    mlir::ktdf::StageOp orig_stage, const StageMaterializationInfo& info) {
+  // Clone the stage body but adapt data_transfer operations to use new
+  // source/destination resources (typically LX memory buffers)
+  mlir::Block* orig_body = &orig_stage.getBody().front();
+
+  // Build a map from template ops to their transfer info
+  llvm::DenseMap<mlir::Operation*, const TransferMaterializationInfo*>
+      transfer_map;
+  for (const TransferMaterializationInfo& transfer_info : info.transfers) {
+    if (transfer_info.template_op) {
+      transfer_map[transfer_info.template_op] = &transfer_info;
+    }
+  }
+
+  for (mlir::Operation& op : *orig_body) {
+    if (op.hasTrait<mlir::OpTrait::IsTerminator>()) continue;
+
+    // Check if this is a data_transfer that needs adaptation
+    if (auto transfer_op = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(&op)) {
+      // Look up the transfer info for this operation
+      auto it = transfer_map.find(&op);
+      if (it != transfer_map.end()) {
+        const TransferMaterializationInfo& transfer_info = *it->second;
+        mlir::Location loc = transfer_op.getLoc();
+
+        // Get source - use private resource if specified, otherwise materialize
+        // from template
+        mlir::Value source;
+        if (transfer_info.source_private_resource) {
+          // Look up the allocated SSA value from the factory
+          const PrivateResourceAllocation* alloc =
+              resource_factory_.getAllocation(
+                  transfer_info.source_private_resource);
+          assert(alloc && "Private resource should have been allocated");
+          assert(transfer_info.source_slot_index < alloc->ssa_values.size() &&
+                 "Slot index out of bounds");
+          source = alloc->ssa_values[transfer_info.source_slot_index];
+        } else {
+          source = materializeValue(transfer_op.getSource());
+        }
+
+        // Get destination - use private resource if specified, otherwise
+        // materialize from template
+        mlir::Value destination;
+        if (transfer_info.dest_private_resource) {
+          // Look up the allocated SSA value from the factory
+          const PrivateResourceAllocation* alloc =
+              resource_factory_.getAllocation(
+                  transfer_info.dest_private_resource);
+          assert(alloc && "Private resource should have been allocated");
+          assert(transfer_info.dest_slot_index < alloc->ssa_values.size() &&
+                 "Slot index out of bounds");
+          destination = alloc->ssa_values[transfer_info.dest_slot_index];
+        } else {
+          destination = materializeValue(transfer_op.getDestination());
+        }
+
+        // Get indices and sizes from template
+        llvm::SmallVector<mlir::Value> source_indices;
+        for (mlir::Value idx : transfer_op.getSourceIndices()) {
+          source_indices.push_back(materializeValue(idx));
+        }
+
+        llvm::SmallVector<mlir::OpFoldResult> source_sizes;
+        for (mlir::Value size : transfer_op.getSourceSizes()) {
+          source_sizes.push_back(materializeValue(size));
+        }
+
+        llvm::SmallVector<mlir::Value> dest_indices;
+        for (mlir::Value idx : transfer_op.getDestIndices()) {
+          dest_indices.push_back(materializeValue(idx));
+        }
+
+        llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
+        for (mlir::Value size : transfer_op.getDestSizes()) {
+          dest_sizes.push_back(materializeValue(size));
+        }
+
+        // Create the adapted transfer operation
+        mlir::ktdf::DataTransferOp::create(
+            builder_, loc, source, source_indices, source_sizes, destination,
+            dest_indices, dest_sizes);
+      } else {
+        // No adaptation needed, clone as-is
+        builder_.clone(op, value_map_);
+      }
+    } else {
+      // Clone other operations as-is (should not have compute ops in transfer
+      // stages)
+      builder_.clone(op, value_map_);
+    }
+  }
+}
+
 void PathExpansionMaterializer::synthesizeTransferStage(
     const StageMaterializationInfo& info) {
   // Synthesize new data transfer operations based on transfer info
   for (const TransferMaterializationInfo& transfer_info : info.transfers) {
-    if (transfer_info.template_op) {
-      // Clone and adapt the template transfer
-      mlir::Operation* template_op = transfer_info.template_op;
-      mlir::Location loc = template_op->getLoc();
+    mlir::Location loc = transfer_info.template_op
+                             ? transfer_info.template_op->getLoc()
+                             : builder_.getUnknownLoc();
 
-      // Cast to DataTransferOp to access its methods
-      auto template_transfer =
-          mlir::dyn_cast<mlir::ktdf::DataTransferOp>(template_op);
-      assert(template_transfer && "template_op should be a DataTransferOp");
+    // Get source - must be a private resource for synthetic transfers
+    assert(transfer_info.source_private_resource &&
+           "Synthetic transfer must have source private resource");
+    const PrivateResourceAllocation* source_alloc =
+        resource_factory_.getAllocation(transfer_info.source_private_resource);
+    assert(source_alloc && "Private resource should have been allocated");
+    assert(transfer_info.source_slot_index < source_alloc->ssa_values.size() &&
+           "Slot index out of bounds");
+    mlir::Value source =
+        source_alloc->ssa_values[transfer_info.source_slot_index];
 
-      // Get source - use private resource if specified, otherwise materialize
-      // from template
-      mlir::Value source;
-      if (transfer_info.source_private_resource) {
-        // Look up the allocated SSA value from the factory
-        const PrivateResourceAllocation* alloc =
-            resource_factory_.getAllocation(
-                transfer_info.source_private_resource);
-        assert(alloc && "Private resource should have been allocated");
-        assert(transfer_info.source_slot_index < alloc->ssa_values.size() &&
-               "Slot index out of bounds");
-        // Use the slot index specified in transfer info
-        source = alloc->ssa_values[transfer_info.source_slot_index];
-      } else {
-        source = materializeValue(template_transfer.getSource());
-      }
+    // Get destination - must be a private resource for synthetic transfers
+    assert(transfer_info.dest_private_resource &&
+           "Synthetic transfer must have dest private resource");
+    const PrivateResourceAllocation* dest_alloc =
+        resource_factory_.getAllocation(transfer_info.dest_private_resource);
+    assert(dest_alloc && "Private resource should have been allocated");
+    assert(transfer_info.dest_slot_index < dest_alloc->ssa_values.size() &&
+           "Slot index out of bounds");
+    mlir::Value destination =
+        dest_alloc->ssa_values[transfer_info.dest_slot_index];
 
-      // Get destination - use private resource if specified, otherwise
-      // materialize from template
-      mlir::Value destination;
-      if (transfer_info.dest_private_resource) {
-        // Look up the allocated SSA value from the factory
-        const PrivateResourceAllocation* alloc =
-            resource_factory_.getAllocation(
-                transfer_info.dest_private_resource);
-        assert(alloc && "Private resource should have been allocated");
-        assert(transfer_info.dest_slot_index < alloc->ssa_values.size() &&
-               "Slot index out of bounds");
-        // Use the slot index specified in transfer info
-        destination = alloc->ssa_values[transfer_info.dest_slot_index];
-      } else {
-        destination = materializeValue(template_transfer.getDestination());
-      }
+    // Get indices and sizes from transfer_info (captured by planner from
+    // neighboring transfers)
+    llvm::SmallVector<mlir::Value> source_indices;
+    llvm::SmallVector<mlir::OpFoldResult> source_sizes;
+    llvm::SmallVector<mlir::Value> dest_indices;
+    llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
 
-      // Get indices and sizes from template
-      llvm::SmallVector<mlir::Value> source_indices;
-      for (mlir::Value idx : template_transfer.getSourceIndices()) {
-        source_indices.push_back(materializeValue(idx));
-      }
-
-      llvm::SmallVector<mlir::OpFoldResult> source_sizes;
-      for (mlir::Value size : template_transfer.getSourceSizes()) {
-        source_sizes.push_back(materializeValue(size));
-      }
-
-      llvm::SmallVector<mlir::Value> dest_indices;
-      for (mlir::Value idx : template_transfer.getDestIndices()) {
-        dest_indices.push_back(materializeValue(idx));
-      }
-
-      llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
-      for (mlir::Value size : template_transfer.getDestSizes()) {
-        dest_sizes.push_back(materializeValue(size));
-      }
-
-      // Create the transfer operation with all required parameters
-      mlir::ktdf::DataTransferOp::create(builder_, loc, source, source_indices,
-                                         source_sizes, destination,
-                                         dest_indices, dest_sizes);
+    for (mlir::Value idx : transfer_info.source_indices) {
+      source_indices.push_back(materializeValue(idx));
     }
+    for (mlir::Value size : transfer_info.source_sizes) {
+      source_sizes.push_back(materializeValue(size));
+    }
+    for (mlir::Value idx : transfer_info.dest_indices) {
+      dest_indices.push_back(materializeValue(idx));
+    }
+    for (mlir::Value size : transfer_info.dest_sizes) {
+      dest_sizes.push_back(materializeValue(size));
+    }
+
+    // Create the transfer operation
+    mlir::ktdf::DataTransferOp::create(builder_, loc, source, source_indices,
+                                       source_sizes, destination, dest_indices,
+                                       dest_sizes);
   }
 }
 
