@@ -19,7 +19,16 @@ include "mlir/IR/OpBase.td"
 def Dataflow_Dialect : Dialect {
   let name = "dataflow";
   let cppNamespace = "::mlir::dataflow";
+  
   let useDefaultAttributePrinterParser = 1;
+
+  let dependentDialects = [
+    "arith::ArithDialect",
+    // These are used by Utils.cpp, and may require loading.
+    "affine::AffineDialect",
+    "scf::SCFDialect"
+  ];
+
   let extraClassDeclaration =  [{ 
     mlir::Type parseType(mlir::DialectAsmParser &parser) const override;
     void printType(mlir::Type type, mlir::DialectAsmPrinter &printer) const override;

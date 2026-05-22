@@ -29,7 +29,6 @@ add_ktir_dialect_library(KTIRKTDFDialect
 
 mlir_target_link_libraries(KTIRKTDFDialect PUBLIC
   MLIRIR
-  MLIRInferTypeOpInterface
   MLIRControlFlowInterfaces
   MLIRDialectUtils
   MLIRSCFDialect

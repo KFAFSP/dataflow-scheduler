@@ -31,5 +31,7 @@ add_ktir_dialect_library(KTIRAgenDialect
 
 mlir_target_link_libraries(KTIRAgenDialect PUBLIC
   MLIRIR
-  # TODO: Add dependencies.
+  # These are used by Utils.cpp, but do not require dialect loading.
+  MLIRAffineDialect
+  MLIRAffineAnalysis
 )

@@ -30,7 +30,12 @@ include "src/Dialects/VectorChain/VectorChainEnums.td"
 def VectorChain_Dialect : Dialect {
   let name = "vectorchain";
   let cppNamespace = "::mlir::vectorchain";
+
   let useDefaultAttributePrinterParser = 1;
+
+  let dependentDialects = [
+    "dataflow::DataflowDialect"
+  ];
 }
 
 def VectorChainBinaryOperatorAttr : EnumAttr<VectorChain_Dialect, VectorChainBinaryOperator, "binary_operator">;

@@ -26,7 +26,13 @@ include "src/Dialects/Agen/AgenEnums.td"
 def Agen_Dialect : Dialect {
   let name = "agen";
   let cppNamespace = "::mlir::agen";
+
   let useDefaultAttributePrinterParser = 1;
+
+  let dependentDialects = [
+    "dataflow::DataflowDialect",
+    "vectorchain::VectorChainDialect"
+  ];
 }
 
 // Base class for Agen dialect operations. This operation inherits from the

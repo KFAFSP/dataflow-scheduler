@@ -29,4 +29,8 @@ add_ktir_dialect_library(KTIRDataflowDialect
 mlir_target_link_libraries(KTIRDataflowDialect PUBLIC
   MLIRIR
   MLIRSCFDialect
+  MLIRArithDialect
+  MLIRAffineDialect
+  MLIRAffineAnalysis
+  MLIRSCFDialect
 )

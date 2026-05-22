@@ -30,5 +30,4 @@ add_ktir_dialect_library(KTIRVectorChainDialect
 
 mlir_target_link_libraries(KTIRVectorChainDialect PUBLIC
   MLIRIR
-  # TODO: Add dependencies.
 )

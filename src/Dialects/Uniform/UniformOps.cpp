@@ -13,11 +13,14 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "src/Dialects/Dataflow/DataflowOps.hpp"
-#include "src/Dialects/Uniform/UniformOpsDialect.cpp.inc"
 #include "src/OpTraits/OpTraits.hpp"
 #include "src/dt_exception.hpp"
+
 using namespace mlir;
 using namespace uniform;
+
+/// Auto-generated includes.
+#include "src/Dialects/Uniform/UniformOpsDialect.cpp.inc"
 
 //===----------------------------------------------------------------------===//
 // UniformDialect

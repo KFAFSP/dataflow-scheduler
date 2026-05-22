@@ -30,8 +30,13 @@ include "mlir/IR/OpBase.td"
 def KTDF_Dialect : Dialect {
   let name = "ktdf";
   let cppNamespace = "::mlir::ktdf";
+  
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
+
+  let dependentDialects = [
+    "scf::SCFDialect"
+  ];
 
   let extraClassDeclaration = [{
     void registerTypes();

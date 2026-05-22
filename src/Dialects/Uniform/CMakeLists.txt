@@ -17,5 +17,4 @@ add_ktir_dialect_library(KTIRUniformDialect
 
 mlir_target_link_libraries(KTIRUniformDialect PUBLIC
   MLIRIR
-  # TODO: Add dependencies.
 )

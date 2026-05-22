@@ -27,6 +27,10 @@ include "mlir/IR/BuiltinAttributes.td"
 def Uniform_Dialect : Dialect {
   let name = "uniform";
   let cppNamespace = "::mlir::uniform";
+
+  let dependentDialects = [
+    "dataflow::DataflowDialect"
+  ];
 }
 
 // Base class for Uniform dialect operations. This operation inherits from the

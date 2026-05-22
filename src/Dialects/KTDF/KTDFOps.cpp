@@ -19,7 +19,7 @@
 // This file defines the operations in the KTDF operation set.
 //
 //===----------------------------------------------------------------------===//
-#include "KTDFOps.hpp"
+#include "src/Dialects/KTDF/KTDFOps.hpp"
 
 #include <iostream>
 #include <iterator>
