@@ -51,10 +51,11 @@ namespace reuse {
 ///
 /// Returns the cloned image of `keep_anchor` (i.e., the surviving anchor
 /// in the target block's region tree).
-mlir::Operation *cloneRegionAndPruneToAnchor(
-    mlir::Region &source_region, mlir::Block *target_block,
-    mlir::Block::iterator ip, mlir::Operation *keep_anchor,
-    mlir::IRMapping &value_map);
+mlir::Operation* cloneRegionAndPruneToAnchor(mlir::Region& source_region,
+                                             mlir::Block* target_block,
+                                             mlir::Block::iterator ip,
+                                             mlir::Operation* keep_anchor,
+                                             mlir::IRMapping& value_map);
 
 }  // namespace reuse
 }  // namespace ktdf

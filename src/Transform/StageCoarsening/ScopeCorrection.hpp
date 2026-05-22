@@ -68,7 +68,8 @@ class ScopeCorrection {
   /// Find all inner pipelines
   llvm::SmallVector<mlir::ktdf::PipelineOp> findInnerPipelines();
 
-  /// Analyze which private results are only used in specific inner pipelines, and updates an internal mapping. 
+  /// Analyze which private results are only used in specific inner pipelines,
+  /// and updates an internal mapping.
   void analyzePrivateResultUsage();
 
   /// Move specified private results from outer private to inner pipeline
@@ -77,10 +78,12 @@ class ScopeCorrection {
 
   /// Helper to recreate a PrivateOp with new or different results
   ///
-  /// @param old_private The original private op to recreate (if null, creates a new empty private)
+  /// @param old_private The original private op to recreate (if null, creates a
+  /// new empty private)
   /// @param new_result_types The result types for the new private op
   /// @param ops_to_prepend Operations to clone at the beginning of the body
-  /// @param ops_to_exclude Operations from old body to skip (only used if old_private is non-null)
+  /// @param ops_to_exclude Operations from old body to skip (only used if
+  /// old_private is non-null)
   mlir::ktdf::PrivateOp recreatePrivateOp(
       mlir::ktdf::PrivateOp old_private,
       llvm::ArrayRef<mlir::Type> new_result_types,

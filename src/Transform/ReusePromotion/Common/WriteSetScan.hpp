@@ -50,8 +50,8 @@ namespace reuse {
 /// produce wrong IR — except when the op is actually a memref writer not
 /// on this list. New writer kinds should be added here as they appear in
 /// the codebase.)
-bool regionWritesTo(mlir::Region &region, mlir::Value memref,
-                    mlir::Operation *ignore = nullptr);
+bool regionWritesTo(mlir::Region& region, mlir::Value memref,
+                    mlir::Operation* ignore = nullptr);
 
 }  // namespace reuse
 }  // namespace ktdf

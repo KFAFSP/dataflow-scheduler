@@ -37,7 +37,6 @@ namespace ktdf {
 
 /// Represents a group of stages that should be coarsened together
 struct StageGroup {
-
   /// Add a stage to this group
   void addStage(mlir::ktdf::StageOp stage) { stages_.push_back(stage); }
 
@@ -59,7 +58,7 @@ struct StageGroup {
     return stages_;
   }
 
-  private:
+ private:
   /// Stages in this group (in program order)
   llvm::SmallVector<mlir::ktdf::StageOp> stages_;
 };
@@ -91,7 +90,6 @@ class StageGroupingAnalysis {
   void dump() const;
 
  private:
-
   void init(llvm::ArrayRef<mlir::ktdf::StageOp> stages);
 
   /// Collect all stages from the pipeline
@@ -101,8 +99,8 @@ class StageGroupingAnalysis {
   /// Determine if two stages should be grouped together
   /// Returns true if stages share SFP registers or FIFO types
   bool shouldGroupTogether(mlir::ktdf::StageOp stage1,
-                          mlir::ktdf::StageOp stage2);
-  
+                           mlir::ktdf::StageOp stage2);
+
   llvm::SmallVector<StageGroup> groups_;
   llvm::DenseMap<mlir::Operation*, unsigned> stage_to_group_;
 };
@@ -110,4 +108,3 @@ class StageGroupingAnalysis {
 }  // namespace ktdf
 
 #endif  // KTIR_SCHEDULER_TRANSFORM_STAGEGROUPING_HPP
-

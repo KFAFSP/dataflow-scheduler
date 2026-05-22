@@ -25,13 +25,13 @@
 #ifndef KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_MATERIALIZER_HPP
 #define KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_MATERIALIZER_HPP
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/OpDefinition.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallVector.h"
 #include "src/Analysis/PipelineTree.hpp"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 
@@ -55,25 +55,25 @@ class BufferCloner {
   /// default cloning behavior.
   ///
   /// \param orig_alloc The original allocation operation from the template
-  /// \param builder The builder positioned where the new alloc should be created
+  /// \param builder The builder positioned where the new alloc should be
+  /// created
   /// \param value_map The current value mapping for SSA values
   /// \return A new allocation operation, or nullptr to use default behavior
-  virtual mlir::memref::AllocOp cloneAllocOp(
-      mlir::memref::AllocOp orig_alloc,
-      mlir::OpBuilder& builder,
-      mlir::IRMapping& value_map) = 0;
+  virtual mlir::memref::AllocOp cloneAllocOp(mlir::memref::AllocOp orig_alloc,
+                                             mlir::OpBuilder& builder,
+                                             mlir::IRMapping& value_map) = 0;
 
   /// Called when materializing a data transfer operation.
   /// The cloner can return a custom transfer operation or nullptr to use
   /// default cloning behavior.
   ///
   /// \param orig_transfer The original data transfer operation
-  /// \param builder The builder positioned where the new transfer should be created
+  /// \param builder The builder positioned where the new transfer should be
+  /// created
   /// \param value_map The current value mapping for SSA values
   /// \return A new data transfer operation, or nullptr to use default behavior
   virtual mlir::ktdf::DataTransferOp cloneDataTransfer(
-      mlir::ktdf::DataTransferOp orig_transfer,
-      mlir::OpBuilder& builder,
+      mlir::ktdf::DataTransferOp orig_transfer, mlir::OpBuilder& builder,
       mlir::IRMapping& value_map) = 0;
 };
 
@@ -90,10 +90,11 @@ class PipelineTreeMaterializer {
   /// \param builder The MLIR builder for creating operations
   /// \param value_map The value mapping for SSA values
   /// \param buffer_cloner Optional cloner for customizing buffer operations
-  PipelineTreeMaterializer(mlir::OpBuilder& builder,
-                          mlir::IRMapping& value_map,
-                          materializer::BufferCloner* buffer_cloner = nullptr)
-      : builder_(builder), value_map_(value_map), buffer_cloner_(buffer_cloner) {}
+  PipelineTreeMaterializer(mlir::OpBuilder& builder, mlir::IRMapping& value_map,
+                           materializer::BufferCloner* buffer_cloner = nullptr)
+      : builder_(builder),
+        value_map_(value_map),
+        buffer_cloner_(buffer_cloner) {}
 
   /// Materialize the entire tree starting from the given node
   /// Returns the root operation created
@@ -103,17 +104,18 @@ class PipelineTreeMaterializer {
   /// Returns nullptr if the node hasn't been materialized yet
   mlir::Operation* getMaterializedOp(const PipelineTreeNode& node) const;
 
-  /// Check if an operation is allowed between nested loops (for bound computation)
-  /// Only allows: affine.apply, arith.addi, arith.subi, arith.minsi, arith.maxsi
+  /// Check if an operation is allowed between nested loops (for bound
+  /// computation) Only allows: affine.apply, arith.addi, arith.subi,
+  /// arith.minsi, arith.maxsi
   static bool isOpAllowedBetweenLoops(mlir::Operation* op);
 
  private:
-
   /// Check if an operation is in the same block as the template operation
   static bool isInSameBlock(mlir::Operation* op, mlir::Operation* template_op);
 
   /// Helper to materialize a value by cloning its defining operation if needed
-  /// This handles cases where loop bounds are computed by arith/affine operations
+  /// This handles cases where loop bounds are computed by arith/affine
+  /// operations
   mlir::Value materializeValue(mlir::Value value, mlir::Operation* template_op);
 
   /// Materialize a loop node by creating an scf.for operation
@@ -123,7 +125,8 @@ class PipelineTreeMaterializer {
   mlir::ktdf::StageOp materializeStageNode(const StageNode& stage_node);
 
   /// Materialize a pipeline node by creating a ktdf.pipeline operation
-  mlir::ktdf::PipelineOp materializePipelineNode(const PipelineNode& pipeline_node);
+  mlir::ktdf::PipelineOp materializePipelineNode(
+      const PipelineNode& pipeline_node);
 
   /// Materialize a private node by cloning its operations
   void materializePrivateNode(const PrivateNode& private_node);
@@ -152,23 +155,24 @@ class PipelineTreeMaterializer {
   /// Helper to build stage-to-token mapping
   void buildStageToTokenMapping(
       const llvm::SmallVector<StageNode*>& stages_with_deps,
-      mlir::ktdf::PrivateOp new_private,
-      size_t non_token_result_count);
+      mlir::ktdf::PrivateOp new_private, size_t non_token_result_count);
 
   /// MLIR builder for creating operations
   mlir::OpBuilder& builder_;
-  
+
   /// Value mapping for SSA values
   mlir::IRMapping& value_map_;
-  
+
   /// Optional cloner for customizing buffer operations
   materializer::BufferCloner* buffer_cloner_;
-  
+
   /// Tracking map from tree nodes to their materialized operations
-  llvm::DenseMap<const PipelineTreeNode*, mlir::Operation*> node_to_materialized_op_;
-  
-  /// Mapping from stages to their corresponding token values (results of ktdf.private op)
-  /// This is used to fill in depends_in/depends_out when materializing stages
+  llvm::DenseMap<const PipelineTreeNode*, mlir::Operation*>
+      node_to_materialized_op_;
+
+  /// Mapping from stages to their corresponding token values (results of
+  /// ktdf.private op) This is used to fill in depends_in/depends_out when
+  /// materializing stages
   llvm::DenseMap<StageNode*, mlir::Value> stage_to_token_map_;
 };
 

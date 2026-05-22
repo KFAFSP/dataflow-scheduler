@@ -24,11 +24,12 @@
 #ifndef KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_LEGALIZER_HPP
 #define KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_LEGALIZER_HPP
 
+#include <memory>
+#include <string>
+
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 #include "src/Analysis/PipelineTree.hpp"
-#include <memory>
-#include <string>
 
 namespace scheduler {
 namespace pipeline_tree {
@@ -44,38 +45,41 @@ enum class RuleKind {
 class Rule {
  public:
   virtual ~Rule() = default;
-  
+
   /// Check if this rule is violated by the given node
   virtual bool isViolated(PipelineTreeNode* node, PipelineTree& tree) const = 0;
-  
+
   /// Fix a violation of this rule at the given node
   virtual bool fixViolation(PipelineTreeNode* violating_node,
-                           PipelineTree& tree, int& next_coarsened_stage_id) = 0;
-  
+                            PipelineTree& tree,
+                            int& next_coarsened_stage_id) = 0;
+
   /// Print the rule-specific part of a violation description
   virtual void print(llvm::raw_ostream& os) const = 0;
-  
+
   RuleKind getKind() const { return kind_; }
-  
+
  protected:
   Rule(RuleKind kind) : kind_(kind) {}
-  
+
  private:
   RuleKind kind_;
 };
 
-/// Rule 1: A pipeline can only have ktdf.private or ktdf.stage as immediate children
+/// Rule 1: A pipeline can only have ktdf.private or ktdf.stage as immediate
+/// children
 class PipelineChildrenRule : public Rule {
  public:
-  PipelineChildrenRule() : Rule(RuleKind::kPipelineChildrenMustBePrivateOrStage) {}
-  
+  PipelineChildrenRule()
+      : Rule(RuleKind::kPipelineChildrenMustBePrivateOrStage) {}
+
   bool isViolated(PipelineTreeNode* node, PipelineTree& tree) const override;
-  
-  bool fixViolation(PipelineTreeNode* violating_node,
-                   PipelineTree& tree, int& next_coarsened_stage_id) override;
-  
+
+  bool fixViolation(PipelineTreeNode* violating_node, PipelineTree& tree,
+                    int& next_coarsened_stage_id) override;
+
   void print(llvm::raw_ostream& os) const override;
-  
+
   static bool classof(const Rule* rule) {
     return rule->getKind() == RuleKind::kPipelineChildrenMustBePrivateOrStage;
   }
@@ -85,33 +89,36 @@ class PipelineChildrenRule : public Rule {
 class StageParentRule : public Rule {
  public:
   StageParentRule() : Rule(RuleKind::kStageMustHavePipelineParent) {}
-  
+
   bool isViolated(PipelineTreeNode* node, PipelineTree& tree) const override;
-  
-  bool fixViolation(PipelineTreeNode* violating_node,
-                   PipelineTree& tree, int& next_coarsened_stage_id) override;
-  
+
+  bool fixViolation(PipelineTreeNode* violating_node, PipelineTree& tree,
+                    int& next_coarsened_stage_id) override;
+
   void print(llvm::raw_ostream& os) const override;
-  
+
   static bool classof(const Rule* rule) {
     return rule->getKind() == RuleKind::kStageMustHavePipelineParent;
   }
 };
 
-/// Rule 3: A pipeline with stages that have dependencies must have a private node as first child
+/// Rule 3: A pipeline with stages that have dependencies must have a private
+/// node as first child
 class PrivateMustExistRule : public Rule {
  public:
-  PrivateMustExistRule() : Rule(RuleKind::kPrivateMustExistForPipelinesWithStageDeps) {}
-  
+  PrivateMustExistRule()
+      : Rule(RuleKind::kPrivateMustExistForPipelinesWithStageDeps) {}
+
   bool isViolated(PipelineTreeNode* node, PipelineTree& tree) const override;
-  
-  bool fixViolation(PipelineTreeNode* violating_node,
-                   PipelineTree& tree, int& next_coarsened_stage_id) override;
-  
+
+  bool fixViolation(PipelineTreeNode* violating_node, PipelineTree& tree,
+                    int& next_coarsened_stage_id) override;
+
   void print(llvm::raw_ostream& os) const override;
-  
+
   static bool classof(const Rule* rule) {
-    return rule->getKind() == RuleKind::kPrivateMustExistForPipelinesWithStageDeps;
+    return rule->getKind() ==
+           RuleKind::kPrivateMustExistForPipelinesWithStageDeps;
   }
 };
 
@@ -119,10 +126,10 @@ class PrivateMustExistRule : public Rule {
 struct Violation {
   std::unique_ptr<Rule> rule;
   PipelineTreeNode* violating_node;
-  
+
   Violation(std::unique_ptr<Rule> r, PipelineTreeNode* node)
       : rule(std::move(r)), violating_node(node) {}
-  
+
   /// Print a description of this violation (node-specific + rule-specific)
   void print(llvm::raw_ostream& os) const {
     os << "violation of rule: ";
@@ -144,7 +151,7 @@ class Legalizer {
   /// Collect all structure violations in the tree
   void collectViolations(PipelineTree& tree);
 
-  int next_coarsened_stage_id_;  // Counter for coarsened stage IDs
+  int next_coarsened_stage_id_;              // Counter for coarsened stage IDs
   llvm::SmallVector<Violation> violations_;  // Collected violations
   llvm::SmallVector<std::unique_ptr<Rule>> rules_;  // All rules to check
 };
@@ -153,4 +160,3 @@ class Legalizer {
 }  // namespace scheduler
 
 #endif  // KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_LEGALIZER_HPP
-

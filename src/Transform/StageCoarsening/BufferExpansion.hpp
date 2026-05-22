@@ -74,10 +74,11 @@ class StageCoarseningBufferCloner : public materializer::BufferCloner {
   /// Custom clone allocation operations to expand memref type with additional
   /// dimensions
   mlir::memref::AllocOp cloneAllocOp(mlir::memref::AllocOp alloc_op,
-                                      mlir::OpBuilder& builder,
-                                      mlir::IRMapping& value_map) override;
+                                     mlir::OpBuilder& builder,
+                                     mlir::IRMapping& value_map) override;
 
-  /// Custom clone data transfer operations to adjust indices for expanded dimensions
+  /// Custom clone data transfer operations to adjust indices for expanded
+  /// dimensions
   mlir::ktdf::DataTransferOp cloneDataTransfer(
       mlir::ktdf::DataTransferOp transfer_op, mlir::OpBuilder& builder,
       mlir::IRMapping& value_map) override;
@@ -107,8 +108,7 @@ class StageCoarseningBufferCloner : public materializer::BufferCloner {
 /// \param grouping The stage grouping analysis
 /// \param expansion_infos Output vector to store expansion information
 void PerformBufferExpansionAnalysis(
-    llvm::ArrayRef<mlir::scf::ForOp> loop_nest,
-    mlir::ktdf::PipelineOp pipeline,
+    llvm::ArrayRef<mlir::scf::ForOp> loop_nest, mlir::ktdf::PipelineOp pipeline,
     const ktdf::StageGroupingAnalysis& grouping,
     llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos);
 
@@ -118,8 +118,8 @@ void PerformBufferExpansionAnalysis(
 
 /// Step 1: Identify common memrefs across stage groups
 /// Returns a map from memref value to the set of group indices that use it
-llvm::MapVector<mlir::Value, llvm::SmallSet<size_t, 4>>
-identifyCommonMemrefs(const ktdf::StageGroupingAnalysis& grouping);
+llvm::MapVector<mlir::Value, llvm::SmallSet<size_t, 4>> identifyCommonMemrefs(
+    const ktdf::StageGroupingAnalysis& grouping);
 
 /// Step 2: Filter candidate buffers that need expansion
 /// Returns buffers that are:
