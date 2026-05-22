@@ -1,5 +1,14 @@
-/build*
+# Exclude configuration and cache folders.
 .vscode/
+.cache/
+.clangd/
+
+# Exclude local compilation database override for clangd.
+compile_commands.json
+
+# Exclude build directories.
+/build*
+
 *.swp
 *~
 ./**/*~
