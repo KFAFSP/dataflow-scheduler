@@ -132,12 +132,30 @@ mlir::ktdf::FifoSlotType PathExpansionMaterializer::getFifoTypeFromEdge(
     } else if (source_resource == ArchitectureGraph::Resource::SFP &&
                dest_resource == ArchitectureGraph::Resource::HBM) {
       fifo_type = mlir::ktdf::FifoType::SfpToHbm;
+    } else if (source_resource == ArchitectureGraph::Resource::HBM &&
+               dest_resource == ArchitectureGraph::Resource::PE) {
+      fifo_type = mlir::ktdf::FifoType::HbmToPe;
+    } else if (source_resource == ArchitectureGraph::Resource::PE &&
+               dest_resource == ArchitectureGraph::Resource::HBM) {
+      fifo_type = mlir::ktdf::FifoType::PeToHbm;
     } else if (source_resource == ArchitectureGraph::Resource::LX &&
                dest_resource == ArchitectureGraph::Resource::SFP) {
       fifo_type = mlir::ktdf::FifoType::LxluToSfp;
     } else if (source_resource == ArchitectureGraph::Resource::SFP &&
                dest_resource == ArchitectureGraph::Resource::LX) {
       fifo_type = mlir::ktdf::FifoType::SfpToLxsu;
+    } else if (source_resource == ArchitectureGraph::Resource::LX &&
+               dest_resource == ArchitectureGraph::Resource::PE) {
+      fifo_type = mlir::ktdf::FifoType::LxluToPe;
+    } else if (source_resource == ArchitectureGraph::Resource::PE &&
+               dest_resource == ArchitectureGraph::Resource::LX) {
+      fifo_type = mlir::ktdf::FifoType::PeToLxsu;
+    } else if (source_resource == ArchitectureGraph::Resource::SFP &&
+               dest_resource == ArchitectureGraph::Resource::PE) {
+      fifo_type = mlir::ktdf::FifoType::SfpToPe;
+    } else if (source_resource == ArchitectureGraph::Resource::PE &&
+               dest_resource == ArchitectureGraph::Resource::SFP) {
+      fifo_type = mlir::ktdf::FifoType::PeToSfp;
     } else {
       llvm_unreachable("Unsupported FIFO edge");
     }

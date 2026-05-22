@@ -29,9 +29,15 @@ bool isHardwareSupportedGraphFifoType(mlir::ktdf::FifoType fifo_type) {
   switch (fifo_type) {
     case mlir::ktdf::FifoType::SfpToLxsu:
     case mlir::ktdf::FifoType::LxluToSfp:
+    case mlir::ktdf::FifoType::PeToLxsu:
+    case mlir::ktdf::FifoType::LxluToPe:
+    case mlir::ktdf::FifoType::PeToSfp:
+    case mlir::ktdf::FifoType::SfpToPe:
       return true;
     case mlir::ktdf::FifoType::HbmToSfp:
     case mlir::ktdf::FifoType::SfpToHbm:
+    case mlir::ktdf::FifoType::HbmToPe:
+    case mlir::ktdf::FifoType::PeToHbm:
       return false;
   }
   llvm_unreachable("unimplemented fifo type");
@@ -58,12 +64,14 @@ ArchitectureGraph ArchitectureGraph::createBuiltInSpyre() {
   graph.addEdge({sfp_node, lx_node, EdgeKind::StreamingTransfer,
                  mlir::ktdf::ComponentType::LXSU,
                  mlir::ktdf::FifoType::SfpToLxsu, 1});
-
-  // Longer alternate route retained for future shortest-path testing.
   graph.addEdge({sfp_node, pe_node, EdgeKind::StreamingTransfer, std::nullopt,
-                 std::nullopt, 1});
+                 mlir::ktdf::FifoType::SfpToPe, 1});
+  graph.addEdge({pe_node, sfp_node, EdgeKind::StreamingTransfer, std::nullopt,
+                 mlir::ktdf::FifoType::PeToSfp, 1});
   graph.addEdge({pe_node, lx_node, EdgeKind::StreamingTransfer, std::nullopt,
-                 std::nullopt, 1});
+                 mlir::ktdf::FifoType::PeToLxsu, 1});
+  graph.addEdge({lx_node, pe_node, EdgeKind::StreamingTransfer, std::nullopt,
+                 mlir::ktdf::FifoType::LxluToPe, 1});
 
   return graph;
 }

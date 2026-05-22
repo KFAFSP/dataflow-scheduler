@@ -95,12 +95,30 @@ std::optional<ArchitectureGraph::Resource> inferResourceFromFifoType(
     case mlir::ktdf::FifoType::SfpToHbm:
       return is_producer_side ? ArchitectureGraph::Resource::SFP
                               : ArchitectureGraph::Resource::HBM;
+    case mlir::ktdf::FifoType::HbmToPe:
+      return is_producer_side ? ArchitectureGraph::Resource::HBM
+                              : ArchitectureGraph::Resource::PE;
+    case mlir::ktdf::FifoType::PeToHbm:
+      return is_producer_side ? ArchitectureGraph::Resource::PE
+                              : ArchitectureGraph::Resource::HBM;
     case mlir::ktdf::FifoType::LxluToSfp:
       return is_producer_side ? ArchitectureGraph::Resource::LX
                               : ArchitectureGraph::Resource::SFP;
     case mlir::ktdf::FifoType::SfpToLxsu:
       return is_producer_side ? ArchitectureGraph::Resource::SFP
                               : ArchitectureGraph::Resource::LX;
+    case mlir::ktdf::FifoType::LxluToPe:
+      return is_producer_side ? ArchitectureGraph::Resource::LX
+                              : ArchitectureGraph::Resource::PE;
+    case mlir::ktdf::FifoType::PeToLxsu:
+      return is_producer_side ? ArchitectureGraph::Resource::PE
+                              : ArchitectureGraph::Resource::LX;
+    case mlir::ktdf::FifoType::SfpToPe:
+      return is_producer_side ? ArchitectureGraph::Resource::SFP
+                              : ArchitectureGraph::Resource::PE;
+    case mlir::ktdf::FifoType::PeToSfp:
+      return is_producer_side ? ArchitectureGraph::Resource::PE
+                              : ArchitectureGraph::Resource::SFP;
   }
   return std::nullopt;
 }
@@ -142,14 +160,16 @@ std::optional<ArchitectureGraph::Resource> inferResourceFromStage(
 
   // Check if source is a FIFO - if so, this stage is consuming from that FIFO
   if (auto source_type = first_transfer.getSource().getType()) {
-    if (auto fifo_type = mlir::dyn_cast<mlir::ktdf::FifoSlotType>(source_type)) {
+    if (auto fifo_type =
+            mlir::dyn_cast<mlir::ktdf::FifoSlotType>(source_type)) {
       // Stage is consuming from FIFO, so it's on the consumer side
       return inferResourceFromFifoType(fifo_type.getFifoType(),
                                        /*is_producer_side=*/false);
     }
   }
 
-  // Check if destination is a FIFO - if so, this stage is producing to that FIFO
+  // Check if destination is a FIFO - if so, this stage is producing to that
+  // FIFO
   if (auto dest_type = first_transfer.getDestination().getType()) {
     if (auto fifo_type = mlir::dyn_cast<mlir::ktdf::FifoSlotType>(dest_type)) {
       // Stage is producing to FIFO, so it's on the producer side
@@ -630,7 +650,8 @@ static mlir::FailureOr<llvm::SmallVector<StageNode*>> legalizeStageConnections(
     } else {
       // For intermediate stages without anchor resources, try to infer from
       // the stage's data transfer operations
-      auto stage_op = mlir::dyn_cast<mlir::ktdf::StageOp>(current_stage->getOperation());
+      auto stage_op =
+          mlir::dyn_cast<mlir::ktdf::StageOp>(current_stage->getOperation());
       if (stage_op) {
         current_resource = inferResourceFromStage(stage_op);
       }
@@ -677,13 +698,14 @@ static mlir::FailureOr<llvm::SmallVector<StageNode*>> legalizeStageConnections(
       } else if (i + 1 == 0 && !next_summary.input_endpoints.empty()) {
         next_resource = next_summary.input_endpoints[0].resource;
       } else if (i + 1 == original_sorted_stages.size() - 1 &&
-               !next_summary.output_endpoints.empty()) {
+                 !next_summary.output_endpoints.empty()) {
         next_resource = next_summary.output_endpoints[0].resource;
       } else {
         // For intermediate stages without anchor resources, try to infer from
         // the stage's data transfer operations
         StageNode* next_stage = original_sorted_stages[i + 1];
-        auto next_stage_op = mlir::dyn_cast<mlir::ktdf::StageOp>(next_stage->getOperation());
+        auto next_stage_op =
+            mlir::dyn_cast<mlir::ktdf::StageOp>(next_stage->getOperation());
         if (next_stage_op) {
           next_resource = inferResourceFromStage(next_stage_op);
         }

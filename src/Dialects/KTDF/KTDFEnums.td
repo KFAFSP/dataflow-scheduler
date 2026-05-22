@@ -50,8 +50,14 @@ def KTDF_FifoTypeEnum : I32EnumAttr<"FifoType",
     [
       I32EnumAttrCase<"SfpToLxsu", 0, "sfp-to-lxsu">,
       I32EnumAttrCase<"LxluToSfp", 1, "lxlu-to-sfp">,
-      I32EnumAttrCase<"HbmToSfp", 2, "hbm-to-sfp">,
-      I32EnumAttrCase<"SfpToHbm", 3, "sfp-to-hbm">
+      I32EnumAttrCase<"PeToLxsu", 2, "pe-to-lxsu">,
+      I32EnumAttrCase<"LxluToPe", 3, "lxlu-to-pe">,
+      I32EnumAttrCase<"PeToSfp", 4, "pe-to-sfp">,
+      I32EnumAttrCase<"SfpToPe", 5, "sfp-to-pe">,
+      I32EnumAttrCase<"HbmToSfp", 6, "hbm-to-sfp">,
+      I32EnumAttrCase<"SfpToHbm", 7, "sfp-to-hbm">,
+      I32EnumAttrCase<"HbmToPe", 8, "hbm-to-pe">,
+      I32EnumAttrCase<"PeToHbm", 9, "pe-to-hbm">
     ]> {
   let cppNamespace = "::mlir::ktdf";
   let genSpecializedAttr = 0;
