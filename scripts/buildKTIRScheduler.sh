@@ -17,13 +17,13 @@
 #
 
 # Set your source root, or let it be inferred from the script location:
-: "${KTIR_SCHEDULER_SRC=$(dirname "$0")/..}"
+: "${KTIR_SCHEDULER_SRC:=$(dirname "$0")/..}"
 
 # Set your LLVM build folder or install prefix, or adjust individually:
 : "${LLVM_INSTALL_PREFIX:=~/workspaces/llvm-project-v22.1/build}"
-: "${LLVM_DIR=$LLVM_INSTALL_PREFIX/lib/cmake/llvm}"
-: "${LLVM_EXTERNAL_LIT=$LLVM_INSTALL_PREFIX/bin/llvm-lit}"
-: "${MLIR_DIR=$LLVM_INSTALL_PREFIX/lib/cmake/mlir}"
+: "${LLVM_DIR:=$LLVM_INSTALL_PREFIX/lib/cmake/llvm}"
+: "${LLVM_EXTERNAL_LIT:=$LLVM_INSTALL_PREFIX/bin/llvm-lit}"
+: "${MLIR_DIR:=$LLVM_INSTALL_PREFIX/lib/cmake/mlir}"
 
 # Step 1: Configure.
 cmake -S $KTIR_SCHEDULER_SRC -B $KTIR_SCHEDULER_SRC/build -G Ninja \
