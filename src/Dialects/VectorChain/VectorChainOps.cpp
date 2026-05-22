@@ -44,8 +44,6 @@ void VectorChainDialect::initialize() {
 //===----------------------------------------------------------------------===//
 ParseResult ConstantBitstreamOp::parse(OpAsmParser& parser,
                                        OperationState& state) {
-  auto& builder = parser.getBuilder();
-
   // Parse the attributes and the result type.
   Type op_type;
   auto op_result = parser.parseOptionalAttrDict(state.attributes) ||
@@ -176,8 +174,8 @@ LogicalResult ShuffleOp::verify() {
   // product of the number of elements in the indices and the number of
   // repetitions.
   auto indices = op.getIndices();
-  int indices_size = indices.size();
-  int result_size = result_type.getNumElements();
+  auto indices_size = indices.size();
+  auto result_size = static_cast<std::size_t>(result_type.getNumElements());
   if (result_size != indices_size * op.getRepetition()) {
     op->emitOpError("result does not scale with indices and repetitions");
     return failure();
@@ -213,7 +211,7 @@ LogicalResult ShuffleOp::verify() {
   // elements from the input. Element values of -1 are still valid as these are
   // used to indicate padding.
   int max_element = input_num_of_elements - 1;
-  for (int i = 0; i < indices_size; ++i) {
+  for (std::size_t i = 0; i < indices_size; ++i) {
     auto element = mlir::dyn_cast<IntegerAttr>(indices[i]);
     if (!element) {
       op->emitOpError("indices element is not integer");

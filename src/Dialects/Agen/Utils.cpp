@@ -19,7 +19,7 @@ using namespace mlir;
 
 void dialect::agen::utils::getMapCoefficients(SmallVectorImpl<int64_t>& coeffs,
                                               const AffineMap& map,
-                        int result) {
+                                              int result) {
   affine::FlatAffineValueConstraints csts;
   auto res = getFlattenedAffineExpr(map.getResult(result), map.getNumDims(),
                                     map.getNumSymbols(), &coeffs, &csts);
@@ -61,7 +61,7 @@ DenseMap<Value, int64_t> dialect::agen::utils::constructIteratorCoeffDict(
 
   // Sort the indices from outermost to innnermost
   DenseMap<Value, int64_t> indices_coeff_dict;
-  for (int i = 0; i < indices.size(); ++i)
+  for (std::size_t i = 0; i < indices.size(); ++i)
     indices_coeff_dict[indices[i]] = composed_layout_coeffs[i];
 
   int const_value =
@@ -81,7 +81,7 @@ DenseMap<Value, int64_t> dialect::agen::utils::constructIteratorCoeffDict(
 LogicalResult dialect::agen::utils::calculateTimeOffsets(
     SmallVectorImpl<int64_t>& time_offsets,
     const AffineMap& mem_view_layout_map, const AffineMap& time_addr_map,
-                                   const AffineMap& time_order) {
+    const AffineMap& time_order) {
   affine::FlatAffineValueConstraints* cst = nullptr;
   SmallVector<int64_t> tmp_time_offsets;
   AffineMap tmp_time_addr_map = mem_view_layout_map.compose(time_addr_map);

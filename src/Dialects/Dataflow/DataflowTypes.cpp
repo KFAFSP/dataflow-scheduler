@@ -26,7 +26,7 @@ using namespace dataflow;
 Type DataflowDialect::parseType(DialectAsmParser& parser) const {
   mlir::Type elementType;
   mlir::Type elementType_stored;
-  auto &builder = parser.getBuilder();
+  auto& builder = parser.getBuilder();
   if (!parser.parseOptionalKeyword("vector")) {
     if (parser.parseLess()) return Type();
     size_t numOfElement;

@@ -89,7 +89,7 @@ void UniformizeRegionsOp::print(OpAsmPrinter& p) {
 
   p << " {";
   p.increaseIndent();
-  for (int i = 0; i < num_regions; i++) {
+  for (std::size_t i = 0; i < num_regions; i++) {
     p.printNewline();
     p << '(' << op.getRegionArg(i) << " -> ";
     p.printOperands(op.getRegionUnitList(i));
@@ -113,7 +113,7 @@ LogicalResult UniformizeRegionsOp::verify() {
   // check unit sizes are the same as list of sizes
   int size = op.getUnits().size();
   int accu_size = 0;
-  for (int i = 0; i < op.getListSizes().size(); i++) {
+  for (std::size_t i = 0; i < op.getListSizes().size(); i++) {
     accu_size +=
         mlir::cast<IntegerAttr>(op.getListSizes().getValue()[i]).getInt();
   }
@@ -132,7 +132,7 @@ LogicalResult UniformizeRegionsOp::verify() {
   }
 
   // verify units of unit_lists are either get_unit or create_group
-  for (int idx = 0; idx < op.getRegions().size(); idx++) {
+  for (std::size_t idx = 0; idx < op.getRegions().size(); idx++) {
     auto units = op.getRegionUnitList(idx);
     if (units.size() == 1) {
       auto def_op = units.front().getDefiningOp();
@@ -153,7 +153,7 @@ LogicalResult UniformizeRegionsOp::verify() {
   }
 
   // yieldOp's operand sizes are equal to results' size.
-  int result_size = op.getResults().size();
+  auto result_size = op.getResults().size();
   for (auto& region : op.getRegions()) {
     if (region.getBlocks().front().getTerminator()->getNumOperands() !=
         result_size) {
@@ -206,7 +206,7 @@ Region* UniformizeRegionsOp::getRegionFromUnit(Value unit) {
 
   int num_units_visited = 0;
   auto list_sizes = this->getListSizes();
-  for (int i = 0; i < list_sizes.size(); ++i) {
+  for (std::size_t i = 0; i < list_sizes.size(); ++i) {
     num_units_visited += mlir::cast<IntegerAttr>(list_sizes[i]).getInt();
     if (num_units_visited > idx_in_unit_list) return &this->getRegion(i);
   }
@@ -264,7 +264,7 @@ void EqualizePatternOp::print(OpAsmPrinter& p) {
 
   p << " {";
   p.increaseIndent();
-  for (int i = 0; i < num_regions; i++) {
+  for (std::size_t i = 0; i < num_regions; i++) {
     p.printNewline();
     p << '(' << op.getRegionArg(i) << " -> ";
     p.printOperands(op.getRegionUnitList(i));
@@ -293,7 +293,7 @@ LogicalResult EqualizePatternOp::verify() {
   }
 
   // verify units of unit_lists are either get_unit or create_group
-  for (int idx = 0; idx < op.getRegions().size(); idx++) {
+  for (std::size_t idx = 0; idx < op.getRegions().size(); idx++) {
     auto units = op.getRegionUnitList(idx);
     if (units.size() == 1) {
       auto def_op = units.front().getDefiningOp();
@@ -316,7 +316,7 @@ LogicalResult EqualizePatternOp::verify() {
   // all regions should have the same number of operations
   int region_size = op.getRegions().size();
   DT_CHECK(region_size > 1);
-  int operation_size = op.getRegion(0).front().getOperations().size();
+  auto operation_size = op.getRegion(0).front().getOperations().size();
   for (int idx = 1; idx < region_size; idx++) {
     if (op.getRegion(idx).front().getOperations().size() != operation_size) {
       op.emitError("regions have different operation size.");
@@ -382,7 +382,7 @@ Region* EqualizePatternOp::getRegionFromUnit(Value unit) {
 
   int num_units_visited = 0;
   auto list_sizes = this->getListSizes();
-  for (int i = 0; i < list_sizes.size(); ++i) {
+  for (std::size_t i = 0; i < list_sizes.size(); ++i) {
     num_units_visited += mlir::cast<IntegerAttr>(list_sizes[i]).getInt();
     if (num_units_visited > idx_in_unit_list) return &this->getRegion(i);
   }

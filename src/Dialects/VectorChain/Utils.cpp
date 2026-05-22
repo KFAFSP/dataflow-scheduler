@@ -44,9 +44,8 @@ std::vector<int> mlir::vectorchain::utils::getExpandedVector(
     std::vector<int> indices, int repetition) {
   std::vector<int> indices_expanded;
   for (int i = 0; i < repetition; i++) {
-    for (int j = 0; j < indices.size(); j++) {
-      indices_expanded.push_back(indices[j]);
-    }
+    indices_expanded.insert(indices_expanded.end(), indices.begin(),
+                            indices.end());
   }
   return indices_expanded;
 }
@@ -67,7 +66,7 @@ bool mlir::vectorchain::utils::isPadLeftFor8FirstElemSplat(
   std::vector<int> indices = getShuffleIndicesAsVector(shuffle_op);
   std::vector<int> indices_expanded =
       getExpandedVector(indices, shuffle_op.getRepetition());
-  for (int i = 0; i < indices_expanded.size(); i++) {
+  for (std::size_t i = 0; i < indices_expanded.size(); i++) {
     if (i % 8 == 0) {
       if (indices_expanded[i] != 0) return false;
     } else {
@@ -85,13 +84,13 @@ bool mlir::vectorchain::utils::isShuffleNFWDVersion0(
   if (indices_expanded.size() == 32) {
     // FP32 case
     int nfwd0[4] = {1, 0, 3, 3};
-    for (int i = 0; i < indices_expanded.size(); i++) {
+    for (std::size_t i = 0; i < indices_expanded.size(); i++) {
       if (indices_expanded[i] != nfwd0[i % 4]) return false;
     }
   } else {
     // FP16 case
     int nfwd0[8] = {2, 3, 0, 1, 6, 7, 6, 7};
-    for (int i = 0; i < indices_expanded.size(); i++) {
+    for (std::size_t i = 0; i < indices_expanded.size(); i++) {
       if (indices_expanded[i] != nfwd0[i % 8]) return false;
     }
   }
@@ -106,13 +105,13 @@ bool mlir::vectorchain::utils::isShuffleNFWDVersion2(
   if (indices_expanded.size() == 32) {
     // FP32 case
     int nfwd2[4] = {2, 0, 1, 3};
-    for (int i = 0; i < indices_expanded.size(); i++) {
+    for (std::size_t i = 0; i < indices_expanded.size(); i++) {
       if (indices_expanded[i] != nfwd2[i % 4]) return false;
     }
   } else {
     // FP16 case
     int nfwd2[8] = {4, 5, 3, 3, 5, 5, 6, 7};
-    for (int i = 0; i < indices_expanded.size(); i++) {
+    for (std::size_t i = 0; i < indices_expanded.size(); i++) {
       if (indices_expanded[i] != nfwd2[i % 8]) return false;
     }
   }
@@ -140,7 +139,7 @@ bool mlir::vectorchain::utils::isSplatFromFirstElem(
     return false;
 
   for (unsigned i = 0; i < num_elements; ++i) {
-    if (indices[i] != i) return false;
+    if (indices[i] != static_cast<int>(i)) return false;
   }
 
   return true;
@@ -167,9 +166,9 @@ bool mlir::vectorchain::utils::isRightZeroPadFromFirstElem(
     return false;
 
   for (unsigned i = 0; i < num_elements; ++i)
-    if (indices[i] != i) return false;
+    if (indices[i] != static_cast<int>(i)) return false;
 
-  int indices_size = indices.size();
+  auto indices_size = indices.size();
   for (unsigned i = num_elements; i < indices_size; ++i)
     if (indices[i] != -1) return false;
 

@@ -253,7 +253,7 @@ agen::VectorLoadOp VectorLoadOp::cloneWithNewAccessInfo(
   auto& op = *this;
   SmallVector<Value, 16> operands;
   for (auto& index : indices) operands.push_back(index);
-  for (int i = getOperands1OperandIndex() + getNumMemrefIndices();
+  for (std::size_t i = getOperands1OperandIndex() + getNumMemrefIndices();
        i < op->getNumOperands(); ++i)
     operands.emplace_back(op->getOperand(i));
 
@@ -442,7 +442,8 @@ VectorStoreOp VectorStoreOp::cloneWithNewAccessInfo(
   auto& op = *this;
   SmallVector<Value, 16> operands;
   for (auto& index : indices) operands.push_back(index);
-  for (int i = getIndicesOperandIndex() + getNumIndices();
+  for (auto i =
+           getIndicesOperandIndex() + static_cast<std::size_t>(getNumIndices());
        i < op->getNumOperands(); ++i)
     operands.emplace_back(op->getOperand(i));
 
@@ -629,7 +630,7 @@ CompositeLoadOp CompositeLoadOp::cloneWithNewAccessInfo(
   SmallVector<Value, 16> operands;
   for (auto& index : indices) operands.push_back(index);
   int remaining_operands_idx = getNumMemrefIndices();
-  for (int i = remaining_operands_idx; i < getOperands1().size(); ++i)
+  for (std::size_t i = remaining_operands_idx; i < getOperands1().size(); ++i)
     operands.emplace_back(getOperands1()[i]);
 
   // Create the new comp op in the innermost loop. Builder should already be set
@@ -946,7 +947,7 @@ CompositeStoreOp CompositeStoreOp::cloneWithNewAccessInfo(
     operands.emplace_back(getInputVector().value());
     ++remaining_operands_idx;
   }
-  for (int i = remaining_operands_idx; i < getOperands1().size(); ++i)
+  for (std::size_t i = remaining_operands_idx; i < getOperands1().size(); ++i)
     operands.emplace_back(getOperands1()[i]);
 
   // Create the new comp op in the innermost loop. Builder should already be set
@@ -1238,7 +1239,7 @@ CompositeLoadAndStoreOp CompositeLoadAndStoreOp::cloneWithNewAccessInfo(
 
   int remaining_operands_idx =
       getNumSrcMemrefIndices() + getNumDstMemrefIndices();
-  for (int i = remaining_operands_idx; i < getOperands1().size(); ++i)
+  for (std::size_t i = remaining_operands_idx; i < getOperands1().size(); ++i)
     operands.emplace_back(getOperands1()[i]);
 
   // Create the new comp op in the innermost loop. Builder should already be set
@@ -2889,7 +2890,7 @@ ParseResult SetTransferMaskStateOp::parse(OpAsmParser& parser,
   // properly ordered for the operation attributes afterwards.
   std::map<char, int> unmasked_elems_map, masked_elems_map;
   char start_mask_id = 'A';
-  int prefix_len = getMaskPrefixAttrStrName().size();
+  auto prefix_len = getMaskPrefixAttrStrName().size();
   for (auto& attr : result.attributes) {
     // Find the "mask*"" attributes and add their unmasked/masked values to
     // unmasked_elems_map/masked_elems_map.
@@ -2941,7 +2942,7 @@ ParseResult SetTransferMaskStateOp::parse(OpAsmParser& parser,
   auto orderMaskInfo = [](std::map<char, int>& info_map,
                           std::vector<int>& num_elems, char start_mask_id) {
     for (auto& entry : info_map) {
-      int idx = entry.first - start_mask_id;
+      auto idx = static_cast<std::size_t>(entry.first - start_mask_id);
       DT_CHECK_MSG(idx < info_map.size(), "encountered an unexpected mask_id");
       num_elems[idx] = entry.second;
     }
@@ -3044,7 +3045,7 @@ bool SetTransferMaskStateOp::isGenericSAMV() {
   // + 3 single characters (A|B)
   // ---------------------------------
   // 26 characters
-  int expected_length = 26;
+  std::size_t expected_length = 26U;
   auto slice_mask_map = getSliceMaskMap();
   if (slice_mask_map.size() != expected_length) return false;
 
@@ -3074,7 +3075,7 @@ int SetTransferMaskStateOp::getSliceIDXsl() {
   // SAMV pattern is 8 slices matching (A){0,7}(A|B)(1){0,7}
   // Find position of (A|B) in the string divide by 3
   //   - Each (A) preceeding (A|B) in the pattern takes 3 characters
-  int pos = getSliceMaskMap().str().find("(A|B)");
+  auto pos = getSliceMaskMap().str().find("(A|B)");
   DT_CHECK_MSG(pos != std::string::npos,
                "could not find (A|B) in slice_mask_map");
   return pos / 3;

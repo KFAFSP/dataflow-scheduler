@@ -419,7 +419,7 @@ LogicalResult GetPagedLogicalMemoryViewOp::verify() {
     return op->emitOpError(
         "there should be a start address and idx_set for every page");
 
-  for (int page_idx = 0; page_idx < idx_sets.size(); ++page_idx) {
+  for (std::size_t page_idx = 0; page_idx < idx_sets.size(); ++page_idx) {
     // The start addresses for the pages need to be constant operations.
     auto page_start_addr_op = page_start_addrs[page_idx].getDefiningOp();
     if (!page_start_addr_op || !isa<arith::ConstantOp>(page_start_addr_op))

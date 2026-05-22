@@ -923,7 +923,7 @@ LogicalResult SelectMemrefOp::verify() {
                "got ")
            << defining_op->getName();
   }
-  if (phase_op.getNumPhases() != static_cast<int64_t>(candidates.size())) {
+  if (phase_op.getNumPhases() != candidates.size()) {
     return emitOpError("phase op num_phases (")
            << phase_op.getNumPhases() << ") must equal candidate count ("
            << candidates.size() << ")";
