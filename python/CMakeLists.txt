@@ -24,10 +24,46 @@ declare_mlir_python_sources(KTIRSchedulerPythonExtensions
 declare_mlir_dialect_python_bindings(
   ADD_TO_PARENT KTIRPythonSources.Dialects
   ROOT_DIR "${KTIR_PYTHON_ROOT_DIR}"
+  TD_FILE dialects/AgenOps.td
+  SOURCES 
+    dialects/agen.py
+  DIALECT_NAME agen
+)
+
+declare_mlir_dialect_python_bindings(
+  ADD_TO_PARENT KTIRPythonSources.Dialects
+  ROOT_DIR "${KTIR_PYTHON_ROOT_DIR}"
+  TD_FILE dialects/DataflowOps.td
+  SOURCES 
+    dialects/dataflow.py
+  DIALECT_NAME dataflow
+)
+
+declare_mlir_dialect_python_bindings(
+  ADD_TO_PARENT KTIRPythonSources.Dialects
+  ROOT_DIR "${KTIR_PYTHON_ROOT_DIR}"
   TD_FILE dialects/KTDFOps.td
   SOURCES 
-    dialects/ktdf/__init__.py
+    dialects/ktdf.py
   DIALECT_NAME ktdf
+)
+
+declare_mlir_dialect_python_bindings(
+  ADD_TO_PARENT KTIRPythonSources.Dialects
+  ROOT_DIR "${KTIR_PYTHON_ROOT_DIR}"
+  TD_FILE dialects/UniformOps.td
+  SOURCES 
+    dialects/uniform.py
+  DIALECT_NAME uniform
+)
+
+declare_mlir_dialect_python_bindings(
+  ADD_TO_PARENT KTIRPythonSources.Dialects
+  ROOT_DIR "${KTIR_PYTHON_ROOT_DIR}"
+  TD_FILE dialects/VectorChainOps.td
+  SOURCES 
+    dialects/vectorchain.py
+  DIALECT_NAME vectorchain
 )
 
 ################################################################################
@@ -48,8 +84,13 @@ declare_mlir_python_extension(KTIRSchedulerPythonExtensions.Main
     MLIRCAPISCF
     MLIRCAPITensor
     MLIRCAPITransforms
-    KTIRKTDFCAPI
     KTIRKtdpCAPI
+    KTIRAgenCAPI
+    KTIRDataflowCAPI
+    KTIRKTDFCAPI
+    KTIRRegisterEverythingCAPI
+    KTIRUniformCAPI
+    KTIRVectorChainCAPI
   PRIVATE_LINK_LIBS
     LLVMSupport
 )
@@ -99,6 +140,10 @@ add_mlir_python_common_capi_library(KTIRPythonCAPI
   OUTPUT_DIRECTORY "${KTIR_PYTHON_PACKAGE_DIR}/_mlir_libs"
   RELATIVE_INSTALL_ROOT "../../.." # NOTE: This is fragile.
   DECLARED_SOURCES ${_source_components}
+)
+
+ktir_python_fix_rpath(KTIRPythonCAPI 
+  RELATIVE_INSTALL_ROOT "../../.." # NOTE: This is fragile.
 )
 
 add_mlir_python_modules(KTIRPythonModules

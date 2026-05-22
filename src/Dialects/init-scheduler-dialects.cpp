@@ -19,6 +19,7 @@
 
 #include "mlir/IR/DialectRegistry.h"
 #include "src/Dialects/Includes/scheduler-dialects.h"
+#include "src/Transform/Passes.h"
 
 namespace scheduler {
 
@@ -32,5 +33,7 @@ void registerSchedulerDialects(mlir::DialectRegistry& registry) {
   // Future scheduler dialects can be added here
   // clang-format on
 }
+
+void registerAllSchedulerPasses() { registerSchedulerTransformPasses(); }
 
 }  // namespace scheduler

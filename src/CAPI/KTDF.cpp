@@ -16,7 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "KTDF.hpp"
+#include "src/CAPI/KTDF.h"
 
 #include "mlir/CAPI/Registration.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"

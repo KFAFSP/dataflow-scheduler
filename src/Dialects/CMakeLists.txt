@@ -41,6 +41,7 @@ add_ktir_library(KTIRSchedulerInitSchedulerDialects
     KTIRDataflowDialect
     KTIRUniformDialect
     KTIRVectorChainDialect
+    KTIRSchedulerTransforms
 )
 
 add_ktir_library(KTIRSchedulerInitAllDialects 

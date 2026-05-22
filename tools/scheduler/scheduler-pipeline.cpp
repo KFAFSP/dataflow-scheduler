@@ -14,7 +14,7 @@ namespace scheduler {
 
 void registerPassesForScheduler() {
   // Register scheduler-specific passes
-  registerSchedulerTransformsPasses();
+  registerSchedulerTransformPasses();
 
   // Register some common opt passes
   mlir::registerSCCPPass();

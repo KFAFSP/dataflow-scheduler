@@ -16,34 +16,28 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <mlir-c/IR.h>
+#include <mlir/CAPI/Support.h>
+
 #include <cstdint>
+#include <cstdio>
 
-#include "Ktdp-c/Dialects.h"
-#include "mlir-c/Dialect/Arith.h"
-#include "mlir-c/Dialect/Func.h"
-#include "mlir-c/Dialect/Linalg.h"
-#include "mlir-c/Dialect/Math.h"
-#include "mlir-c/Dialect/SCF.h"
-#include "mlir-c/Dialect/Tensor.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"
-#include "src/CAPI/KTDF.hpp"
+#include "mlir/CAPI/IR.h"
+#include "src/CAPI/RegisterEverything.h"
 
+using namespace mlir;
 namespace nb = nanobind;
 
 NB_MODULE(_ktir, m) {
+  schedulerRegisterAllPasses();
+
   m.doc() = "mlir_ktir main python extension";
 
   m.def(
       "register_dialects",
-      [](MlirContext context, bool load) {
-        for (auto handle :
-             {mlirGetDialectHandle__arith__(), mlirGetDialectHandle__func__(),
-              mlirGetDialectHandle__linalg__(), mlirGetDialectHandle__math__(),
-              mlirGetDialectHandle__scf__(), mlirGetDialectHandle__tensor__(),
-              mlirGetDialectHandle__ktdp__(), mlirGetDialectHandle__ktdf__()}) {
-          mlirDialectHandleRegisterDialect(handle, context);
-          if (load) mlirDialectHandleLoadDialect(handle, context);
-        }
+      [](MlirDialectRegistry registry) {
+        schedulerRegisterAllDialects(registry);
       },
-      nb::arg("context"), nb::arg("load") = true);
+      nb::arg("registry"));
 }

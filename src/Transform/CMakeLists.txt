@@ -1,8 +1,8 @@
 set(LLVM_TARGET_DEFINITIONS Passes.td)
-mlir_tablegen(Passes.h.inc -gen-pass-decls -name SchedulerTransforms)
+mlir_tablegen(Passes.h.inc -gen-pass-decls -name SchedulerTransform)
 add_ktir_tablegen_target(KTIRSchedulerTransformsPassIncGen)
 
-add_ktir_doc(Passes KTDFPasses ./ -gen-pass-doc)
+add_ktir_doc(Passes SchedulerPasses ./ -gen-pass-doc)
 
 add_ktir_dialect_library(KTIRSchedulerTransforms
     BroadcastPromotion.cpp
