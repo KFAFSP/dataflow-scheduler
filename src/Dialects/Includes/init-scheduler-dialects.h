@@ -18,9 +18,9 @@
 #ifndef SCHEDULER_SRC_DIALECTS_INCLUDES_INIT_SCHEDULER_DIALECTS_H
 #define SCHEDULER_SRC_DIALECTS_INCLUDES_INIT_SCHEDULER_DIALECTS_H
 
-#include "Dialects/Includes/mlir-dialects.h"
-#include "Dialects/Includes/scheduler-dialects.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "src/Dialects/Includes/mlir-dialects.h"
+#include "src/Dialects/Includes/scheduler-dialects.h"
 
 namespace scheduler {
 

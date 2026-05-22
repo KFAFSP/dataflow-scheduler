@@ -16,19 +16,28 @@
 # limitations under the License.
 #
 
-KTIR_SCHEDULER_PATH=~/workspaces/KTIR-Scheduler/
-LLVM_PROJ_SRC=~/workspaces/llvm-project-v22.1
-LLVM_PROJ_BUILD=~/workspaces/llvm-project-v22.1/build/
-KTIR_PROJ_SRC=~/workspaces/ktir-mlir-frontend/
-KTIR_PROJ_BUILD=$KTIR_PROJ_SRC/build/
+# Set your source root, or let it be inferred from the script location:
+: "${KTIR_SCHEDULER_SRC=$(dirname "$0")/..}"
 
-cd $KTIR_SCHEDULER_PATH/build
+# Set your LLVM build folder or install prefix, or adjust individually:
+: "${LLVM_INSTALL_PREFIX:=~/workspaces/llvm-project-v22.1/build}"
+: "${LLVM_DIR=$LLVM_INSTALL_PREFIX/lib/cmake/llvm}"
+: "${LLVM_EXTERNAL_LIT=$LLVM_INSTALL_PREFIX/bin/llvm-lit}"
+: "${MLIR_DIR=$LLVM_INSTALL_PREFIX/lib/cmake/mlir}"
 
-cmake -G Ninja $KTIR_SCHEDULER_PATH -DCMAKE_BUILD_TYPE=Debug  \
+# Step 1: Configure.
+cmake -S $KTIR_SCHEDULER_SRC -B $KTIR_SCHEDULER_SRC/build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Debug \
       -DCMAKE_CXX_COMPILER=clang++ \
       -DCMAKE_C_COMPILER=clang \
-      -DLLVM_PROJ_SRC=$LLVM_PROJ_SRC \
-      -DLLVM_PROJ_BUILD=$LLVM_PROJ_BUILD \
-      -DKTIR_PROJ_SRC=$KTIR_PROJ_SRC \
-      -DKTIR_PROJ_BUILD=$KTIR_PROJ_BUILD \
-      -DCMAKE_INSTALL_PREFIX=$KTIR_SCHEDULER_PATH/install
+      -DCMAKE_INSTALL_PREFIX=$KTIR_SCHEDULER_SRC/install \
+      -DLLVM_DIR=$LLVM_DIR \
+      -DLLVM_EXTERNAL_LIT=$LLVM_EXTERNAL_LIT \
+      -DMLIR_DIR=$MLIR_DIR
+      # To debug linking issues, add:
+      # -DBUILD_SHARED_LIBS=ON
+      # To build the Python bindings, add:
+      # -DKTIR_ENABLE_PYTHON_BINDINGS=ON
+
+# Step 2: Build.
+cmake --build $KTIR_SCHEDULER_SRC/build --target all

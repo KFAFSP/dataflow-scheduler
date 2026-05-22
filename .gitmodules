@@ -1,0 +1,4 @@
+[submodule "external/ktir-mlir-frontend"]
+	path = external/ktir-mlir-frontend
+	url = https://github.com/KFAFSP/ktir-mlir-frontend.git
+	branch = kfaf/subproject

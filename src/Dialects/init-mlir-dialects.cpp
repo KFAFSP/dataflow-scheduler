@@ -16,9 +16,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Dialects/Includes/init-mlir-dialects.h"
+#include "src/Dialects/Includes/init-mlir-dialects.h"
 
-#include "Dialects/Includes/mlir-dialects.h"
+#include "src/Dialects/Includes/mlir-dialects.h"
 // #include "mlir/Dialect/Linalg/Transforms/AllInterfaces.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/MemRef/IR/MemRefMemorySlot.h"

@@ -36,16 +36,16 @@ include "mlir/Interfaces/ViewLikeInterface.td"
 include "mlir/IR/BuiltinAttributes.td"
 
 // Import the KTDF dialect definition
-include "KTDFDialect.td"
+include "src/Dialects/KTDF/KTDFDialect.td"
 
 // Import the KTDF enums (shared between types and ops)
-include "KTDFEnums.td"
+include "src/Dialects/KTDF/KTDFEnums.td"
 
 // Import the KTDF type definitions
-include "KTDFTypes.td"
+include "src/Dialects/KTDF/KTDFTypes.td"
 
 // Import the KTDF attribute definitions
-include "KTDFAttributes.td"
+include "src/Dialects/KTDF/KTDFAttributes.td"
 
 // Base class for KTDF dialect operations
 class KTDF_Op<string mnemonic, list<Trait> traits = []> :

@@ -963,7 +963,7 @@ void rewrite(const Candidate& c, unsigned num_instances) {
   // Build ktdf.parallel at the scf.for's position. The custom builder
   // creates the body block with two index args (IV + instance id).
   OpBuilder builder(loop);
-  auto parallel = builder.create<mlir::ktdf::ParallelOp>(
+  auto parallel = mlir::ktdf::ParallelOp::create(builder, 
       loc,
       /*lowerBounds=*/ValueRange{lb},
       /*upperBounds=*/ValueRange{ub},
@@ -984,7 +984,7 @@ void rewrite(const Candidate& c, unsigned num_instances) {
 
   // Append ktdf.parallel_yield as the new body's terminator.
   builder.setInsertionPointToEnd(new_body);
-  builder.create<mlir::ktdf::ParallelYieldOp>(loc);
+  mlir::ktdf::ParallelYieldOp::create(builder, loc);
 
   // Erase the original scf.for. Its body is now empty (only the orphaned
   // scf.yield remains, which is erased with the parent).

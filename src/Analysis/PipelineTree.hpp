@@ -37,13 +37,13 @@
 
 #include <string>
 
-#include "OperationTree.hpp"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Support/LLVM.h"
+#include "src/Analysis/OperationTree.hpp"
 
 using llvm::raw_ostream;
 using llvm::StringRef;
@@ -63,13 +63,13 @@ class PipelineTreeNode : public OperationTreeNode {
   friend class PipelineTree;
 
  public:
-  PipelineTreeNode(Operation *op)
+  PipelineTreeNode(Operation* op)
       : OperationTreeNode(op),
         materialized_(op != nullptr),
         template_op_(nullptr) {}
 
   /// Constructor for unmaterialized nodes with a template operation
-  PipelineTreeNode(Operation *op, Operation *template_op)
+  PipelineTreeNode(Operation* op, Operation* template_op)
       : OperationTreeNode(op),
         materialized_(op != nullptr),
         template_op_(template_op) {}
@@ -89,10 +89,10 @@ class PipelineTreeNode : public OperationTreeNode {
 
   /// Get the template operation (used for creating new operations when
   /// materializing)
-  Operation *getTemplateOp() const { return template_op_; }
+  Operation* getTemplateOp() const { return template_op_; }
 
   /// Set the template operation
-  void setTemplateOp(Operation *template_op) {
+  void setTemplateOp(Operation* template_op) {
     assert(!operation_op_ && "node already has an operation");
     template_op_ = template_op;
   }
@@ -100,11 +100,11 @@ class PipelineTreeNode : public OperationTreeNode {
   /// Get the operation if materialized, otherwise get the template operation
   /// This is a convenience method for code that needs to access either the
   /// materialized operation or the template operation for unmaterialized nodes
-  Operation *getOperationOrTemplate() const {
+  Operation* getOperationOrTemplate() const {
     return isMaterialized() ? getOperation() : getTemplateOp();
   }
 
-  virtual void print(raw_ostream &os) const override {
+  virtual void print(raw_ostream& os) const override {
     printNodeHeader(os);
     os << "\n";
     printChildren(os);
@@ -113,29 +113,30 @@ class PipelineTreeNode : public OperationTreeNode {
   /// Find the outermost loop visited as you traverse up the tree until the stop
   /// function returns true. Returns nullptr if no loop was visited during the
   /// traversal.
-  static const PipelineTreeNode *findOutermostLoop(
-      const PipelineTreeNode *start_node,
-      std::function<bool(const PipelineTreeNode *)> stop);
+  static const PipelineTreeNode* findOutermostLoop(
+      const PipelineTreeNode* start_node,
+      std::function<bool(const PipelineTreeNode*)> stop);
 
   /// Find the innermost loop in a loop nest by traversing all children and
   /// tracking loop depths. Returns the loop node with the maximum depth from
   /// \p start_node. Returns nullptr if the input node is nullptr or not a loop.
   /// If \p start_node is a loop with no nested loops, returns \p start_node.
-  /// If more than one innermost loop exist at the same depth, the first one visited is returned.
-  static const PipelineTreeNode *findInnermostLoop(
-      const PipelineTreeNode *start_node);
+  /// If more than one innermost loop exist at the same depth, the first one
+  /// visited is returned.
+  static const PipelineTreeNode* findInnermostLoop(
+      const PipelineTreeNode* start_node);
 
  protected:
   /// Helper method to print common node information (indentation, name,
   /// materialization status, location)
-  void printNodeHeader(raw_ostream &os) const;
+  void printNodeHeader(raw_ostream& os) const;
 
   /// Helper method to print all children
-  void printChildren(raw_ostream &os) const;
+  void printChildren(raw_ostream& os) const;
 
   bool materialized_;  // Whether this node has an associated IR operation
-  Operation
-      *template_op_;  // Template operation to use when materializing this node
+  Operation*
+      template_op_;  // Template operation to use when materializing this node
 };
 
 /// Root node representing the top-level container
@@ -150,7 +151,7 @@ class RootNode : public PipelineTreeNode {
 /// Loop node representing scf.for operations
 class LoopNode : public PipelineTreeNode {
  public:
-  LoopNode(Operation *op) : PipelineTreeNode(op) {}
+  LoopNode(Operation* op) : PipelineTreeNode(op) {}
 
   bool isLoopNode() const final override { return true; }
   std::string getNodeName() const override { return "loop"; }
@@ -163,22 +164,22 @@ class LoopNode : public PipelineTreeNode {
 /// Pipeline node representing ktdf.pipeline operations
 class PipelineNode : public PipelineTreeNode {
  public:
-  PipelineNode(Operation *op) : PipelineTreeNode(op) {}
+  PipelineNode(Operation* op) : PipelineTreeNode(op) {}
 
   bool isPipelineNode() const final override { return true; }
   std::string getNodeName() const override { return "pipeline"; }
 
   /// Get the private node (if any) associated with this pipeline
-  PrivateNode *getPrivateNode() const;
+  PrivateNode* getPrivateNode() const;
 
   /// Get all stage nodes that are direct children of this pipeline
-  llvm::SmallVector<StageNode *> getStages() const;
+  llvm::SmallVector<StageNode*> getStages() const;
 };
 
 /// Stage node representing ktdf.stage operations
 class StageNode : public PipelineTreeNode {
  public:
-  StageNode(Operation *op, int stage_id)
+  StageNode(Operation* op, int stage_id)
       : PipelineTreeNode(op), stage_id_(stage_id) {}
 
   bool isStageNode() const final override { return true; }
@@ -190,16 +191,16 @@ class StageNode : public PipelineTreeNode {
 
   /// Add a dependency to another stage (token-based synchronization)
   /// This node would be the source of the edge and \p target would be the sink.
-  void addDependency(StageNode *target) { dependencies_.push_back(target); }
+  void addDependency(StageNode* target) { dependencies_.push_back(target); }
 
   /// Get other stages that are dependent on this stage node.
-  const llvm::SmallVector<StageNode *> &getDependencies() const {
+  const llvm::SmallVector<StageNode*>& getDependencies() const {
     return dependencies_;
   }
 
   /// Replace a dependency with another stage node
-  void replaceDependency(StageNode *old_target, StageNode *new_target) {
-    for (auto &dep : dependencies_) {
+  void replaceDependency(StageNode* old_target, StageNode* new_target) {
+    for (auto& dep : dependencies_) {
       if (dep == old_target) {
         dep = new_target;
         return;
@@ -208,8 +209,8 @@ class StageNode : public PipelineTreeNode {
   }
 
   /// Mark a dependency for removal by nullifying it
-  void nullifyDependency(StageNode *target) {
-    for (auto &dep : dependencies_) {
+  void nullifyDependency(StageNode* target) {
+    for (auto& dep : dependencies_) {
       if (dep == target) {
         dep = nullptr;
         return;
@@ -224,11 +225,11 @@ class StageNode : public PipelineTreeNode {
         dependencies_.end());
   }
 
-  void print(raw_ostream &os) const override;
+  void print(raw_ostream& os) const override;
 
  private:
   int stage_id_;
-  llvm::SmallVector<StageNode *>
+  llvm::SmallVector<StageNode*>
       dependencies_;  // Stages that are dependent on this stage
 };
 
@@ -245,11 +246,11 @@ class StageNode : public PipelineTreeNode {
 /// children of pipeline nodes)
 class PrivateNode : public PipelineTreeNode {
  public:
-  PrivateNode(Operation *op) : PipelineTreeNode(op) {}
+  PrivateNode(Operation* op) : PipelineTreeNode(op) {}
 
   bool isPrivateNode() const final override { return true; }
   std::string getNodeName() const override { return "private"; }
-  void print(raw_ostream &os) const override;
+  void print(raw_ostream& os) const override;
 };
 
 /// Pipeline tree representing the complete hierarchical structure
@@ -261,34 +262,34 @@ class PipelineTree : public OperationTree {
   /// Destructor - cleans up all allocated nodes
   ~PipelineTree() { deleteAllNodes(); }
 
-  const RootNode *getRoot() const {
-    return static_cast<const RootNode *>(OperationTree::getRoot());
+  const RootNode* getRoot() const {
+    return static_cast<const RootNode*>(OperationTree::getRoot());
   }
-  RootNode *getRoot() {
-    return static_cast<RootNode *>(OperationTree::getRoot());
+  RootNode* getRoot() {
+    return static_cast<RootNode*>(OperationTree::getRoot());
   }
 
   /// Factory methods for creating nodes (manages allocation)
-  LoopNode *createLoopNode(mlir::Operation *op) {
-    LoopNode *node = new LoopNode(op);
+  LoopNode* createLoopNode(mlir::Operation* op) {
+    LoopNode* node = new LoopNode(op);
     if (op) opToNode_[op] = node;
     return node;
   }
 
-  PipelineNode *createPipelineNode(mlir::Operation *op) {
-    PipelineNode *node = new PipelineNode(op);
+  PipelineNode* createPipelineNode(mlir::Operation* op) {
+    PipelineNode* node = new PipelineNode(op);
     if (op) opToNode_[op] = node;
     return node;
   }
 
-  StageNode *createStageNode(mlir::Operation *op, int stage_id) {
-    StageNode *node = new StageNode(op, stage_id);
+  StageNode* createStageNode(mlir::Operation* op, int stage_id) {
+    StageNode* node = new StageNode(op, stage_id);
     if (op) opToNode_[op] = node;
     return node;
   }
 
-  PrivateNode *createPrivateNode(mlir::Operation *op) {
-    PrivateNode *node = new PrivateNode(op);
+  PrivateNode* createPrivateNode(mlir::Operation* op) {
+    PrivateNode* node = new PrivateNode(op);
     if (op) opToNode_[op] = node;
     return node;
   }
@@ -296,7 +297,7 @@ class PipelineTree : public OperationTree {
   /// Delete a single node and remove it from the map
   /// Note: user is responsible for unlinking the node and/or the subtree below
   /// it.
-  void deleteNode(PipelineTreeNode *node) {
+  void deleteNode(PipelineTreeNode* node) {
     if (!node) return;
 
     // Remove from operation map if it has an operation
@@ -310,42 +311,42 @@ class PipelineTree : public OperationTree {
 
   /// Delete all nodes in the tree
   void deleteAllNodes() {
-    llvm::SmallVector<OperationTreeNode *> to_be_deleted;
+    llvm::SmallVector<OperationTreeNode*> to_be_deleted;
     if (root_) {
       OperationTreeNode::walk<OperationTreeNode::kPostOrder>(
-          root_, [&to_be_deleted](OperationTreeNode *n) {
+          root_, [&to_be_deleted](OperationTreeNode* n) {
             to_be_deleted.push_back(n);
             return n;
           });
       root_ = nullptr;
     }
-    for (OperationTreeNode *node : to_be_deleted) {
+    for (OperationTreeNode* node : to_be_deleted) {
       delete node;
     }
     opToNode_.clear();
   }
 
   /// Build the tree from an MLIR operation (typically a function)
-  void compute(Operation &unit);
+  void compute(Operation& unit);
 
-  void recompute(Operation &unit) {
+  void recompute(Operation& unit) {
     clear();
     compute(unit);
   }
 
   /// Get the tree node for a given operation
-  PipelineTreeNode *getNodeForOp(Operation *op) const {
+  PipelineTreeNode* getNodeForOp(Operation* op) const {
     auto it = opToNode_.find(op);
     return it != opToNode_.end() ? it->second : nullptr;
   }
 
  protected:
   /// Filter function to decide whether an operation should be included
-  bool isOperationSelected(const mlir::Operation &op) const override;
+  bool isOperationSelected(const mlir::Operation& op) const override;
 
  private:
   /// Map from operations to their corresponding tree nodes
-  llvm::DenseMap<mlir::Operation *, PipelineTreeNode *> opToNode_;
+  llvm::DenseMap<mlir::Operation*, PipelineTreeNode*> opToNode_;
 };
 
 #endif  // KTIR_SCHEDULER_TRANSFORM_PIPELINETREE_HPP

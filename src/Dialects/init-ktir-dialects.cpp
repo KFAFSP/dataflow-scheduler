@@ -15,10 +15,10 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
-#include "Dialects/Includes/init-ktir-dialects.h"
+#include "src/Dialects/Includes/init-ktir-dialects.h"
 
-#include "Dialects/Includes/ktir-dialects.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "src/Dialects/Includes/ktir-dialects.h"
 
 namespace scheduler {
 

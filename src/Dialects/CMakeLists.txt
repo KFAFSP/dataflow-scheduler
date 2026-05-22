@@ -1,18 +1,55 @@
+add_subdirectory(Agen)
+add_subdirectory(Dataflow)
 add_subdirectory(KTDF)
+add_subdirectory(Uniform)
+add_subdirectory(VectorChain)
 
-add_library(SchedulerInitMLIRDialects init-mlir-dialects.cpp)
-add_library(SchedulerInitKTIRDialects init-ktir-dialects.cpp)
-add_library(SchedulerInitSchedulerDialects init-scheduler-dialects.cpp)
+add_ktir_library(KTIRSchedulerInitMLIRDialects 
+    init-mlir-dialects.cpp
 
-target_link_libraries(SchedulerInitKTIRDialects PUBLIC ${KTDP_LIB})
-target_link_libraries(SchedulerInitSchedulerDialects PUBLIC KTDFOps)
-
-add_library(SchedulerInitAllDialects init-all-dialects.cpp)
-target_link_libraries(SchedulerInitAllDialects
-  PUBLIC
-  SchedulerInitMLIRDialects
-  SchedulerInitKTIRDialects
-  SchedulerInitSchedulerDialects
+  PARTIAL_SOURCES_INTENDED
 )
 
-add_dependencies(SchedulerInitSchedulerDialects KTDFOps)
+mlir_target_link_libraries(KTIRSchedulerInitMLIRDialects PUBLIC
+  MLIRAffineDialect
+  MLIRArithDialect
+  MLIRFuncDialect
+  MLIRLinalgDialect
+  MLIRMathDialect
+  MLIRMemRefDialect
+  MLIRSCFDialect
+  MLIRTensorDialect
+)
+
+add_ktir_library(KTIRSchedulerInitKTIRDialects 
+    init-ktir-dialects.cpp
+
+  PARTIAL_SOURCES_INTENDED
+
+  LINK_LIBS PUBLIC
+    KTIRKtdpDialect
+)
+
+add_ktir_library(KTIRSchedulerInitSchedulerDialects 
+    init-scheduler-dialects.cpp
+
+  PARTIAL_SOURCES_INTENDED
+
+  LINK_LIBS PUBLIC
+    KTIRKTDFDialect
+    KTIRAgenDialect
+    KTIRDataflowDialect
+    KTIRUniformDialect
+    KTIRVectorChainDialect
+)
+
+add_ktir_library(KTIRSchedulerInitAllDialects 
+    init-all-dialects.cpp
+
+  PARTIAL_SOURCES_INTENDED
+
+  LINK_LIBS PUBLIC
+    KTIRSchedulerInitMLIRDialects
+    KTIRSchedulerInitKTIRDialects
+    KTIRSchedulerInitSchedulerDialects
+)

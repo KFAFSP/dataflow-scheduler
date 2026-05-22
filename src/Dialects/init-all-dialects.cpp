@@ -15,7 +15,7 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
-#include "Dialects/Includes/init-all-dialects.h"
+#include "src/Dialects/Includes/init-all-dialects.h"
 
 #include "mlir/IR/DialectRegistry.h"
 

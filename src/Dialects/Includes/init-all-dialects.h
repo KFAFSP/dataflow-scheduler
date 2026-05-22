@@ -18,9 +18,9 @@
 #ifndef SCHEDULER_SRC_DIALECTS_INCLUDES_INIT_ALL_DIALECTS_H
 #define SCHEDULER_SRC_DIALECTS_INCLUDES_INIT_ALL_DIALECTS_H
 
-#include "Dialects/Includes/init-ktir-dialects.h"
-#include "Dialects/Includes/init-mlir-dialects.h"
-#include "Dialects/Includes/init-scheduler-dialects.h"
+#include "src/Dialects/Includes/init-ktir-dialects.h"
+#include "src/Dialects/Includes/init-mlir-dialects.h"
+#include "src/Dialects/Includes/init-scheduler-dialects.h"
 
 namespace scheduler {
 void registerAllPasses();

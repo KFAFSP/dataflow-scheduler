@@ -19,13 +19,12 @@
 // This file defines the operations in the KTDF operation set.
 //
 //===----------------------------------------------------------------------===//
-#include "KTDFOps.hpp"
+#include "src/Dialects/KTDF/KTDFOps.hpp"
 
 #include <iostream>
 #include <iterator>
 #include <regex>
 
-#include "KTDFTypes.hpp"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -33,6 +32,7 @@
 #include "mlir/IR/PatternMatch.h"
 #include "src/Dialects/KTDF/KTDFEnums.cpp.inc"
 #include "src/Dialects/KTDF/KTDFOpsDialect.cpp.inc"
+#include "src/Dialects/KTDF/KTDFTypes.hpp"
 
 using namespace mlir;
 using namespace mlir::ktdf;
@@ -923,7 +923,7 @@ LogicalResult SelectMemrefOp::verify() {
                "got ")
            << defining_op->getName();
   }
-  if (phase_op.getNumPhases() != static_cast<int64_t>(candidates.size())) {
+  if (phase_op.getNumPhases() != candidates.size()) {
     return emitOpError("phase op num_phases (")
            << phase_op.getNumPhases() << ") must equal candidate count ("
            << candidates.size() << ")";

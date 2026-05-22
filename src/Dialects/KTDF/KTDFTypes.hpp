@@ -24,12 +24,12 @@
 #define KTDF_SRC_DIALECTS_KTDF_TYPES_HPP_
 
 #include <cstdint>
+
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
-#include "mlir/IR/BuiltinTypeInterfaces.h"
 
-namespace mlir {
-namespace ktdf {
+namespace mlir::ktdf {
 
 enum class FifoType : uint32_t;
 enum class MemorySpace : uint32_t;
@@ -39,26 +39,22 @@ enum class ApplicableUnits : uint32_t;
 
 // Placeholder for future KTDF type declarations
 
-} // namespace ktdf
-} // namespace mlir
+}  // namespace mlir::ktdf
 
 /// Include the auto-generated header file containing the declarations of the
 /// KTDF types.
 #define GET_TYPEDEF_CLASSES
-#include "src/Dialects/KTDF/KTDFTypes.hpp.inc"
+#include "src/Dialects/KTDF/KTDFOpsTypes.hpp.inc"
 
 /// Include the auto-generated header file containing the declarations of the
 /// KTDF attributes.
 #define GET_ATTRDEF_CLASSES
-#include "src/Dialects/KTDF/KTDFTypesAttributes.hpp.inc"
+#include "src/Dialects/KTDF/KTDFAttributes.hpp.inc"
 
-namespace mlir {
-namespace ktdf {
+namespace mlir::ktdf {
 
 // Placeholder for future KTDF type builders and utilities
 
-} // namespace ktdf
-} // namespace mlir
+}  // namespace mlir::ktdf
 
 #endif  // KTDF_SRC_DIALECTS_KTDF_TYPES_HPP_
-

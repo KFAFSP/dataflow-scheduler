@@ -98,7 +98,7 @@ For each `Candidate {pipeline, loop, trip_count, balanced}`:
 
 2. **Build `ktdf.parallel` at the `scf.for`'s position.** Use the custom builder added in PR #5:
    ```cpp
-   auto parallel = builder.create<mlir::ktdf::ParallelOp>(
+   auto parallel = mlir::ktdf::ParallelOp::create(builder, 
        loc,
        /*lowerBounds=*/ValueRange{lb},
        /*upperBounds=*/ValueRange{ub},
