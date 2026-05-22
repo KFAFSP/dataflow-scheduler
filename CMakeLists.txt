@@ -44,6 +44,12 @@ set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/bin)
 # Set project-specific output directories.
 set(KTIR_BINARY_DIR ${CMAKE_BINARY_DIR})
 
+if(TARGET MLIR AND NOT DEFINED MLIR_LINK_MLIR_DYLIB)
+  # As a workaround for MLIRConfig.cmake not exporting this variable, we will
+  # infer that it is set if the DSO target exists.
+  set(MLIR_LINK_MLIR_DYLIB YES)
+endif()
+
 if(KTIR_ENABLE_PYTHON_BINDINGS)
   if(NOT MLIR_PYTHON_PACKAGE_PREFIX)
     set(MLIR_PYTHON_PACKAGE_PREFIX "mlir_ktir" CACHE STRING "" FORCE)
@@ -85,3 +91,12 @@ add_subdirectory(tools)
 add_custom_target(check-all)
 add_dependencies(check-all check-ktir)
 add_subdirectory(test)
+
+# Additional installation instructions.
+
+if(LLVM_LINK_LLVM_DYLIB)
+  install(IMPORTED_RUNTIME_ARTIFACTS LLVM)
+endif()
+if(MLIR_LINK_MLIR_DYLIB)
+  install(IMPORTED_RUNTIME_ARTIFACTS MLIR)
+endif()
