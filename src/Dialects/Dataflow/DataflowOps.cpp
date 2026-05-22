@@ -8,9 +8,9 @@
 // This file defines the Dataflow operations in the MLIR operation set.
 //
 //===----------------------------------------------------------------------===//
-#include "DataflowOps.hpp"
 
-#include "DataflowTypes.hpp"
+#include "src/Dialects/Dataflow/DataflowOps.hpp"
+
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Affine/Analysis/AffineStructures.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -22,6 +22,7 @@
 #include "src/Dialects/Dataflow/DataflowEnums.cpp.inc"
 #include "src/Dialects/Dataflow/DataflowOpsDialect.cpp.inc"
 #include "src/Dialects/Dataflow/DataflowOpsTypes.cpp.inc"
+#include "src/Dialects/Dataflow/DataflowTypes.hpp"
 #include "src/dt_exception.hpp"
 
 using namespace mlir;

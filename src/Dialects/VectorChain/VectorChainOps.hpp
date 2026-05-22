@@ -32,13 +32,12 @@
 #define GET_ATTRDEF_CLASSES
 #include "src/Dialects/VectorChain/VectorChainAttributes.hpp.inc"
 
-namespace mlir {
-namespace vectorchain {
+namespace mlir::vectorchain {
+
 std::unique_ptr<Pass> createVectorChainToSentientPTPass();
 std::unique_ptr<Pass> createVectorchainToSentientPESFPPass();
 
-}  // namespace vectorchain
-}  // end namespace mlir
+}  // namespace mlir::vectorchain
 
 /// Include the auto-generated header file containing the declarations of the
 /// VectorChain operations.

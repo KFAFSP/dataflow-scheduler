@@ -25,7 +25,6 @@
 #include <iterator>
 #include <regex>
 
-#include "KTDFTypes.hpp"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -33,6 +32,7 @@
 #include "mlir/IR/PatternMatch.h"
 #include "src/Dialects/KTDF/KTDFEnums.cpp.inc"
 #include "src/Dialects/KTDF/KTDFOpsDialect.cpp.inc"
+#include "src/Dialects/KTDF/KTDFTypes.hpp"
 
 using namespace mlir;
 using namespace mlir::ktdf;

@@ -9,18 +9,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Utils.hpp"
+#include "src/Dialects/VectorChain/Utils.hpp"
 
 using namespace mlir;
 
-namespace mlir {
-namespace vectorchain {
-namespace utils {
-
-/// @brief Verifies the indices values of \p shuffle_op are valid.
-/// @param shuffle_op The vectorchain::ShuffleOp to analyze for conformity.
-/// @return Returns true if the indices values are valid, false otherwise.
-bool isShuffleIndicesValid(vectorchain::ShuffleOp shuffle_op) {
+bool mlir::vectorchain::utils::isShuffleIndicesValid(
+    vectorchain::ShuffleOp shuffle_op) {
   for (auto index_iter : shuffle_op.getIndices().getValue()) {
     if (auto index_attr = mlir::dyn_cast<IntegerAttr>(index_iter)) {
       int index = index_attr.getInt();
@@ -36,10 +30,8 @@ bool isShuffleIndicesValid(vectorchain::ShuffleOp shuffle_op) {
   return true;
 }
 
-/// @brief Converts the indices of \p shuffle_op to a vector of ints.
-/// @param shuffle_op The vectorchain::ShuffleOp to analyze for conformity.
-/// @return Returns the indices of \p shuffle_op as a vector of ints.
-std::vector<int> getShuffleIndicesAsVector(vectorchain::ShuffleOp shuffle_op) {
+std::vector<int> mlir::vectorchain::utils::getShuffleIndicesAsVector(
+    vectorchain::ShuffleOp shuffle_op) {
   std::vector<int> indices;
   if (!isShuffleIndicesValid(shuffle_op)) return indices;
   for (auto index_iter : shuffle_op.getIndices().getValue()) {
@@ -48,13 +40,8 @@ std::vector<int> getShuffleIndicesAsVector(vectorchain::ShuffleOp shuffle_op) {
   return indices;
 }
 
-/// @brief Expands \p indices into a vector of ints by repeating \p indices the
-/// number of times specified by \p repetition.
-/// @param indices The input vector of ints to expand based on \p repetition.
-/// @param repetition The number of times to repeat \indices.
-/// @return Returns an expanded vector consisting of \p indices repeated the
-/// number of times specified by \p repetition.
-std::vector<int> getExpandedVector(std::vector<int> indices, int repetition) {
+std::vector<int> mlir::vectorchain::utils::getExpandedVector(
+    std::vector<int> indices, int repetition) {
   std::vector<int> indices_expanded;
   for (int i = 0; i < repetition; i++) {
     for (int j = 0; j < indices.size(); j++) {
@@ -64,12 +51,8 @@ std::vector<int> getExpandedVector(std::vector<int> indices, int repetition) {
   return indices_expanded;
 }
 
-/// @brief Determines if \p shuffle_op represents a splat of only the first
-/// element of the input to \p shuffle_op.
-/// @param shuffle_op The vectorchain::ShuffleOp to analyze.
-/// @return Returns true if \p shuffle_op matches a splat of the first element
-/// of the input to \p shuffle_op and false otherwise.
-bool isFirstElemSplat(vectorchain::ShuffleOp shuffle_op) {
+bool mlir::vectorchain::utils::isFirstElemSplat(
+    vectorchain::ShuffleOp shuffle_op) {
   std::vector<int> indices = getShuffleIndicesAsVector(shuffle_op);
   std::vector<int> indices_expanded =
       getExpandedVector(indices, shuffle_op.getRepetition());
@@ -79,12 +62,8 @@ bool isFirstElemSplat(vectorchain::ShuffleOp shuffle_op) {
   return true;
 }
 
-/// @brief Determines if \p shuffle_op represents a splat of 7 padded elements
-/// followed by the first element of the input to \p shuffle_op .
-/// @param shuffle_op The vectorchain::ShuffleOp to analyze.
-/// @return Returns true if \p shuffle_op matches a splat of 7 padded elements
-/// followed by the first element of the input to \p shuffle_op .
-bool isPadLeftFor8FirstElemSplat(vectorchain::ShuffleOp shuffle_op) {
+bool mlir::vectorchain::utils::isPadLeftFor8FirstElemSplat(
+    vectorchain::ShuffleOp shuffle_op) {
   std::vector<int> indices = getShuffleIndicesAsVector(shuffle_op);
   std::vector<int> indices_expanded =
       getExpandedVector(indices, shuffle_op.getRepetition());
@@ -98,7 +77,8 @@ bool isPadLeftFor8FirstElemSplat(vectorchain::ShuffleOp shuffle_op) {
   return true;
 }
 
-bool isShuffleNFWDVersion0(vectorchain::ShuffleOp shuffle_op) {
+bool mlir::vectorchain::utils::isShuffleNFWDVersion0(
+    vectorchain::ShuffleOp shuffle_op) {
   std::vector<int> indices = getShuffleIndicesAsVector(shuffle_op);
   std::vector<int> indices_expanded =
       getExpandedVector(indices, shuffle_op.getRepetition());
@@ -118,7 +98,8 @@ bool isShuffleNFWDVersion0(vectorchain::ShuffleOp shuffle_op) {
   return true;
 }
 
-bool isShuffleNFWDVersion2(vectorchain::ShuffleOp shuffle_op) {
+bool mlir::vectorchain::utils::isShuffleNFWDVersion2(
+    vectorchain::ShuffleOp shuffle_op) {
   std::vector<int> indices = getShuffleIndicesAsVector(shuffle_op);
   std::vector<int> indices_expanded =
       getExpandedVector(indices, shuffle_op.getRepetition());
@@ -138,14 +119,8 @@ bool isShuffleNFWDVersion2(vectorchain::ShuffleOp shuffle_op) {
   return true;
 }
 
-/// @brief Determines if \p shuffle_op is a splat of \p num_bytes contiguous
-/// bytes starting from the first element of the input to \p shuffle_op .
-/// @param shuffle_op The vectorchain::ShuffleOp to analyze.
-/// @param num_bytes The number of bytes \p shuffle_op is expected to splat.
-/// @return Returns true if \p shuffle_op is a splat of \p num_bytes contiguous
-/// bytes starting from the first element of the input to \p shuffle_op .
-bool isSplatFromFirstElem(vectorchain::ShuffleOp shuffle_op,
-                          unsigned num_bytes) {
+bool mlir::vectorchain::utils::isSplatFromFirstElem(
+    vectorchain::ShuffleOp shuffle_op, unsigned num_bytes) {
   std::vector<int> indices = getShuffleIndicesAsVector(shuffle_op);
 
   // A splat is defined as an indices attribute consisting of n elements
@@ -171,17 +146,8 @@ bool isSplatFromFirstElem(vectorchain::ShuffleOp shuffle_op,
   return true;
 }
 
-/// @brief Determines if \p shuffle_op is a right zero pad of \p num_bytes
-/// contiguous bytes starting from the first element of the input to
-/// \p shuffle_op .
-/// @param shuffle_op The vectorchain::ShuffleOp to analyze.
-/// @param num_bytes The number of bytes \p shuffle_op is expected to use from
-/// the input to \p shuffle_op before padding.
-/// @return Returns true if \p shuffle_op is a right zero pad of \p num_bytes
-/// contiguous bytes starting from the first element of the input to
-/// \p shuffle_op .
-bool isRightZeroPadFromFirstElem(vectorchain::ShuffleOp shuffle_op,
-                                 unsigned num_bytes) {
+bool mlir::vectorchain::utils::isRightZeroPadFromFirstElem(
+    vectorchain::ShuffleOp shuffle_op, unsigned num_bytes) {
   std::vector<int> indices = getShuffleIndicesAsVector(shuffle_op);
 
   // Right zero pad is defined as an indices attribute consisting of n
@@ -209,7 +175,3 @@ bool isRightZeroPadFromFirstElem(vectorchain::ShuffleOp shuffle_op,
 
   return true;
 }
-
-}  // namespace utils
-}  // namespace vectorchain
-}  // namespace mlir

@@ -14,13 +14,13 @@
 
 #include <llvm/ADT/StringRef.h>
 
-#include "DataflowOps.hpp"
-// #include "dsc/dscdefn.h"
 #include <string>
 
-namespace dialects {
-namespace dataflow {
-namespace utils {
+#include "mlir/IR/Value.h"
+#include "src/Dialects/Dataflow/DataflowOps.hpp"
+#include "src/dt_exception.hpp"
+
+namespace dialects::dataflow::utils {
 
 int getCoreId(const mlir::dataflow::GetUnitOp op);
 int getCoreletId(const mlir::dataflow::GetUnitOp op);
@@ -49,7 +49,18 @@ std::string decodeMulticastGroupInfo(uint32_t gtr);
 /// @return int representing the iter_arg operand index \p iter_arg can be found
 /// at.
 template <typename LoopTy>
-int getIterArgIndex(LoopTy& loop, mlir::BlockArgument& iter_arg);
+int getIterArgIndex(LoopTy& loop, mlir::BlockArgument& iter_arg) {
+  DT_CHECK(iter_arg.getOwner()->getParentOp() == loop);
+  auto region_args = loop.getRegionIterArgs();
+  int index = -1;
+  for (int i = 0, e = region_args.size(); i < e; ++i) {
+    if (region_args[i] == iter_arg) {
+      index = i;
+      break;
+    }
+  }
+  return index;
+}
 
 /// @brief Returns the Value initializing \p iter_arg from \p loop .
 /// @tparam LoopTy The operation type of \p loop .
@@ -57,7 +68,12 @@ int getIterArgIndex(LoopTy& loop, mlir::BlockArgument& iter_arg);
 /// @param iter_arg The iterator argument to search for.
 /// @return Value initializing \p iter_arg .
 template <typename LoopTy>
-mlir::Value getIterArgInit(LoopTy& loop, mlir::BlockArgument& iter_arg);
+mlir::Value getIterArgInit(LoopTy& loop, mlir::BlockArgument& iter_arg) {
+  DT_CHECK(iter_arg.getOwner()->getParentOp() == loop);
+  int index = getIterArgIndex<LoopTy>(loop, iter_arg);
+  DT_CHECK(index >= 0);
+  return loop.getOperand(loop.getNumControlOperands() + index);
+}
 
 /// @brief Sets the initial value of the iter_arg chain originating from
 /// \p iter_arg to \p replace_val .
@@ -91,8 +107,6 @@ void setIterArgInit(mlir::BlockArgument& iter_arg, mlir::Value replace_val);
 llvm::SmallVector<mlir::BlockArgument> getIterArgChain(
     mlir::BlockArgument& iter_arg, mlir::Value& init_val);
 
-}  // namespace utils
-}  // namespace dataflow
-}  // namespace dialects
+}  // namespace dialects::dataflow::utils
 
 #endif  // DIALECT_DATAFLOW_UTILS_H

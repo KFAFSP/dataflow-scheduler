@@ -8,6 +8,7 @@
 // This file defines the operations in the Agen operation set.
 //
 //===----------------------------------------------------------------------===//
+
 #include "src/Dialects/Agen/AgenOps.hpp"
 
 #include <regex>

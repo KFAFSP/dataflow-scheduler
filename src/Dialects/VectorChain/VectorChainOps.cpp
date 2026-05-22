@@ -8,8 +8,6 @@
 // This file defines the Dataflow operations in the MLIR operation set.
 //
 //===----------------------------------------------------------------------===//
-#ifndef SRC_DIALECT_VECTORCHAIN_OPS_H
-#define SRC_DIALECT_VECTORCHAIN_OPS_H
 
 #include "src/Dialects/VectorChain/VectorChainOps.hpp"
 
@@ -285,4 +283,3 @@ static LogicalResult verify(CoalesceOp op) {
 #include "src/Dialects/VectorChain/VectorChainAttributes.cpp.inc"
 #define GET_OP_CLASSES
 #include "src/Dialects/VectorChain/VectorChainOps.cpp.inc"
-#endif

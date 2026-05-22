@@ -19,8 +19,7 @@
 /// Auto-generated includes
 #include "src/Dialects/Dataflow/DataflowOpsTypes.hpp.inc"
 
-namespace mlir {
-namespace dataflow {
+namespace mlir::dataflow {
 
 //===----------------------------------------------------------------------===//
 // IBMVectorFloatType
@@ -96,7 +95,6 @@ class IBMFloatType : public mlir::Type::TypeBase<IBMFloatType, mlir::Type,
   }
 };
 
-}  // namespace dataflow
-}  // namespace mlir
+}  // namespace mlir::dataflow
 
 #endif  // DIALECT_DATAFLOW_TYPES_H

@@ -8,6 +8,7 @@
 // This file defines the operations in the Uniform operation set.
 //
 //===----------------------------------------------------------------------===//
+
 #include "src/Dialects/Uniform/UniformOps.hpp"
 
 #include "mlir/IR/Builders.h"

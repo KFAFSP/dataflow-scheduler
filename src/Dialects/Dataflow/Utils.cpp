@@ -9,25 +9,19 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Utils.hpp"
+#include "src/Dialects/Dataflow/Utils.hpp"
 
 #include <llvm/ADT/StringRef.h>
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
-
-// #include "dsc/designSpaceConfig.h"
 #include "src/dt_exception.hpp"
 
 using namespace mlir;
 using namespace mlir::dataflow;
 
-namespace dialects {
-namespace dataflow {
-namespace utils {
-
-int getCoreId(const mlir::dataflow::GetUnitOp op) {
+int dialects::dataflow::utils::getCoreId(const mlir::dataflow::GetUnitOp op) {
   DT_CHECK(op && "expected valid get_unit op");
   int core = -1;
   if (!op) return core;
@@ -38,7 +32,8 @@ int getCoreId(const mlir::dataflow::GetUnitOp op) {
   return core;
 }
 
-int getCoreletId(const mlir::dataflow::GetUnitOp op) {
+int dialects::dataflow::utils::getCoreletId(
+    const mlir::dataflow::GetUnitOp op) {
   int corelet = -1;
   if (!op) return corelet;
   auto corelet_attr = op->getAttrOfType<mlir::IntegerAttr>("corelet");
@@ -48,7 +43,8 @@ int getCoreletId(const mlir::dataflow::GetUnitOp op) {
   return corelet;
 }
 
-llvm::StringRef getUnitType(mlir::dataflow::GetUnitOp op) {
+llvm::StringRef dialects::dataflow::utils::getUnitType(
+    mlir::dataflow::GetUnitOp op) {
   DT_CHECK_MSG(op, "expected valid get_unit op");
   // auto record =
   //     DesignSpaceConfig::stringToSenComponents.find(op.getType().lower());
@@ -56,7 +52,8 @@ llvm::StringRef getUnitType(mlir::dataflow::GetUnitOp op) {
   return op.getType();
 }
 
-std::string getUniqueUnitString(mlir::dataflow::GetUnitOp op) {
+std::string dialects::dataflow::utils::getUniqueUnitString(
+    mlir::dataflow::GetUnitOp op) {
   DT_CHECK_MSG(op, "expected valid get_unit op");
   std::string result = op.getType().str();
   int coreid = getCoreId(op);
@@ -70,36 +67,15 @@ std::string getUniqueUnitString(mlir::dataflow::GetUnitOp op) {
   return result;
 }
 
-bool equivalent(const mlir::dataflow::GetUnitOp op1,
-                const mlir::dataflow::GetUnitOp op2) {
+bool dialects::dataflow::utils::equivalent(
+    const mlir::dataflow::GetUnitOp op1, const mlir::dataflow::GetUnitOp op2) {
   return getCoreId(op1) == getCoreId(op2) &&
          getCoreletId(op1) == getCoreletId(op2) &&
          getUnitType(op1) == getUnitType(op2);
 }
 
-template <typename LoopTy>
-int getIterArgIndex(LoopTy& loop, BlockArgument& iter_arg) {
-  DT_CHECK(iter_arg.getOwner()->getParentOp() == loop);
-  auto region_args = loop.getRegionIterArgs();
-  int index = -1;
-  for (int i = 0, e = region_args.size(); i < e; ++i) {
-    if (region_args[i] == iter_arg) {
-      index = i;
-      break;
-    }
-  }
-  return index;
-}
-
-template <typename LoopTy>
-Value getIterArgInit(LoopTy& loop, BlockArgument& iter_arg) {
-  DT_CHECK(iter_arg.getOwner()->getParentOp() == loop);
-  int index = getIterArgIndex<LoopTy>(loop, iter_arg);
-  DT_CHECK(index >= 0);
-  return loop.getOperand(loop.getNumControlOperands() + index);
-}
-
-Value getIterArgChainInit(BlockArgument& iter_arg, bool req_one_use) {
+Value dialects::dataflow::utils::getIterArgChainInit(BlockArgument& iter_arg,
+                                                     bool req_one_use) {
   Value val = iter_arg;
   while (auto arg = dyn_cast<BlockArgument>(val)) {
     DT_CHECK(!req_one_use || val.hasOneUse());
@@ -114,7 +90,8 @@ Value getIterArgChainInit(BlockArgument& iter_arg, bool req_one_use) {
   return val;
 }
 
-void setIterArgChainInit(BlockArgument& iter_arg, Value replace_val) {
+void dialects::dataflow::utils::setIterArgChainInit(BlockArgument& iter_arg,
+                                                    Value replace_val) {
   Value val = iter_arg;
   while (auto arg = dyn_cast<BlockArgument>(val)) {
     auto parent_op = arg.getOwner()->getParentOp();
@@ -136,8 +113,8 @@ void setIterArgChainInit(BlockArgument& iter_arg, Value replace_val) {
   }
 }
 
-void setIterArgInit(BlockArgument& iter_arg, Value replace_val) {
-  int operand_idx = -1;
+void dialects::dataflow::utils::setIterArgInit(BlockArgument& iter_arg,
+                                               Value replace_val) {
   auto parent_op = iter_arg.getOwner()->getParentOp();
   if (auto affine_for = dyn_cast<affine::AffineForOp>(parent_op)) {
     auto operand_idx =
@@ -153,8 +130,8 @@ void setIterArgInit(BlockArgument& iter_arg, Value replace_val) {
   }
 }
 
-SmallVector<BlockArgument> getIterArgChain(BlockArgument& iter_arg,
-                                           Value& init_val) {
+SmallVector<BlockArgument> dialects::dataflow::utils::getIterArgChain(
+    BlockArgument& iter_arg, Value& init_val) {
   SmallVector<BlockArgument> iter_arg_chain;
   BlockArgument curr_arg = iter_arg;
   while (curr_arg) {
@@ -172,7 +149,3 @@ SmallVector<BlockArgument> getIterArgChain(BlockArgument& iter_arg,
   }
   return iter_arg_chain;
 }
-
-}  // namespace utils
-}  // namespace dataflow
-}  // namespace dialects

@@ -19,15 +19,13 @@
 
 using namespace mlir;
 
-namespace dialect {
-namespace agen {
-namespace utils {
+namespace dialect::agen::utils {
 
 /// @brief Get the coefficients of all dims for \p result of \p map .
 /// @param coeffs The vector to fill with the coefficients.
 /// @param map The AffineMap to collect the coefficients from.
 /// @param result The map result to collect the coefficients from.
-void getMapCoefficients(SmallVectorImpl<int64_t> &coeffs, const AffineMap &map,
+void getMapCoefficients(SmallVectorImpl<int64_t>& coeffs, const AffineMap& map,
                         int result);
 
 /// @brief Construct a map of iterator coefficients from loop iterators to
@@ -42,8 +40,8 @@ void getMapCoefficients(SmallVectorImpl<int64_t> &coeffs, const AffineMap &map,
 /// @return DenseMap<Value, int64_t> containing the indices to composed
 /// coefficients.
 DenseMap<Value, int64_t> constructIteratorCoeffDict(
-    const AffineMap &subscripts_map, const AffineMap &transfer_order,
-    const AffineMap &mem_view_layout_map, SmallVectorImpl<Value> &indices);
+    const AffineMap& subscripts_map, const AffineMap& transfer_order,
+    const AffineMap& mem_view_layout_map, SmallVectorImpl<Value>& indices);
 
 /// @brief Calculates time offsets given an initial \p time_offsets ,
 /// \p mem_view_layout_map , \p time_addr_map , and a \p time_order .
@@ -55,14 +53,12 @@ DenseMap<Value, int64_t> constructIteratorCoeffDict(
 /// @param time_order The time order to use for the final \p time_offsets .
 /// @return LogicalResult::success() if the calculation was successful,
 /// LogicalResult::failure() otherwise.
-LogicalResult calculateTimeOffsets(SmallVectorImpl<int64_t> &time_offsets,
-                                   const AffineMap &mem_view_layout_map,
-                                   const AffineMap &time_addr_map,
-                                   const AffineMap &time_order);
+LogicalResult calculateTimeOffsets(SmallVectorImpl<int64_t>& time_offsets,
+                                   const AffineMap& mem_view_layout_map,
+                                   const AffineMap& time_addr_map,
+                                   const AffineMap& time_order);
 
-}  // namespace utils
-}  // namespace agen
-}  // namespace dialect
+}  // namespace dialect::agen::utils
 
 #endif  // SRC_CONVERSION_AGENTOLLVM_UTILS_H
 

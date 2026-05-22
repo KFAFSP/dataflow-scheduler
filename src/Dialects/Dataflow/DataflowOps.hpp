@@ -24,15 +24,11 @@
 #define GET_ATTRDEF_CLASSES
 #include "src/Dialects/Dataflow/DataflowAttributes.hpp.inc"
 
-namespace mlir {
-namespace dataflow {
+namespace mlir::dataflow {
 
 static StringRef getDbgNameAttrStrName() { return "dbgName"; }
 
-static void print(OpAsmPrinter& printer, Operation* op);
-
-}  // namespace dataflow
-}  // end namespace mlir
+}  // namespace mlir::dataflow
 
 /// Include the auto-generated header file containing the declarations of the
 /// Dataflow operations.

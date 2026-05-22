@@ -20,12 +20,12 @@
 /// Auto-generated includes.
 #include "src/Dialects/Uniform/UniformOpsDialect.hpp.inc"
 
-namespace mlir {
-namespace uniform {
+namespace mlir::uniform {
+
 static StringRef getRegLocalesAttrStrName() { return "regLocales"; }
 static StringRef getRegIndicesAttrStrName() { return "regIndices"; }
-}  // namespace uniform
-}  // namespace mlir
+
+}  // namespace mlir::uniform
 
 #define GET_OP_CLASSES
 #include "src/Dialects/Uniform/UniformOps.hpp.inc"

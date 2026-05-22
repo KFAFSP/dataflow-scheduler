@@ -9,13 +9,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "DataflowTypes.hpp"
+#include "src/Dialects/Dataflow/DataflowTypes.hpp"
 
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
-
-#include "DataflowOps.hpp"
+#include "src/Dialects/Dataflow/DataflowOps.hpp"
 
 using namespace mlir;
 using namespace dataflow;
@@ -24,7 +23,7 @@ using namespace dataflow;
 // IBMVectorFloatType
 //===----------------------------------------------------------------------===//
 
-Type DataflowDialect::parseType(DialectAsmParser &parser) const {
+Type DataflowDialect::parseType(DialectAsmParser& parser) const {
   mlir::Type elementType;
   mlir::Type elementType_stored;
   auto &builder = parser.getBuilder();
@@ -53,7 +52,7 @@ Type DataflowDialect::parseType(DialectAsmParser &parser) const {
 }
 
 void DataflowDialect::printType(mlir::Type type,
-                                mlir::DialectAsmPrinter &printer) const {
+                                mlir::DialectAsmPrinter& printer) const {
   if (isa<IBMFloatType>(type)) {
     IBMFloatType ibm_float = mlir::cast<IBMFloatType>(type);
     printer << "ibm<";

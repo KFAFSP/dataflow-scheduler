@@ -9,7 +9,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Utils.hpp"
+#include "src/Dialects/Agen/Utils.hpp"
 
 #include "mlir/Dialect/Affine/Analysis/AffineStructures.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -17,11 +17,8 @@
 
 using namespace mlir;
 
-namespace dialect {
-namespace agen {
-namespace utils {
-
-void getMapCoefficients(SmallVectorImpl<int64_t>& coeffs, const AffineMap& map,
+void dialect::agen::utils::getMapCoefficients(SmallVectorImpl<int64_t>& coeffs,
+                                              const AffineMap& map,
                         int result) {
   affine::FlatAffineValueConstraints csts;
   auto res = getFlattenedAffineExpr(map.getResult(result), map.getNumDims(),
@@ -53,7 +50,7 @@ static SmallVector<int64_t> constructDimCoefficients(AffineMap& composed_map) {
   return composed_coeffs;
 }
 
-DenseMap<Value, int64_t> constructIteratorCoeffDict(
+DenseMap<Value, int64_t> dialect::agen::utils::constructIteratorCoeffDict(
     const AffineMap& subscripts_map, const AffineMap& transfer_order,
     const AffineMap& mem_view_layout_map, SmallVectorImpl<Value>& indices) {
   auto composed_load_order_map = transfer_order.compose(subscripts_map);
@@ -81,9 +78,9 @@ DenseMap<Value, int64_t> constructIteratorCoeffDict(
   return indices_coeff_dict;
 }
 
-LogicalResult calculateTimeOffsets(SmallVectorImpl<int64_t>& time_offsets,
-                                   const AffineMap& mem_view_layout_map,
-                                   const AffineMap& time_addr_map,
+LogicalResult dialect::agen::utils::calculateTimeOffsets(
+    SmallVectorImpl<int64_t>& time_offsets,
+    const AffineMap& mem_view_layout_map, const AffineMap& time_addr_map,
                                    const AffineMap& time_order) {
   affine::FlatAffineValueConstraints* cst = nullptr;
   SmallVector<int64_t> tmp_time_offsets;
@@ -104,9 +101,5 @@ LogicalResult calculateTimeOffsets(SmallVectorImpl<int64_t>& time_offsets,
 
   return success();
 }
-
-}  // namespace utils
-}  // namespace agen
-}  // namespace dialect
 
 // Made with Bob
