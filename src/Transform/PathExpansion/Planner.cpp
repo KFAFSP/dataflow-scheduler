@@ -386,7 +386,7 @@ static std::optional<ArchitectureGraph::Resource> extractAnchorResource(
   assert(units.size() == 1 &&
          "path expansion currently does not handle nested pipelines with "
          "multi-unit stages");
-  
+
   mlir::ktdf::ComponentType component = units[0];
   if (component == mlir::ktdf::ComponentType::SFP) {
     return ArchitectureGraph::Resource::SFP;
@@ -417,8 +417,7 @@ static void analyzeTransferEndpoints(mlir::ktdf::DataTransferOp transfer_op,
 
 /// Analyze stage body to determine operation types
 static void analyzeStageOperations(mlir::ktdf::StageOp stage_op,
-                                   StageSummary& summary,
-                                   bool& has_compute,
+                                   StageSummary& summary, bool& has_compute,
                                    bool& has_transfer) {
   stage_op.walk([&](mlir::Operation* op) {
     if (auto transfer_op = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(op)) {
@@ -426,7 +425,7 @@ static void analyzeStageOperations(mlir::ktdf::StageOp stage_op,
       analyzeTransferEndpoints(transfer_op, summary);
       return mlir::WalkResult::advance();
     }
-    
+
     if (mlir::isa<mlir::linalg::LinalgOp>(op)) {
       has_compute = true;
     }
@@ -776,7 +775,7 @@ static ArchitectureGraph::Resource getIntermediateResource(
     StageNode* prev_stage, StageNode* next_stage, PathExpansionPlan* plan) {
   bool prev_is_intermediate = prev_stage && isIntermediateStage(prev_stage);
   bool next_is_intermediate = next_stage && isIntermediateStage(next_stage);
-  
+
   if (prev_is_intermediate) {
     assert(plan->stage_info.count(prev_stage) &&
            "Intermediate stage should have info");
@@ -800,24 +799,20 @@ static bool isIntermediateTransfer(mlir::Type src_type, mlir::Type dest_type) {
 
 /// Create buffer specification and transfer info for intermediate stage
 static TransferMaterializationInfo* createIntermediateTransferInfo(
-    mlir::ktdf::DataTransferOp transfer,
-    mlir::Type src_type, mlir::Type dest_type,
-    ArchitectureGraph::Resource current_resource,
+    mlir::ktdf::DataTransferOp transfer, mlir::Type src_type,
+    mlir::Type dest_type, ArchitectureGraph::Resource current_resource,
     ArchitectureGraph::Resource intermediate_resource,
-    bool intermediate_is_source,
-    const ArchitectureGraph& arch_graph,
+    bool intermediate_is_source, const ArchitectureGraph& arch_graph,
     PathExpansionPlan* plan) {
-  
   bool src_is_memref = mlir::isa<mlir::MemRefType>(src_type);
-  mlir::MemRefType memref_type =
-      src_is_memref ? mlir::cast<mlir::MemRefType>(src_type)
-                    : mlir::cast<mlir::MemRefType>(dest_type);
+  mlir::MemRefType memref_type = src_is_memref
+                                     ? mlir::cast<mlir::MemRefType>(src_type)
+                                     : mlir::cast<mlir::MemRefType>(dest_type);
 
   // Create memory buffer spec for the intermediate resource
-  PrivateResourceSpec* buffer_spec =
-      plan->resource_factory.createMemoryBuffer(intermediate_resource,
-                                                memref_type.getShape(),
-                                                memref_type.getElementType());
+  PrivateResourceSpec* buffer_spec = plan->resource_factory.createMemoryBuffer(
+      intermediate_resource, memref_type.getShape(),
+      memref_type.getElementType());
 
   // Get architecture edge info
   ArchitectureGraph::NodeId intermediate_node =
@@ -885,13 +880,15 @@ static mlir::LogicalResult analyzeStageTransfers(
     }
 
     LLVM_DEBUG({
-      const PrivateResourceSpec* buffer_spec = transfer_info->source_private_resource;
+      const PrivateResourceSpec* buffer_spec =
+          transfer_info->source_private_resource;
       if (!intermediate_is_source) {
         buffer_spec = transfer_info->dest_private_resource;
       }
       llvm::dbgs() << "  Stage " << current_stage->getStageId()
                    << ": Created buffer spec for "
-                   << ArchitectureGraph::stringifyResource(intermediate_resource)
+                   << ArchitectureGraph::stringifyResource(
+                          intermediate_resource)
                    << " shape=[";
       for (size_t j = 0; j < buffer_spec->shape.size(); ++j) {
         llvm::dbgs() << buffer_spec->shape[j];
@@ -1306,14 +1303,15 @@ static std::optional<mlir::ktdf::ComponentType> getTransferStageUnit(
       getTransferUnitFromEdge(arch_graph, *transfer);
 
   if (transfer_unit) {
-    LLVM_DEBUG(
-        llvm::dbgs()
-        << "  Stage " << stage->getStageId() << ": Assigned applicable unit "
-        << mlir::ktdf::stringifyComponentType(*transfer_unit) << " for "
-        << ArchitectureGraph::stringifyResource(transfer->source_resource)
-        << " -> "
-        << ArchitectureGraph::stringifyResource(transfer->dest_resource)
-        << "\n");
+    LLVM_DEBUG(llvm::dbgs()
+               << "  Stage " << stage->getStageId()
+               << ": Assigned applicable unit "
+               << mlir::ktdf::stringifyComponentType(*transfer_unit) << " for "
+               << ArchitectureGraph::stringifyResource(
+                      transfer->source_resource)
+               << " -> "
+               << ArchitectureGraph::stringifyResource(transfer->dest_resource)
+               << "\n");
   }
   return transfer_unit;
 }
@@ -1350,7 +1348,8 @@ static mlir::LogicalResult assignApplicableUnit(
   if (stage_info.kind == StageMaterializationInfo::Kind::kAdaptTransfer ||
       stage_info.kind == StageMaterializationInfo::Kind::kSyntheticTransfer) {
     // For transfer stages, use the transfer unit from the architecture graph
-    stage_info.applicable_unit = getTransferStageUnit(stage, arch_graph, stage_info);
+    stage_info.applicable_unit =
+        getTransferStageUnit(stage, arch_graph, stage_info);
     return mlir::success();
   }
 
@@ -1362,11 +1361,13 @@ static mlir::LogicalResult assignApplicableUnit(
   }
 
   // Fallback: use the first transfer's edge to determine the unit
-  stage_info.applicable_unit = getTransferStageUnit(stage, arch_graph, stage_info);
+  stage_info.applicable_unit =
+      getTransferStageUnit(stage, arch_graph, stage_info);
   if (stage_info.applicable_unit) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Stage " << stage->getStageId()
-               << ": Assigned applicable unit from first transfer (fallback)\n");
+    LLVM_DEBUG(
+        llvm::dbgs()
+        << "  Stage " << stage->getStageId()
+        << ": Assigned applicable unit from first transfer (fallback)\n");
   }
 
   return mlir::success();
@@ -1465,14 +1466,11 @@ buildFullShortestPath(
 
 /// Execute the 5-step path expansion algorithm
 static mlir::LogicalResult executeExpansionSteps(
-    llvm::SmallVector<StageNode*>& expanded_stages,
-    PipelineTree& tree, PipelineNode* pipeline,
-    const llvm::SmallVector<StageNode*>& sorted_stages,
+    llvm::SmallVector<StageNode*>& expanded_stages, PipelineTree& tree,
+    PipelineNode* pipeline, const llvm::SmallVector<StageNode*>& sorted_stages,
     const llvm::SmallVector<StageSummary>& summaries,
-    const ArchitectureGraph& arch_graph,
-    PathExpansionPlan* plan,
+    const ArchitectureGraph& arch_graph, PathExpansionPlan* plan,
     int& next_stage_id) {
-  
   // STEP 1: Legalize connections and insert intermediate stages
   LLVM_DEBUG(llvm::dbgs() << "\n=== Step 1: Connection Legalization ===\n");
   auto expanded_stages_or =
@@ -1482,46 +1480,44 @@ static mlir::LogicalResult executeExpansionSteps(
     return mlir::failure();
   }
   expanded_stages = *expanded_stages_or;
-  LLVM_DEBUG(debugPrintStageList(llvm::dbgs(), expanded_stages, plan,
-                                 "After Step 1"));
+  LLVM_DEBUG(
+      debugPrintStageList(llvm::dbgs(), expanded_stages, plan, "After Step 1"));
 
   // STEP 2: Analyze original stage transfers
   LLVM_DEBUG(
       llvm::dbgs() << "\n=== Step 2: Original Stage Transfer Analysis ===\n");
-  if (mlir::failed(analyzeOriginalStageTransfers(expanded_stages, arch_graph,
-                                                 plan))) {
+  if (mlir::failed(
+          analyzeOriginalStageTransfers(expanded_stages, arch_graph, plan))) {
     return mlir::failure();
   }
-  LLVM_DEBUG(debugPrintStageList(llvm::dbgs(), expanded_stages, plan,
-                                 "After Step 2"));
+  LLVM_DEBUG(
+      debugPrintStageList(llvm::dbgs(), expanded_stages, plan, "After Step 2"));
 
   // STEP 3: Analyze FIFO operations
   LLVM_DEBUG(llvm::dbgs() << "\n=== Step 3: FIFO Operation Analysis ===\n");
-  if (mlir::failed(
-          analyzeFifoOperations(expanded_stages, arch_graph, plan))) {
+  if (mlir::failed(analyzeFifoOperations(expanded_stages, arch_graph, plan))) {
     return mlir::failure();
   }
-  LLVM_DEBUG(debugPrintStageList(llvm::dbgs(), expanded_stages, plan,
-                                 "After Step 3"));
+  LLVM_DEBUG(
+      debugPrintStageList(llvm::dbgs(), expanded_stages, plan, "After Step 3"));
 
   // STEP 4: Populate intermediate stage transfers
   LLVM_DEBUG(llvm::dbgs()
              << "\n=== Step 4: Intermediate Stage Transfer Population ===\n");
-  if (mlir::failed(populateIntermediateStageTransfers(
-          expanded_stages, arch_graph, plan))) {
+  if (mlir::failed(populateIntermediateStageTransfers(expanded_stages,
+                                                      arch_graph, plan))) {
     return mlir::failure();
   }
-  LLVM_DEBUG(debugPrintStageList(llvm::dbgs(), expanded_stages, plan,
-                                 "After Step 4"));
+  LLVM_DEBUG(
+      debugPrintStageList(llvm::dbgs(), expanded_stages, plan, "After Step 4"));
 
   // STEP 5: Assign applicable units
   LLVM_DEBUG(llvm::dbgs() << "\n=== Step 5: Assign Applicable Units ===\n");
-  if (mlir::failed(
-          assignApplicableUnits(expanded_stages, arch_graph, plan))) {
+  if (mlir::failed(assignApplicableUnits(expanded_stages, arch_graph, plan))) {
     return mlir::failure();
   }
-  LLVM_DEBUG(debugPrintStageList(llvm::dbgs(), expanded_stages, plan,
-                                 "After Step 5"));
+  LLVM_DEBUG(
+      debugPrintStageList(llvm::dbgs(), expanded_stages, plan, "After Step 5"));
 
   return mlir::success();
 }
@@ -1605,10 +1601,10 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   // Execute the 5-step expansion algorithm
   int next_stage_id = sorted_stages.size();
   llvm::SmallVector<StageNode*> expanded_stages;
-  
+
   if (mlir::failed(executeExpansionSteps(expanded_stages, tree, pipeline,
-                                        sorted_stages, summaries, arch_graph,
-                                        plan.get(), next_stage_id))) {
+                                         sorted_stages, summaries, arch_graph,
+                                         plan.get(), next_stage_id))) {
     return nullptr;
   }
 

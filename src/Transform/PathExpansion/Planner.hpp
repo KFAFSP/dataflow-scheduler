@@ -36,6 +36,7 @@
 
 #include <optional>
 
+#include "PlannerFactories.hpp"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -119,82 +120,7 @@ struct PrivateResourceAllocation {
   PrivateResourceAllocation(const PrivateResourceSpec* s) : spec(s) {}
 };
 
-/// Factory for managing private resource allocations
-/// This replaces index-based schemes with pointer-based references
-class PrivateResourceFactory {
- public:
-  /// Create a new resource spec and return a pointer to it
-  /// The factory owns the spec and keeps it alive
-  PrivateResourceSpec* createMemoryBuffer(
-      ArchitectureGraph::Resource memory_resource,
-      llvm::ArrayRef<int64_t> shape, mlir::Type element_type);
-
-  PrivateResourceSpec* createFifo(mlir::ktdf::FifoType fifo_type,
-                                  llvm::ArrayRef<int64_t> elements_per_slot,
-                                  mlir::Type element_type);
-
-  /// Get all resource specs created by this factory
-  llvm::ArrayRef<std::unique_ptr<PrivateResourceSpec>> getSpecs() const {
-    return specs_;
-  }
-
-  /// Register an allocation for a spec (called during materialization)
-  void registerAllocation(const PrivateResourceSpec* spec,
-                          llvm::ArrayRef<mlir::Value> ssa_values);
-
-  /// Look up the allocation for a spec
-  const PrivateResourceAllocation* getAllocation(
-      const PrivateResourceSpec* spec) const;
-
- private:
-  // Owned resource specs
-  llvm::SmallVector<std::unique_ptr<PrivateResourceSpec>> specs_;
-
-  // Map from spec pointer to its allocation
-  llvm::DenseMap<const PrivateResourceSpec*,
-                 std::unique_ptr<PrivateResourceAllocation>>
-      allocations_;
-};
-
-// Forward declaration
-struct TransferMaterializationInfo;
-
-/// Factory for creating and managing TransferMaterializationInfo objects
-/// Owns all transfer info objects and provides factory methods
-class TransferInfoFactory {
- public:
-  /// Factory method: Create transfer from template with intermediate buffer
-  TransferMaterializationInfo* createFromTemplateWithBuffer(
-      mlir::ktdf::DataTransferOp template_op,
-      const ArchitectureGraph::EdgeInfo& edge,
-      ArchitectureGraph::Resource intermediate_resource,
-      ArchitectureGraph::Resource current_resource, bool intermediate_is_source,
-      const PrivateResourceSpec* buffer_spec, mlir::OpBuilder& builder);
-
-  /// Factory method: Create transfer for FIFO operation
-  TransferMaterializationInfo* createFromFifoOp(
-      mlir::Operation* fifo_op, const ArchitectureGraph::EdgeInfo& edge,
-      ArchitectureGraph::Resource source_resource,
-      ArchitectureGraph::Resource dest_resource,
-      const PrivateResourceSpec* fifo_spec, size_t slot_index, bool is_read);
-
-  /// Factory method: Create synthetic transfer for intermediate stage
-  TransferMaterializationInfo* createSynthetic(
-      const ArchitectureGraph::EdgeInfo& edge,
-      ArchitectureGraph::Resource source_resource,
-      ArchitectureGraph::Resource dest_resource,
-      const PrivateResourceSpec* source_spec, size_t source_slot_index,
-      llvm::ArrayRef<mlir::Value> source_indices,
-      llvm::ArrayRef<mlir::OpFoldResult> source_sizes,
-      const PrivateResourceSpec* dest_spec, size_t dest_slot_index,
-      llvm::ArrayRef<mlir::Value> dest_indices,
-      llvm::ArrayRef<mlir::OpFoldResult> dest_sizes,
-      mlir::MLIRContext* context);
-
- private:
-  // Owned transfer info objects
-  llvm::SmallVector<std::unique_ptr<TransferMaterializationInfo>> transfers_;
-};
+// Factory classes are declared in PlannerFactories.hpp
 
 /// Information needed to materialize a transfer operation
 struct TransferMaterializationInfo {

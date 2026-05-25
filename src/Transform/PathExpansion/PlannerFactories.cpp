@@ -20,6 +20,8 @@
 // - TransferInfoFactory: Manages transfer materialization info
 //===----------------------------------------------------------------------===//
 
+#include "PlannerFactories.hpp"
+
 #include "Planner.hpp"
 #include "mlir/IR/Builders.h"
 

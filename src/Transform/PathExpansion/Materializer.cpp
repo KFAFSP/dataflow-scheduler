@@ -210,7 +210,8 @@ mlir::ktdf::PipelineOp PathExpansionMaterializer::materializePipelineNode(
   // Set insertion point inside the pipeline body
   builder_.setInsertionPointToStart(&new_pipeline.getBody().front());
 
-  // Materialize all children (private node first, then stages) via pre-order traversal
+  // Materialize all children (private node first, then stages) via pre-order
+  // traversal
   materializeChildren(pipeline_node);
 
   builder_.setInsertionPointAfter(new_pipeline);
@@ -389,9 +390,9 @@ void PathExpansionMaterializer::allocateNewPrivateResources(
     // Create FIFO allocation with multiple slots
     llvm::SmallVector<mlir::Type> fifo_slot_types;
     for (int64_t num_elements : spec->elements_per_slot) {
-      mlir::ktdf::FifoSlotType fifo_type = mlir::ktdf::FifoSlotType::get(
-          builder_.getContext(), spec->fifo_type, num_elements,
-          spec->element_type);
+      mlir::ktdf::FifoSlotType fifo_type =
+          mlir::ktdf::FifoSlotType::get(builder_.getContext(), spec->fifo_type,
+                                        num_elements, spec->element_type);
       fifo_slot_types.push_back(fifo_type);
     }
 
