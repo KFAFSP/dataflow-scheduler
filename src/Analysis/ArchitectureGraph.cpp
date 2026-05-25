@@ -275,6 +275,60 @@ llvm::StringRef ArchitectureGraph::stringifyEdgeKind(EdgeKind edge_kind) {
   llvm_unreachable("unknown ArchitectureGraph::EdgeKind");
 }
 
+mlir::ktdf::FifoSlotType ArchitectureGraph::getFifoTypeFromEdge(
+    mlir::MLIRContext* ctx, const EdgeInfo& edge, Resource source_resource,
+    Resource dest_resource, mlir::Type element_type,
+    llvm::ArrayRef<int64_t> shape) {
+  // Determine FIFO type from edge
+  mlir::ktdf::FifoType fifo_type;
+  if (edge.fifo_type) {
+    fifo_type = *edge.fifo_type;
+  } else {
+    // Default based on source/dest resources
+    if (source_resource == Resource::HBM && dest_resource == Resource::SFP) {
+      fifo_type = mlir::ktdf::FifoType::HbmToSfp;
+    } else if (source_resource == Resource::SFP &&
+               dest_resource == Resource::HBM) {
+      fifo_type = mlir::ktdf::FifoType::SfpToHbm;
+    } else if (source_resource == Resource::HBM &&
+               dest_resource == Resource::PE) {
+      fifo_type = mlir::ktdf::FifoType::HbmToPe;
+    } else if (source_resource == Resource::PE &&
+               dest_resource == Resource::HBM) {
+      fifo_type = mlir::ktdf::FifoType::PeToHbm;
+    } else if (source_resource == Resource::LX &&
+               dest_resource == Resource::SFP) {
+      fifo_type = mlir::ktdf::FifoType::LxluToSfp;
+    } else if (source_resource == Resource::SFP &&
+               dest_resource == Resource::LX) {
+      fifo_type = mlir::ktdf::FifoType::SfpToLxsu;
+    } else if (source_resource == Resource::LX &&
+               dest_resource == Resource::PE) {
+      fifo_type = mlir::ktdf::FifoType::LxluToPe;
+    } else if (source_resource == Resource::PE &&
+               dest_resource == Resource::LX) {
+      fifo_type = mlir::ktdf::FifoType::PeToLxsu;
+    } else if (source_resource == Resource::SFP &&
+               dest_resource == Resource::PE) {
+      fifo_type = mlir::ktdf::FifoType::SfpToPe;
+    } else if (source_resource == Resource::PE &&
+               dest_resource == Resource::SFP) {
+      fifo_type = mlir::ktdf::FifoType::PeToSfp;
+    } else {
+      llvm_unreachable("Unsupported FIFO edge");
+    }
+  }
+
+  // Calculate total number of elements
+  int64_t num_elements = 1;
+  for (int64_t dim : shape) {
+    num_elements *= dim;
+  }
+
+  return mlir::ktdf::FifoSlotType::get(ctx, fifo_type, num_elements,
+                                       element_type);
+}
+
 }  // namespace scheduler
 
 // Made with Bob

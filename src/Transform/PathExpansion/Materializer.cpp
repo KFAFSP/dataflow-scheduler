@@ -107,6 +107,36 @@ mlir::OpFoldResult PathExpansionMaterializer::materializeOpFoldResult(
   return foldResult;
 }
 
+mlir::Value PathExpansionMaterializer::getPrivateResourceValue(
+    const PrivateResourceSpec* spec, size_t slot_index) {
+  const PrivateResourceAllocation* alloc =
+      resource_factory_.getAllocation(spec);
+  assert(alloc && "Private resource should have been allocated");
+  assert(slot_index < alloc->ssa_values.size() && "Slot index out of bounds");
+  return alloc->ssa_values[slot_index];
+}
+
+PathExpansionMaterializer::MaterializedTransferParams
+PathExpansionMaterializer::materializeTransferParams(
+    const TransferMaterializationInfo& info) {
+  MaterializedTransferParams params;
+
+  for (mlir::Value idx : info.source_indices) {
+    params.source_indices.push_back(materializeValue(idx));
+  }
+  for (mlir::OpFoldResult size : info.source_sizes) {
+    params.source_sizes.push_back(materializeOpFoldResult(size));
+  }
+  for (mlir::Value idx : info.dest_indices) {
+    params.dest_indices.push_back(materializeValue(idx));
+  }
+  for (mlir::OpFoldResult size : info.dest_sizes) {
+    params.dest_sizes.push_back(materializeOpFoldResult(size));
+  }
+
+  return params;
+}
+
 mlir::Attribute PathExpansionMaterializer::getMemorySpaceFromResource(
     ArchitectureGraph::Resource resource) {
   mlir::MLIRContext* ctx = builder_.getContext();
@@ -128,57 +158,9 @@ mlir::ktdf::FifoSlotType PathExpansionMaterializer::getFifoTypeFromEdge(
     ArchitectureGraph::Resource source_resource,
     ArchitectureGraph::Resource dest_resource, mlir::Type element_type,
     llvm::ArrayRef<int64_t> shape) {
-  mlir::MLIRContext* ctx = builder_.getContext();
-
-  // Determine FIFO type from edge
-  mlir::ktdf::FifoType fifo_type;
-  if (edge.fifo_type) {
-    fifo_type = *edge.fifo_type;
-  } else {
-    // Default based on source/dest resources
-    if (source_resource == ArchitectureGraph::Resource::HBM &&
-        dest_resource == ArchitectureGraph::Resource::SFP) {
-      fifo_type = mlir::ktdf::FifoType::HbmToSfp;
-    } else if (source_resource == ArchitectureGraph::Resource::SFP &&
-               dest_resource == ArchitectureGraph::Resource::HBM) {
-      fifo_type = mlir::ktdf::FifoType::SfpToHbm;
-    } else if (source_resource == ArchitectureGraph::Resource::HBM &&
-               dest_resource == ArchitectureGraph::Resource::PE) {
-      fifo_type = mlir::ktdf::FifoType::HbmToPe;
-    } else if (source_resource == ArchitectureGraph::Resource::PE &&
-               dest_resource == ArchitectureGraph::Resource::HBM) {
-      fifo_type = mlir::ktdf::FifoType::PeToHbm;
-    } else if (source_resource == ArchitectureGraph::Resource::LX &&
-               dest_resource == ArchitectureGraph::Resource::SFP) {
-      fifo_type = mlir::ktdf::FifoType::LxluToSfp;
-    } else if (source_resource == ArchitectureGraph::Resource::SFP &&
-               dest_resource == ArchitectureGraph::Resource::LX) {
-      fifo_type = mlir::ktdf::FifoType::SfpToLxsu;
-    } else if (source_resource == ArchitectureGraph::Resource::LX &&
-               dest_resource == ArchitectureGraph::Resource::PE) {
-      fifo_type = mlir::ktdf::FifoType::LxluToPe;
-    } else if (source_resource == ArchitectureGraph::Resource::PE &&
-               dest_resource == ArchitectureGraph::Resource::LX) {
-      fifo_type = mlir::ktdf::FifoType::PeToLxsu;
-    } else if (source_resource == ArchitectureGraph::Resource::SFP &&
-               dest_resource == ArchitectureGraph::Resource::PE) {
-      fifo_type = mlir::ktdf::FifoType::SfpToPe;
-    } else if (source_resource == ArchitectureGraph::Resource::PE &&
-               dest_resource == ArchitectureGraph::Resource::SFP) {
-      fifo_type = mlir::ktdf::FifoType::PeToSfp;
-    } else {
-      llvm_unreachable("Unsupported FIFO edge");
-    }
-  }
-
-  // Calculate total number of elements
-  int64_t num_elements = 1;
-  for (int64_t dim : shape) {
-    num_elements *= dim;
-  }
-
-  return mlir::ktdf::FifoSlotType::get(ctx, fifo_type, num_elements,
-                                       element_type);
+  return ArchitectureGraph::getFifoTypeFromEdge(builder_.getContext(), edge,
+                                                source_resource, dest_resource,
+                                                element_type, shape);
 }
 
 //===----------------------------------------------------------------------===//
@@ -590,10 +572,10 @@ void PathExpansionMaterializer::cloneStageBody(mlir::ktdf::StageOp orig_stage) {
   }
 }
 
-void PathExpansionMaterializer::adaptStageBodyFifoKinds(
-    mlir::ktdf::StageOp orig_stage, const StageMaterializationInfo& info) {
-  // Clone the stage body but adapt data_transfer operations to use new FIFO
-  // resources
+void PathExpansionMaterializer::adaptStageBodyWithTransfers(
+    mlir::ktdf::StageOp orig_stage, const StageMaterializationInfo& info,
+    bool handle_fifo_ops) {
+  // Clone the stage body but adapt transfer operations to use new resources
   mlir::Block* orig_body = &orig_stage.getBody().front();
 
   // Build a map from original transfer ops to their transfer info
@@ -610,93 +592,47 @@ void PathExpansionMaterializer::adaptStageBodyFifoKinds(
 
     // Check if this is a data_transfer that needs adaptation
     if (auto transfer_op = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(&op)) {
-      // Look up the transfer info for this operation
       auto it = transfer_map.find(&op);
       if (it != transfer_map.end()) {
         const TransferMaterializationInfo& transfer_info = *it->second;
-        mlir::Location loc = transfer_op.getLoc();
 
-        // Get source - use private resource if specified, otherwise materialize
-        // from template
-        mlir::Value source;
-        if (transfer_info.source_private_resource) {
-          // Look up the allocated SSA value from the factory
-          const PrivateResourceAllocation* alloc =
-              resource_factory_.getAllocation(
-                  transfer_info.source_private_resource);
-          assert(alloc && "Private resource should have been allocated");
-          assert(transfer_info.source_slot_index < alloc->ssa_values.size() &&
-                 "Slot index out of bounds");
-          source = alloc->ssa_values[transfer_info.source_slot_index];
-        } else {
-          source = materializeValue(transfer_op.getSource());
-        }
+        // Get source and destination using helper
+        mlir::Value source =
+            transfer_info.source_private_resource
+                ? getPrivateResourceValue(transfer_info.source_private_resource,
+                                          transfer_info.source_slot_index)
+                : materializeValue(transfer_op.getSource());
 
-        // Get destination - use private resource if specified, otherwise
-        // materialize from template
-        mlir::Value destination;
-        if (transfer_info.dest_private_resource) {
-          // Look up the allocated SSA value from the factory
-          const PrivateResourceAllocation* alloc =
-              resource_factory_.getAllocation(
-                  transfer_info.dest_private_resource);
-          assert(alloc && "Private resource should have been allocated");
-          assert(transfer_info.dest_slot_index < alloc->ssa_values.size() &&
-                 "Slot index out of bounds");
-          destination = alloc->ssa_values[transfer_info.dest_slot_index];
-        } else {
-          destination = materializeValue(transfer_op.getDestination());
-        }
+        mlir::Value destination =
+            transfer_info.dest_private_resource
+                ? getPrivateResourceValue(transfer_info.dest_private_resource,
+                                          transfer_info.dest_slot_index)
+                : materializeValue(transfer_op.getDestination());
 
-        // Get indices and sizes from transfer_info (set by planner)
-        // The planner has already determined the correct sizes based on buffer
-        // shapes
-        llvm::SmallVector<mlir::Value> source_indices;
-        for (mlir::Value idx : transfer_info.source_indices) {
-          source_indices.push_back(materializeValue(idx));
-        }
-
-        llvm::SmallVector<mlir::OpFoldResult> source_sizes;
-        for (mlir::OpFoldResult size : transfer_info.source_sizes) {
-          source_sizes.push_back(materializeOpFoldResult(size));
-        }
-
-        llvm::SmallVector<mlir::Value> dest_indices;
-        for (mlir::Value idx : transfer_info.dest_indices) {
-          dest_indices.push_back(materializeValue(idx));
-        }
-
-        llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
-        for (mlir::OpFoldResult size : transfer_info.dest_sizes) {
-          dest_sizes.push_back(materializeOpFoldResult(size));
-        }
+        // Materialize transfer parameters using helper
+        auto params = materializeTransferParams(transfer_info);
 
         // Create the adapted transfer operation
         mlir::ktdf::DataTransferOp::create(
-            builder_, loc, source, source_indices, source_sizes, destination,
-            dest_indices, dest_sizes);
+            builder_, transfer_op.getLoc(), source, params.source_indices,
+            params.source_sizes, destination, params.dest_indices,
+            params.dest_sizes);
       } else {
-        // No adaptation needed, clone as-is
         builder_.clone(op, value_map_);
       }
-    } else if (auto read_op = mlir::dyn_cast<mlir::ktdf::ReadFromFifoOp>(&op)) {
+    } else if (handle_fifo_ops && mlir::isa<mlir::ktdf::ReadFromFifoOp>(&op)) {
       // Handle read_from_fifo - need to adapt to use new FIFO slot
+      auto read_op = mlir::cast<mlir::ktdf::ReadFromFifoOp>(&op);
       auto it = transfer_map.find(&op);
       if (it != transfer_map.end()) {
         const TransferMaterializationInfo& transfer_info = *it->second;
         assert(transfer_info.source_private_resource &&
                "read_from_fifo should have source private resource");
 
-        // Get the new FIFO slot
-        const PrivateResourceAllocation* alloc =
-            resource_factory_.getAllocation(
-                transfer_info.source_private_resource);
-        assert(alloc && "Private resource should have been allocated");
-        assert(transfer_info.source_slot_index < alloc->ssa_values.size());
         mlir::Value new_fifo_slot =
-            alloc->ssa_values[transfer_info.source_slot_index];
+            getPrivateResourceValue(transfer_info.source_private_resource,
+                                    transfer_info.source_slot_index);
 
-        // Create new read_from_fifo with the new FIFO slot
         auto new_read = mlir::ktdf::ReadFromFifoOp::create(
             builder_, read_op.getLoc(), read_op.getResult().getType(),
             new_fifo_slot);
@@ -704,24 +640,18 @@ void PathExpansionMaterializer::adaptStageBodyFifoKinds(
       } else {
         builder_.clone(op, value_map_);
       }
-    } else if (auto write_op = mlir::dyn_cast<mlir::ktdf::WriteToFifoOp>(&op)) {
+    } else if (handle_fifo_ops && mlir::isa<mlir::ktdf::WriteToFifoOp>(&op)) {
       // Handle write_to_fifo - need to adapt to use new FIFO slot
+      auto write_op = mlir::cast<mlir::ktdf::WriteToFifoOp>(&op);
       auto it = transfer_map.find(&op);
       if (it != transfer_map.end()) {
         const TransferMaterializationInfo& transfer_info = *it->second;
         assert(transfer_info.dest_private_resource &&
                "write_to_fifo should have dest private resource");
 
-        // Get the new FIFO slot
-        const PrivateResourceAllocation* alloc =
-            resource_factory_.getAllocation(
-                transfer_info.dest_private_resource);
-        assert(alloc && "Private resource should have been allocated");
-        assert(transfer_info.dest_slot_index < alloc->ssa_values.size());
-        mlir::Value new_fifo_slot =
-            alloc->ssa_values[transfer_info.dest_slot_index];
+        mlir::Value new_fifo_slot = getPrivateResourceValue(
+            transfer_info.dest_private_resource, transfer_info.dest_slot_index);
 
-        // Create new write_to_fifo with the new FIFO slot
         mlir::Value data = materializeValue(write_op.getData());
         mlir::ktdf::WriteToFifoOp::create(builder_, write_op.getLoc(), data,
                                           new_fifo_slot);
@@ -729,107 +659,22 @@ void PathExpansionMaterializer::adaptStageBodyFifoKinds(
         builder_.clone(op, value_map_);
       }
     } else {
-      // Clone other operations as-is (compute ops, etc.)
+      // Clone other operations as-is
       builder_.clone(op, value_map_);
     }
   }
 }
 
+void PathExpansionMaterializer::adaptStageBodyFifoKinds(
+    mlir::ktdf::StageOp orig_stage, const StageMaterializationInfo& info) {
+  // Adapt stage body with FIFO operations handling enabled
+  adaptStageBodyWithTransfers(orig_stage, info, /*handle_fifo_ops=*/true);
+}
+
 void PathExpansionMaterializer::adaptTransferStage(
     mlir::ktdf::StageOp orig_stage, const StageMaterializationInfo& info) {
-  // Clone the stage body but adapt data_transfer operations to use new
-  // source/destination resources (typically LX memory buffers)
-  mlir::Block* orig_body = &orig_stage.getBody().front();
-
-  // Build a map from template ops to their transfer info
-  llvm::DenseMap<mlir::Operation*, const TransferMaterializationInfo*>
-      transfer_map;
-  for (const TransferMaterializationInfo& transfer_info : info.transfers) {
-    if (transfer_info.template_op) {
-      transfer_map[transfer_info.template_op] = &transfer_info;
-    }
-  }
-
-  for (mlir::Operation& op : *orig_body) {
-    if (op.hasTrait<mlir::OpTrait::IsTerminator>()) continue;
-
-    // Check if this is a data_transfer that needs adaptation
-    if (auto transfer_op = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(&op)) {
-      // Look up the transfer info for this operation
-      auto it = transfer_map.find(&op);
-      if (it != transfer_map.end()) {
-        const TransferMaterializationInfo& transfer_info = *it->second;
-        mlir::Location loc = transfer_op.getLoc();
-
-        // Get source - use private resource if specified, otherwise materialize
-        // from template
-        mlir::Value source;
-        if (transfer_info.source_private_resource) {
-          // Look up the allocated SSA value from the factory
-          const PrivateResourceAllocation* alloc =
-              resource_factory_.getAllocation(
-                  transfer_info.source_private_resource);
-          assert(alloc && "Private resource should have been allocated");
-          assert(transfer_info.source_slot_index < alloc->ssa_values.size() &&
-                 "Slot index out of bounds");
-          source = alloc->ssa_values[transfer_info.source_slot_index];
-        } else {
-          source = materializeValue(transfer_op.getSource());
-        }
-
-        // Get destination - use private resource if specified, otherwise
-        // materialize from template
-        mlir::Value destination;
-        if (transfer_info.dest_private_resource) {
-          // Look up the allocated SSA value from the factory
-          const PrivateResourceAllocation* alloc =
-              resource_factory_.getAllocation(
-                  transfer_info.dest_private_resource);
-          assert(alloc && "Private resource should have been allocated");
-          assert(transfer_info.dest_slot_index < alloc->ssa_values.size() &&
-                 "Slot index out of bounds");
-          destination = alloc->ssa_values[transfer_info.dest_slot_index];
-        } else {
-          destination = materializeValue(transfer_op.getDestination());
-        }
-
-        // Get indices and sizes from transfer_info (set by planner)
-        // The planner has already determined the correct sizes based on buffer
-        // shapes
-        llvm::SmallVector<mlir::Value> source_indices;
-        for (mlir::Value idx : transfer_info.source_indices) {
-          source_indices.push_back(materializeValue(idx));
-        }
-
-        llvm::SmallVector<mlir::OpFoldResult> source_sizes;
-        for (mlir::OpFoldResult size : transfer_info.source_sizes) {
-          source_sizes.push_back(materializeOpFoldResult(size));
-        }
-
-        llvm::SmallVector<mlir::Value> dest_indices;
-        for (mlir::Value idx : transfer_info.dest_indices) {
-          dest_indices.push_back(materializeValue(idx));
-        }
-
-        llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
-        for (mlir::OpFoldResult size : transfer_info.dest_sizes) {
-          dest_sizes.push_back(materializeOpFoldResult(size));
-        }
-
-        // Create the adapted transfer operation
-        mlir::ktdf::DataTransferOp::create(
-            builder_, loc, source, source_indices, source_sizes, destination,
-            dest_indices, dest_sizes);
-      } else {
-        // No adaptation needed, clone as-is
-        builder_.clone(op, value_map_);
-      }
-    } else {
-      // Clone other operations as-is (should not have compute ops in transfer
-      // stages)
-      builder_.clone(op, value_map_);
-    }
-  }
+  // Adapt transfer stage without FIFO operations handling
+  adaptStageBodyWithTransfers(orig_stage, info, /*handle_fifo_ops=*/false);
 }
 
 void PathExpansionMaterializer::synthesizeTransferStage(

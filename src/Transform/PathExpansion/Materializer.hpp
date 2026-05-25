@@ -74,12 +74,28 @@ class PathExpansionMaterializer {
   mlir::Operation* getMaterializedOp(const PipelineTreeNode& node) const;
 
  private:
+  /// Struct to hold materialized transfer parameters
+  struct MaterializedTransferParams {
+    llvm::SmallVector<mlir::Value> source_indices;
+    llvm::SmallVector<mlir::OpFoldResult> source_sizes;
+    llvm::SmallVector<mlir::Value> dest_indices;
+    llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
+  };
+
   /// Helper to materialize a value by looking it up in the value map
   mlir::Value materializeValue(mlir::Value value);
 
   /// Helper to materialize an OpFoldResult (either a constant attribute or SSA
   /// value)
   mlir::OpFoldResult materializeOpFoldResult(mlir::OpFoldResult foldResult);
+
+  /// Helper to get SSA value for a private resource
+  mlir::Value getPrivateResourceValue(const PrivateResourceSpec* spec,
+                                      size_t slot_index);
+
+  /// Helper to materialize transfer parameters from TransferMaterializationInfo
+  MaterializedTransferParams materializeTransferParams(
+      const TransferMaterializationInfo& info);
 
   /// Materialize a loop node by creating an scf.for operation
   mlir::scf::ForOp materializeLoopNode(const LoopNode& loop_node);
@@ -103,6 +119,13 @@ class PathExpansionMaterializer {
 
   /// Helper to clone stage body operations (for kPreserveOriginal)
   void cloneStageBody(mlir::ktdf::StageOp orig_stage);
+
+  /// Common helper to adapt stage body with transfer operations
+  /// \param handle_fifo_ops If true, also handles ReadFromFifoOp and
+  /// WriteToFifoOp
+  void adaptStageBodyWithTransfers(mlir::ktdf::StageOp orig_stage,
+                                   const StageMaterializationInfo& info,
+                                   bool handle_fifo_ops);
 
   /// Helper to adapt stage body with new FIFO kinds (for kAdaptFifoKinds)
   void adaptStageBodyFifoKinds(mlir::ktdf::StageOp orig_stage,

@@ -103,6 +103,13 @@ class ArchitectureGraph {
   static llvm::StringRef stringifyEdgeKind(EdgeKind edge_kind);
   static ResourceKind getResourceKind(Resource resource);
 
+  /// Determine FIFO type from edge info and resources
+  /// If edge has explicit fifo_type, uses that; otherwise infers from resources
+  static mlir::ktdf::FifoSlotType getFifoTypeFromEdge(
+      mlir::MLIRContext* ctx, const EdgeInfo& edge, Resource source_resource,
+      Resource dest_resource, mlir::Type element_type,
+      llvm::ArrayRef<int64_t> shape);
+
  private:
   NodeId next_node_id_ = 0;
   llvm::MapVector<NodeId, ResourceNode> nodes_;
