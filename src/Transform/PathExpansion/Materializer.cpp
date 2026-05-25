@@ -587,8 +587,9 @@ bool PathExpansionMaterializer::tryAdaptDataTransferOp(
 
   // Create the adapted transfer operation
   mlir::ktdf::DataTransferOp::create(
-      builder_, transfer_op.getLoc(), source, params.source_indices,
-      params.source_sizes, destination, params.dest_indices, params.dest_sizes);
+      builder_, transfer_op.getLoc(), source, transfer_info->source_map,
+      params.source_indices, params.source_sizes, destination,
+      transfer_info->dest_map, params.dest_indices, params.dest_sizes);
 
   return true;
 }
@@ -730,9 +731,10 @@ void PathExpansionMaterializer::synthesizeTransferStage(
     }
 
     // Create the transfer operation
-    mlir::ktdf::DataTransferOp::create(builder_, loc, source, source_indices,
-                                       source_sizes, destination, dest_indices,
-                                       dest_sizes);
+    mlir::ktdf::DataTransferOp::create(
+        builder_, loc, source, transfer_info->source_map, source_indices,
+        source_sizes, destination, transfer_info->dest_map, dest_indices,
+        dest_sizes);
   }
 }
 

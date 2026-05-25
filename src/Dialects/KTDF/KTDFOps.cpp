@@ -493,8 +493,7 @@ LogicalResult DataTransferOp::verify() {
   if (auto src_map_attr = getSourceMapAttr())
     source_map = src_map_attr.getValue();
   std::optional<AffineMap> dest_map;
-  if (auto dst_map_attr = getDestMapAttr())
-    dest_map = dst_map_attr.getValue();
+  if (auto dst_map_attr = getDestMapAttr()) dest_map = dst_map_attr.getValue();
 
   if (failed(verifySide("source", source_memref, source_type, source_map,
                         getSourceIndices())))
@@ -590,9 +589,9 @@ ParseResult DataTransferOp::parse(OpAsmParser& parser, OperationState& result) {
     }
   }
 
-  if (parser.parseOptionalAttrDict(result.attributes) ||
-      parser.parseColon() || parser.parseType(source_type) ||
-      parser.parseComma() || parser.parseType(dest_type))
+  if (parser.parseOptionalAttrDict(result.attributes) || parser.parseColon() ||
+      parser.parseType(source_type) || parser.parseComma() ||
+      parser.parseType(dest_type))
     return failure();
 
   // Resolve operands.

@@ -37,6 +37,14 @@ namespace scheduler {
 
 namespace {
 
+/// Helper to create an identity affine map for intermediate buffer accesses
+/// This is used when we need an affine map for a memref buffer but don't have
+/// one from a neighboring transfer (e.g., when the neighbor uses a FIFO)
+static mlir::AffineMap createAffineMapForIntermediateBuffer(
+    const PrivateResourceSpec* buffer, mlir::MLIRContext* context) {
+  return mlir::AffineMap::getMultiDimIdentityMap(buffer->shape.size(), context);
+}
+
 /// Helper to validate FIFO slot index assignment
 /// Checks that the assigned slot index matches the original result index
 /// from the template transfer operation
@@ -1176,17 +1184,19 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       size_t dest_slot_idx = 0;
       llvm::SmallVector<mlir::Value> dest_indices_from_next;
       llvm::SmallVector<mlir::OpFoldResult> dest_sizes_from_next;
+      mlir::AffineMap dest_map_from_next;
       assert(plan->stage_info.count(next_stage));
       StageMaterializationInfo& next_info = plan->stage_info[next_stage];
       for (const TransferMaterializationInfo* next_transfer :
            next_info.transfers) {
         if (visited_next_transfer.contains(next_transfer)) continue;
         if (next_transfer->source_resource == intermediate_resource) {
-          // Found matching transfer - use its source and indices/sizes
+          // Found matching transfer - use its source and indices/sizes/map
           dest_resource_spec = next_transfer->source_private_resource;
           dest_slot_idx = next_transfer->source_slot_index;
           dest_indices_from_next = next_transfer->source_indices;
           dest_sizes_from_next = next_transfer->source_sizes;
+          dest_map_from_next = next_transfer->source_map;
           visited_next_transfer.insert(next_transfer);
           break;
         }
@@ -1213,13 +1223,34 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       assert(edge && "Edge should exist for legal hop");
 
       // Create transfer info for intermediate stage using factory
+      // Pass affine maps from neighboring transfers
+      // If a map is null but the side is a memref buffer, create an identity
+      // map
+      mlir::MLIRContext* ctx = prev_stage->getOperation()->getContext();
+      mlir::AffineMap source_map_for_intermediate = prev_transfer->dest_map;
+      if (!source_map_for_intermediate && source_resource_spec &&
+          source_resource_spec->kind ==
+              PrivateResourceSpec::Kind::kMemoryBuffer) {
+        source_map_for_intermediate =
+            createAffineMapForIntermediateBuffer(source_resource_spec, ctx);
+      }
+
+      mlir::AffineMap dest_map_for_intermediate = dest_map_from_next;
+      if (!dest_map_for_intermediate && dest_resource_spec &&
+          dest_resource_spec->kind ==
+              PrivateResourceSpec::Kind::kMemoryBuffer) {
+        dest_map_for_intermediate =
+            createAffineMapForIntermediateBuffer(dest_resource_spec, ctx);
+      }
+
       TransferMaterializationInfo* transfer_info =
           plan->transfer_factory.createSynthetic(
               *edge, *inferred_source_resource, *inferred_dest_resource,
               source_resource_spec, prev_transfer->dest_slot_index,
               prev_transfer->dest_indices, prev_transfer->dest_sizes,
-              dest_resource_spec, dest_slot_idx, dest_indices_from_next,
-              dest_sizes_from_next, prev_stage->getOperation()->getContext());
+              source_map_for_intermediate, dest_resource_spec, dest_slot_idx,
+              dest_indices_from_next, dest_sizes_from_next,
+              dest_map_for_intermediate, ctx);
 
       stage_info.transfers.push_back(transfer_info);
 

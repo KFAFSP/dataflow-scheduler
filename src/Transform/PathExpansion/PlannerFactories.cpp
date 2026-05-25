@@ -23,13 +23,43 @@
 #include "PlannerFactories.hpp"
 
 #include "Planner.hpp"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 
 namespace scheduler {
 
 //===----------------------------------------------------------------------===//
-// Helper function for deriving sizes from resource specs
+// Helper functions
 //===----------------------------------------------------------------------===//
+
+/// Helper to create an identity affine map for intermediate buffer accesses
+/// This is used when we need an affine map for a memref buffer but don't have
+/// one from a neighboring transfer (e.g., when the neighbor uses a FIFO)
+static mlir::AffineMap createAffineMapForIntermediateBuffer(
+    const PrivateResourceSpec* buffer, mlir::MLIRContext* context) {
+  return mlir::AffineMap::getMultiDimIdentityMap(buffer->shape.size(), context);
+}
+
+/// Helper to create zero indices for an intermediate buffer
+/// Used when a FIFO (which has no indices) is replaced by a memref buffer
+static void createIndicesForIntermediateBuffer(
+    const PrivateResourceSpec* buffer, mlir::Operation* contextOp,
+    mlir::OpBuilder& builder, llvm::SmallVectorImpl<mlir::Value>& indices) {
+  // Find the parent function to set insertion point
+  auto funcOp = contextOp->getParentOfType<mlir::func::FuncOp>();
+  assert(funcOp && "Expected operation to be within a function");
+
+  // Set insertion point at the beginning of the function's entry block
+  mlir::OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointToStart(&funcOp.getBody().front());
+
+  mlir::Value zero_index =
+      mlir::arith::ConstantIndexOp::create(builder, contextOp->getLoc(), 0);
+  for (size_t i = 0; i < buffer->shape.size(); ++i) {
+    indices.push_back(zero_index);
+  }
+}
 
 /// Helper to derive sizes from a private resource spec
 /// Used to populate source_sizes or dest_sizes when they're empty
@@ -119,31 +149,54 @@ TransferMaterializationInfo* TransferInfoFactory::createFromTemplateWithBuffer(
   transfer->dest_resource =
       intermediate_is_source ? current_resource : intermediate_resource;
 
+  // Copy affine maps from template operation
+  transfer->source_map = template_op.getSourceMapAttr()
+                             ? template_op.getSourceMapAttr().getValue()
+                             : mlir::AffineMap();
+  transfer->dest_map = template_op.getDestMapAttr()
+                           ? template_op.getDestMapAttr().getValue()
+                           : mlir::AffineMap();
+
   // Set up indices and sizes based on which side is the intermediate buffer
   if (intermediate_is_source) {
     // Source is the intermediate buffer, dest is FIFO
     transfer->source_private_resource = buffer_spec;
-    transfer->source_indices.append(template_op.getSourceIndices().begin(),
-                                    template_op.getSourceIndices().end());
+    // Source is buffer - create zero indices for it (template source was FIFO
+    // with no indices)
+    createIndicesForIntermediateBuffer(buffer_spec, template_op, builder,
+                                       transfer->source_indices);
     // Source sizes: derive from buffer spec
     deriveSizesFromResourceSpec(buffer_spec, 0, builder.getContext(),
                                 transfer->source_sizes);
-    // Dest indices and sizes: copy from template (FIFO side)
+    // Dest indices and sizes: copy from template (FIFO side - should be empty)
     transfer->dest_indices.append(template_op.getDestIndices().begin(),
                                   template_op.getDestIndices().end());
     transfer->dest_sizes = template_op.getMixedDestSizes();
+
+    // Source is buffer (memref), so it needs an affine map
+    transfer->source_map =
+        createAffineMapForIntermediateBuffer(buffer_spec, builder.getContext());
+    // Dest is FIFO, so dest_map should remain null
   } else {
     // Source is FIFO, dest is the intermediate buffer
     transfer->dest_private_resource = buffer_spec;
+    // Source indices and sizes: copy from template (FIFO side - should be
+    // empty)
     transfer->source_indices.append(template_op.getSourceIndices().begin(),
                                     template_op.getSourceIndices().end());
     transfer->source_sizes = template_op.getMixedSourceSizes();
-    // Dest indices: copy from template (memref side)
-    transfer->dest_indices.append(template_op.getDestIndices().begin(),
-                                  template_op.getDestIndices().end());
+    // Dest is buffer - create zero indices for it (template dest was FIFO with
+    // no indices)
+    createIndicesForIntermediateBuffer(buffer_spec, template_op, builder,
+                                       transfer->dest_indices);
     // Dest sizes: derive from buffer spec
     deriveSizesFromResourceSpec(buffer_spec, 0, builder.getContext(),
                                 transfer->dest_sizes);
+
+    // Source is FIFO, so source_map should remain null
+    // Dest is buffer (memref), so it needs an affine map
+    transfer->dest_map =
+        createAffineMapForIntermediateBuffer(buffer_spec, builder.getContext());
   }
 
   TransferMaterializationInfo* result = transfer.get();
@@ -166,13 +219,18 @@ TransferMaterializationInfo* TransferInfoFactory::createFromFifoOp(
   if (is_read) {
     transfer->source_private_resource = fifo_spec;
     transfer->source_slot_index = slot_index;
+    // Dest is memref, source is FIFO - no maps needed (will be set later when
+    // we have indices)
   } else {
     transfer->dest_private_resource = fifo_spec;
     transfer->dest_slot_index = slot_index;
+    // Source is memref, dest is FIFO - no maps needed (will be set later when
+    // we have indices)
   }
 
   // Note: FIFO operations don't have indices and sizes - they work with tensors
   // The indices and sizes will remain empty for these operations
+  // Affine maps will be set to null (no subscripts for FIFO side)
 
   TransferMaterializationInfo* result = transfer.get();
   transfers_.push_back(std::move(transfer));
@@ -185,10 +243,11 @@ TransferMaterializationInfo* TransferInfoFactory::createSynthetic(
     ArchitectureGraph::Resource dest_resource,
     const PrivateResourceSpec* source_spec, size_t source_slot_index,
     llvm::ArrayRef<mlir::Value> source_indices,
-    llvm::ArrayRef<mlir::OpFoldResult> source_sizes,
+    llvm::ArrayRef<mlir::OpFoldResult> source_sizes, mlir::AffineMap source_map,
     const PrivateResourceSpec* dest_spec, size_t dest_slot_index,
     llvm::ArrayRef<mlir::Value> dest_indices,
-    llvm::ArrayRef<mlir::OpFoldResult> dest_sizes, mlir::MLIRContext* context) {
+    llvm::ArrayRef<mlir::OpFoldResult> dest_sizes, mlir::AffineMap dest_map,
+    mlir::MLIRContext* context) {
   auto transfer = std::make_unique<TransferMaterializationInfo>();
   transfer->template_op = nullptr;  // Synthetic transfer, no template
   transfer->hop = edge;
@@ -213,6 +272,10 @@ TransferMaterializationInfo* TransferInfoFactory::createSynthetic(
     deriveSizesFromResourceSpec(source_spec, source_slot_index, context,
                                 transfer->source_sizes);
   }
+
+  // Use the affine maps passed from neighboring transfers
+  transfer->source_map = source_map;
+  transfer->dest_map = dest_map;
 
   TransferMaterializationInfo* result = transfer.get();
   transfers_.push_back(std::move(transfer));

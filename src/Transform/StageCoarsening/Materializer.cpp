@@ -280,7 +280,7 @@ mlir::ktdf::StageOp StageCoarseningMaterializer::materializeStageNode(
                                                          union_units.end());
       new_stage.setApplicableUnitsAttr(
           mlir::ktdf::ApplicableUnitsCustomAttr::get(builder_.getContext(),
-                                                    units));
+                                                     units));
     }
   }
 

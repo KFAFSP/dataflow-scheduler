@@ -150,6 +150,12 @@ struct TransferMaterializationInfo {
   llvm::SmallVector<mlir::Value> dest_indices;
   llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
 
+  // Affine maps for source and destination subscripts
+  // These are copied from template transfer ops for adapted stages,
+  // or set to identity maps for synthetic intermediate transfers
+  mlir::AffineMap source_map;
+  mlir::AffineMap dest_map;
+
   void print(llvm::raw_ostream& os) const;
   void dump() const;
 

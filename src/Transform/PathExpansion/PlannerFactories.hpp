@@ -158,10 +158,12 @@ class TransferInfoFactory {
   /// @param source_slot_index The source slot index
   /// @param source_indices The source indices
   /// @param source_sizes The source sizes
+  /// @param source_map The source affine map (from neighboring transfer)
   /// @param dest_spec The destination private resource spec
   /// @param dest_slot_index The destination slot index
   /// @param dest_indices The destination indices
   /// @param dest_sizes The destination sizes
+  /// @param dest_map The destination affine map (from neighboring transfer)
   /// @param context MLIR context for creating attributes
   /// @return Pointer to created transfer info (owned by factory)
   TransferMaterializationInfo* createSynthetic(
@@ -171,9 +173,9 @@ class TransferInfoFactory {
       const PrivateResourceSpec* source_spec, size_t source_slot_index,
       llvm::ArrayRef<mlir::Value> source_indices,
       llvm::ArrayRef<mlir::OpFoldResult> source_sizes,
-      const PrivateResourceSpec* dest_spec, size_t dest_slot_index,
-      llvm::ArrayRef<mlir::Value> dest_indices,
-      llvm::ArrayRef<mlir::OpFoldResult> dest_sizes,
+      mlir::AffineMap source_map, const PrivateResourceSpec* dest_spec,
+      size_t dest_slot_index, llvm::ArrayRef<mlir::Value> dest_indices,
+      llvm::ArrayRef<mlir::OpFoldResult> dest_sizes, mlir::AffineMap dest_map,
       mlir::MLIRContext* context);
 
  private:

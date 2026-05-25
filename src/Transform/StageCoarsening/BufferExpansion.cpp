@@ -87,10 +87,9 @@ namespace scheduler {
 namespace {
 
 // Given an AffineMap `original` of shape (d0..d_{m-1}) -> (e0, ..., e_{r-1}),
-// produce a new map (d0..d_{m+n-1}) -> (d0, d1, ..., d_{n-1}, e0', ..., e_{r-1}')
-// where each e_i' is e_i with its dim positions shifted by +n.
-static mlir::AffineMap prependIdentityDims(mlir::AffineMap original,
-                                           unsigned n,
+// produce a new map (d0..d_{m+n-1}) -> (d0, d1, ..., d_{n-1}, e0', ...,
+// e_{r-1}') where each e_i' is e_i with its dim positions shifted by +n.
+static mlir::AffineMap prependIdentityDims(mlir::AffineMap original, unsigned n,
                                            mlir::MLIRContext* ctx) {
   if (n == 0) return original;
   unsigned old_dims = original.getNumDims();
