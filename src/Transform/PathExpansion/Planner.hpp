@@ -59,7 +59,7 @@ struct StageEndpoint {
 
 /// Summary of a stage's inferred properties (used during analysis only)
 struct StageSummary {
-  StageNode *node = nullptr;
+  StageNode* node = nullptr;
   std::optional<ArchitectureGraph::Resource> anchor_resource;
   llvm::SmallVector<StageEndpoint> input_endpoints;
   llvm::SmallVector<StageEndpoint> output_endpoints;
@@ -83,18 +83,19 @@ struct PrivateResourceSpec {
     kMemoryBuffer,  // Allocate a memref in the specified memory space
     kFifo,          // Allocate a FIFO with the specified type
   };
-  
+
   Kind kind = Kind::kUnknown;
-  
+
   // For Memory Buffer:
   ArchitectureGraph::Resource memory_resource;  // LX, HBM, etc.
-  
+
   // For Fifo:
   mlir::ktdf::FifoType fifo_type;  // The FIFO type to allocate
   // How many elements for each slot in the FIFO allocation.
-  // Note the size of this list represents the number of slots in the fifo.allocate.
-  // For example:
-  //     %slot1, %slot2 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp", 2>, !ktdf.fifo.slot<"lxlu-to-sfp", 4>
+  // Note the size of this list represents the number of slots in the
+  // fifo.allocate. For example:
+  //     %slot1, %slot2 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"lxlu-to-sfp",
+  //     2>, !ktdf.fifo.slot<"lxlu-to-sfp", 4>
   // \p elements_per_slot would be [2, 4]
   llvm::SmallVector<int64_t> elements_per_slot;
 
@@ -102,7 +103,7 @@ struct PrivateResourceSpec {
   llvm::SmallVector<int64_t> shape;
   mlir::Type element_type;
 
-  void print(llvm::raw_ostream &os) const;
+  void print(llvm::raw_ostream& os) const;
   void dump() const;
 };
 
@@ -110,75 +111,80 @@ struct PrivateResourceSpec {
 /// This is created during materialization and tracked by the factory
 struct PrivateResourceAllocation {
   const PrivateResourceSpec* spec;  // Pointer to the spec that created this
-  
+
   // For memory buffers: single SSA value
   // For FIFOs: one SSA value per slot
   llvm::SmallVector<mlir::Value> ssa_values;
-  
+
   PrivateResourceAllocation(const PrivateResourceSpec* s) : spec(s) {}
 };
 
 /// Factory for managing private resource allocations
 /// This replaces index-based schemes with pointer-based references
 class PrivateResourceFactory {
-public:
+ public:
   /// Create a new resource spec and return a pointer to it
   /// The factory owns the spec and keeps it alive
   PrivateResourceSpec* createMemoryBuffer(
       ArchitectureGraph::Resource memory_resource,
-      llvm::ArrayRef<int64_t> shape,
-      mlir::Type element_type);
-  
-  PrivateResourceSpec* createFifo(
-      mlir::ktdf::FifoType fifo_type,
-      llvm::ArrayRef<int64_t> elements_per_slot,
-      mlir::Type element_type);
-  
+      llvm::ArrayRef<int64_t> shape, mlir::Type element_type);
+
+  PrivateResourceSpec* createFifo(mlir::ktdf::FifoType fifo_type,
+                                  llvm::ArrayRef<int64_t> elements_per_slot,
+                                  mlir::Type element_type);
+
   /// Get all resource specs created by this factory
   llvm::ArrayRef<std::unique_ptr<PrivateResourceSpec>> getSpecs() const {
     return specs_;
   }
-  
+
   /// Register an allocation for a spec (called during materialization)
   void registerAllocation(const PrivateResourceSpec* spec,
-                         llvm::ArrayRef<mlir::Value> ssa_values);
-  
+                          llvm::ArrayRef<mlir::Value> ssa_values);
+
   /// Look up the allocation for a spec
   const PrivateResourceAllocation* getAllocation(
       const PrivateResourceSpec* spec) const;
-  
-private:
+
+ private:
   // Owned resource specs
   llvm::SmallVector<std::unique_ptr<PrivateResourceSpec>> specs_;
-  
+
   // Map from spec pointer to its allocation
-  llvm::DenseMap<const PrivateResourceSpec*, std::unique_ptr<PrivateResourceAllocation>> allocations_;
+  llvm::DenseMap<const PrivateResourceSpec*,
+                 std::unique_ptr<PrivateResourceAllocation>>
+      allocations_;
 };
 
 /// Information needed to materialize a transfer operation
 struct TransferMaterializationInfo {
-  mlir::Operation* template_op = nullptr;  // Template to derive from (can be null for synthetic)
-  ArchitectureGraph::EdgeInfo hop;         // Architecture hop this implements
+  mlir::Operation* template_op =
+      nullptr;  // Template to derive from (can be null for synthetic)
+  ArchitectureGraph::EdgeInfo hop;  // Architecture hop this implements
   ArchitectureGraph::Resource source_resource;  // Source resource for this hop
-  ArchitectureGraph::Resource dest_resource;    // Destination resource for this hop
-  
-  // Pointers to private resource specs for source/dest (nullptr if not a private resource)
+  ArchitectureGraph::Resource
+      dest_resource;  // Destination resource for this hop
+
+  // Pointers to private resource specs for source/dest (nullptr if not a
+  // private resource)
   const PrivateResourceSpec* source_private_resource = nullptr;
   const PrivateResourceSpec* dest_private_resource = nullptr;
-  
+
   // For FIFO resources: which slot index to use (0-based)
   // For memory buffers: always 0 (single SSA value)
   size_t source_slot_index = 0;
   size_t dest_slot_index = 0;
-  
-  // Indices and sizes for the transfer (captured from template or neighboring transfers)
-  // These are stored as Values that will be materialized during code generation
-  llvm::SmallVector<mlir::Value> source_indices;
-  llvm::SmallVector<mlir::Value> source_sizes;
-  llvm::SmallVector<mlir::Value> dest_indices;
-  llvm::SmallVector<mlir::Value> dest_sizes;
 
-  void print(llvm::raw_ostream &os) const;
+  // Indices and sizes for the transfer (captured from template or neighboring
+  // transfers) Indices are stored as Values that will be materialized during
+  // code generation Sizes are stored as OpFoldResult to support both static
+  // constants and dynamic SSA values
+  llvm::SmallVector<mlir::Value> source_indices;
+  llvm::SmallVector<mlir::OpFoldResult> source_sizes;
+  llvm::SmallVector<mlir::Value> dest_indices;
+  llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
+
+  void print(llvm::raw_ostream& os) const;
   void dump() const;
 };
 
@@ -186,25 +192,29 @@ struct TransferMaterializationInfo {
 /// This is stored separately and looked up by the materializer
 struct StageMaterializationInfo {
   enum class Kind {
-    kPreserveOriginal,      // Keep original stage body unchanged (rare)
-    kAdaptFifoKinds,        // Preserve body but update FIFO types (usually needed for compute stages)
-    kAdaptTransfer,         // Preserve body but update transfer source or dest types (needed for transfer stages that are intermdiate-stage facing)
-    kSyntheticTransfer,     // Generate new transfer stage (usually for intermediate memory stages ie LX)
+    kPreserveOriginal,  // Keep original stage body unchanged (rare)
+    kAdaptFifoKinds,  // Preserve body but update FIFO types (usually needed for
+                      // compute stages)
+    kAdaptTransfer,   // Preserve body but update transfer source or dest types
+                      // (needed for transfer stages that are intermdiate-stage
+                      // facing)
+    kSyntheticTransfer,  // Generate new transfer stage (usually for
+                         // intermediate memory stages ie LX)
   };
 
   Kind kind = Kind::kPreserveOriginal;
-  
+
   // Resource associated with this stage (determined in Step 1)
   std::optional<ArchitectureGraph::Resource> stage_resource;
-  
+
   // For AdaptFifoKinds, AdaptTransfer, and SyntheticTransfer:
   // Contains transfer operations with pointers to private resources
   llvm::SmallVector<TransferMaterializationInfo, 4> transfers;
-  
+
   // which unit this stage runs on
   std::optional<mlir::ktdf::ComponentType> applicable_unit;
 
-  void print(llvm::raw_ostream &os) const;
+  void print(llvm::raw_ostream& os) const;
   void dump() const;
 };
 
@@ -217,25 +227,25 @@ struct StageMaterializationInfo {
 struct PathExpansionPlan {
   // The modified PipelineTree is the primary output
   // It contains the final stage DAG with dependencies
-  PipelineTree *modified_tree;
-  
+  PipelineTree* modified_tree;
+
   // Side information for materialization (indexed by StageNode*)
   llvm::DenseMap<StageNode*, StageMaterializationInfo> stage_info;
-  
+
   // Resource factory that owns all PrivateResourceSpec objects
   // and tracks their allocations during materialization
   PrivateResourceFactory resource_factory;
-  
+
   // Whether any changes were made
   bool changed = false;
-  
+
   // Default constructor
   PathExpansionPlan() = default;
-  
+
   // Delete copy operations since PipelineTree is not copyable
   PathExpansionPlan(const PathExpansionPlan&) = delete;
   PathExpansionPlan& operator=(const PathExpansionPlan&) = delete;
-  
+
   // Delete move operations since PipelineTree is not movable
   PathExpansionPlan(PathExpansionPlan&&) = delete;
   PathExpansionPlan& operator=(PathExpansionPlan&&) = delete;
@@ -247,8 +257,8 @@ struct PathExpansionPlan {
 
 /// Validate that the stage topology is a single linear chain
 /// Returns failure if the DAG has branches or multiple paths
-mlir::LogicalResult
-validateLinearChain(llvm::ArrayRef<StageNode*> sorted_stages);
+mlir::LogicalResult validateLinearChain(
+    llvm::ArrayRef<StageNode*> sorted_stages);
 
 //===----------------------------------------------------------------------===//
 // Planning Functions
@@ -257,8 +267,8 @@ validateLinearChain(llvm::ArrayRef<StageNode*> sorted_stages);
 /// Analyze stages and infer their endpoints and properties
 /// This is a pure analysis step that doesn't modify the tree
 /// Takes sorted stages to ensure path inference order matches DAG order
-mlir::FailureOr<llvm::SmallVector<StageSummary>>
-analyzeStages(llvm::ArrayRef<StageNode*> sorted_stages);
+mlir::FailureOr<llvm::SmallVector<StageSummary>> analyzeStages(
+    llvm::ArrayRef<StageNode*> sorted_stages);
 
 /// Infer the original resource path from stage summaries
 /// Returns the sequence of resources implied by the current stages
@@ -271,10 +281,9 @@ inferOriginalPath(llvm::ArrayRef<StageSummary> summaries);
 /// 2. Attaches materialization info to stages
 /// 3. Records new private resources needed
 /// Returns a unique_ptr to the plan, or nullptr on failure
-std::unique_ptr<PathExpansionPlan>
-planPathExpansion(PipelineTree &tree,
-                  PipelineNode *pipeline,
-                  const ArchitectureGraph &arch_graph);
+std::unique_ptr<PathExpansionPlan> planPathExpansion(
+    PipelineTree& tree, PipelineNode* pipeline,
+    const ArchitectureGraph& arch_graph);
 
 }  // namespace scheduler
 

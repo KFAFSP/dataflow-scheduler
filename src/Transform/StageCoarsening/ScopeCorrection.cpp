@@ -199,7 +199,7 @@ mlir::ktdf::PrivateOp ScopeCorrection::recreatePrivateOp(
 
   // Add results from prepended operations
   for (mlir::Operation* op : ops_to_prepend) {
-    for (int i = 0; i < op->getNumResults(); i++) {
+    for (size_t i = 0; i < op->getNumResults(); i++) {
       new_yield_operands.push_back(value_map.lookup(op->getResult(i)));
     }
   }

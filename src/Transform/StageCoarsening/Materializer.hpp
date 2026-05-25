@@ -92,8 +92,9 @@ class StageCoarseningMaterializer {
   /// \param builder The MLIR builder for creating operations
   /// \param value_map The value mapping for SSA values
   /// \param buffer_cloner Optional cloner for customizing buffer operations
-  StageCoarseningMaterializer(mlir::OpBuilder& builder, mlir::IRMapping& value_map,
-                           materializer::BufferCloner* buffer_cloner = nullptr)
+  StageCoarseningMaterializer(
+      mlir::OpBuilder& builder, mlir::IRMapping& value_map,
+      materializer::BufferCloner* buffer_cloner = nullptr)
       : builder_(builder),
         value_map_(value_map),
         buffer_cloner_(buffer_cloner) {}

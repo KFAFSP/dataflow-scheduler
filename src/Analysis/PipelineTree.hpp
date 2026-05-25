@@ -220,8 +220,7 @@ class StageNode : public PipelineTreeNode {
 
   /// Mark all dependencies for removal by nullifying them
   void nullifyAllDependencies() {
-    for (auto &dep : dependencies_)
-      dep = nullptr;
+    for (auto& dep : dependencies_) dep = nullptr;
   }
 
   /// Remove all nullified dependencies
@@ -353,16 +352,16 @@ class PipelineTree : public OperationTree {
   /// Perform topological sort on stages in a pipeline
   /// Returns stages in topological order (sources first, sinks last)
   /// Returns failure if the DAG contains cycles
-  mlir::FailureOr<llvm::SmallVector<StageNode*>>
-  topologicalSortStages(PipelineNode *pipeline) const;
+  mlir::FailureOr<llvm::SmallVector<StageNode*>> topologicalSortStages(
+      PipelineNode* pipeline) const;
 
   /// Identify source stages (stages with no incoming dependencies)
-  llvm::SmallVector<StageNode*>
-  identifySourceStages(PipelineNode *pipeline) const;
+  llvm::SmallVector<StageNode*> identifySourceStages(
+      PipelineNode* pipeline) const;
 
   /// Identify sink stages (stages with no outgoing dependencies)
-  llvm::SmallVector<StageNode*>
-  identifySinkStages(PipelineNode *pipeline) const;
+  llvm::SmallVector<StageNode*> identifySinkStages(
+      PipelineNode* pipeline) const;
 
  protected:
   /// Filter function to decide whether an operation should be included

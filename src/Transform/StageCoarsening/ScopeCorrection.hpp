@@ -54,7 +54,7 @@ class ScopeCorrection {
     llvm::SmallVector<mlir::Type> getMovingResultTypes() const {
       llvm::SmallVector<mlir::Type> result_types;
       for (mlir::Operation* op : ops_to_move) {
-        for (int i = 0; i < op->getNumResults(); i++) {
+        for (size_t i = 0; i < op->getNumResults(); i++) {
           result_types.push_back(op->getResult(i).getType());
         }
       }

@@ -541,11 +541,11 @@ inferOriginalPath(llvm::ArrayRef<StageSummary> summaries) {
     } else if (!(summary.input_endpoints.empty() &&
                  summary.output_endpoints.empty())) {
       assert(summary.input_endpoints.size() == summary.output_endpoints.size());
-      for (int i = 0; i < summary.input_endpoints.size(); i++) {
+      for (size_t i = 0; i < summary.input_endpoints.size(); i++) {
         if (path.empty() || path.back() != summary.input_endpoints[i].resource)
           path.push_back(summary.input_endpoints[i].resource);
       }
-      for (int i = 0; i < summary.output_endpoints.size(); i++) {
+      for (size_t i = 0; i < summary.output_endpoints.size(); i++) {
         if (path.empty() || path.back() != summary.output_endpoints[i].resource)
           path.push_back(summary.output_endpoints[i].resource);
       }
@@ -812,11 +812,12 @@ static mlir::LogicalResult analyzeStageTransfers(
     }
 
     // Determine which side is the intermediate memory resource
-    ArchitectureGraph::Resource intermediate_resource;
     ArchitectureGraph::Resource current_resource = *stage_info.stage_resource;
     bool intermediate_is_source =
         prev_is_intermediate;  // assumes at most one intermediate node in
                                // between every pair of original stages.
+
+    ArchitectureGraph::Resource intermediate_resource;
     if (prev_is_intermediate) {
       assert(plan->stage_info.count(prev_stage) &&
              "Intermediate stage should have info");
@@ -825,6 +826,9 @@ static mlir::LogicalResult analyzeStageTransfers(
       assert(plan->stage_info.count(next_stage) &&
              "Intermediate stage should have info");
       intermediate_resource = *plan->stage_info[next_stage].stage_resource;
+    } else {
+      // Should not reach here - either prev or next must be intermediate
+      llvm_unreachable("Expected either prev or next stage to be intermediate");
     }
 
     mlir::MemRefType memref_type =
@@ -862,23 +866,40 @@ static mlir::LogicalResult analyzeStageTransfers(
     transfer_info.dest_resource =
         intermediate_is_source ? current_resource : intermediate_resource;
 
-    // Copy indices and sizes from template transfer
-    transfer_info.source_indices.append(transfer.getSourceIndices().begin(),
-                                        transfer.getSourceIndices().end());
-    transfer_info.source_sizes.append(transfer.getSourceSizes().begin(),
-                                      transfer.getSourceSizes().end());
-    transfer_info.dest_indices.append(transfer.getDestIndices().begin(),
-                                      transfer.getDestIndices().end());
-    transfer_info.dest_sizes.append(transfer.getDestSizes().begin(),
-                                    transfer.getDestSizes().end());
-
-    // Link the buffer spec
+    // Set up indices and sizes based on which side is the intermediate buffer.
+    // The buffer side should use the buffer's shape, while the other side
+    // uses the template's sizes.
+    mlir::OpBuilder builder(transfer->getContext());
     if (intermediate_is_source) {
+      // Source is the intermediate buffer, dest is FIFO
       transfer_info.source_private_resource = buffer_spec;
-      transfer_info.source_slot_index = 0;  // Memory buffers use slot 0
+      // Source indices: copy from template (memref side)
+      transfer_info.source_indices.append(transfer.getSourceIndices().begin(),
+                                          transfer.getSourceIndices().end());
+      // Source sizes: use buffer shape (not template, since buffer may have
+      // different shape)
+      for (int64_t dim : buffer_spec->shape) {
+        transfer_info.source_sizes.push_back(builder.getI64IntegerAttr(dim));
+      }
+      // Dest indices and sizes: copy from template (FIFO side)
+      transfer_info.dest_indices.append(transfer.getDestIndices().begin(),
+                                        transfer.getDestIndices().end());
+      transfer_info.dest_sizes = transfer.getMixedDestSizes();
     } else {
+      // Source is FIFO, dest is the intermediate buffer
       transfer_info.dest_private_resource = buffer_spec;
-      transfer_info.dest_slot_index = 0;  // Memory buffers use slot 0
+      // Source indices and sizes: copy from template (FIFO side)
+      transfer_info.source_indices.append(transfer.getSourceIndices().begin(),
+                                          transfer.getSourceIndices().end());
+      transfer_info.source_sizes = transfer.getMixedSourceSizes();
+      // Dest indices: copy from template (memref side)
+      transfer_info.dest_indices.append(transfer.getDestIndices().begin(),
+                                        transfer.getDestIndices().end());
+      // Dest sizes: use buffer shape (not template, since buffer may have
+      // different shape)
+      for (int64_t dim : buffer_spec->shape) {
+        transfer_info.dest_sizes.push_back(builder.getI64IntegerAttr(dim));
+      }
     }
 
     stage_info.transfers.push_back(transfer_info);
@@ -1202,7 +1223,7 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       const PrivateResourceSpec* dest_resource_spec = nullptr;
       size_t dest_slot_idx = 0;
       llvm::SmallVector<mlir::Value> dest_indices_from_next;
-      llvm::SmallVector<mlir::Value> dest_sizes_from_next;
+      llvm::SmallVector<mlir::OpFoldResult> dest_sizes_from_next;
       assert(plan->stage_info.count(next_stage));
       StageMaterializationInfo& next_info = plan->stage_info[next_stage];
       for (const TransferMaterializationInfo& next_transfer :
@@ -1257,6 +1278,62 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       transfer_info.dest_slot_index = dest_slot_idx;
       transfer_info.dest_indices = dest_indices_from_next;
       transfer_info.dest_sizes = dest_sizes_from_next;
+
+      // If dest_sizes is empty, derive it from the dest resource
+      // For FIFOs, use the slot-specific capacity; for buffers, use the shape
+      if (transfer_info.dest_sizes.empty() && dest_resource_spec) {
+        mlir::OpBuilder builder(prev_stage->getOperation()->getContext());
+        if (dest_resource_spec->kind == PrivateResourceSpec::Kind::kFifo) {
+          // For FIFO, use the specific slot's capacity
+          assert(transfer_info.dest_slot_index <
+                     dest_resource_spec->elements_per_slot.size() &&
+                 "Slot index out of bounds");
+          int64_t slot_capacity =
+              dest_resource_spec
+                  ->elements_per_slot[transfer_info.dest_slot_index];
+          LLVM_DEBUG(llvm::dbgs() << "    Deriving dest_sizes from FIFO slot "
+                                  << transfer_info.dest_slot_index
+                                  << " capacity: [" << slot_capacity << "]\n");
+          transfer_info.dest_sizes.push_back(
+              builder.getI64IntegerAttr(slot_capacity));
+        } else {
+          // For memory buffer, use the shape
+          LLVM_DEBUG(llvm::dbgs()
+                     << "    Deriving dest_sizes from buffer shape: [");
+          for (int64_t dim : dest_resource_spec->shape) {
+            LLVM_DEBUG(llvm::dbgs() << dim << " ");
+            transfer_info.dest_sizes.push_back(builder.getI64IntegerAttr(dim));
+          }
+          LLVM_DEBUG(llvm::dbgs() << "]\n");
+        }
+      }
+
+      // Similarly, if source_sizes is empty, derive it from the source resource
+      if (transfer_info.source_sizes.empty() && source_resource_spec) {
+        mlir::OpBuilder builder(prev_stage->getOperation()->getContext());
+        if (source_resource_spec->kind == PrivateResourceSpec::Kind::kFifo) {
+          // For FIFO, use the specific slot's capacity
+          assert(transfer_info.source_slot_index <
+                     source_resource_spec->elements_per_slot.size() &&
+                 "Slot index out of bounds");
+          int64_t slot_capacity =
+              source_resource_spec
+                  ->elements_per_slot[transfer_info.source_slot_index];
+          LLVM_DEBUG(llvm::dbgs() << "    Deriving source_sizes from FIFO slot "
+                                  << transfer_info.source_slot_index
+                                  << " capacity: [" << slot_capacity << "]\n");
+          transfer_info.source_sizes.push_back(
+              builder.getI64IntegerAttr(slot_capacity));
+        } else {
+          // For memory buffer, use the shape
+          LLVM_DEBUG(llvm::dbgs()
+                     << "    Deriving source_sizes from buffer shape\n");
+          for (int64_t dim : source_resource_spec->shape) {
+            transfer_info.source_sizes.push_back(
+                builder.getI64IntegerAttr(dim));
+          }
+        }
+      }
 
       stage_info.transfers.push_back(transfer_info);
 

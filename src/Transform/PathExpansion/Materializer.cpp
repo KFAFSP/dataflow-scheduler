@@ -97,6 +97,16 @@ mlir::Value PathExpansionMaterializer::materializeValue(mlir::Value value) {
   return value_map_.lookupOrDefault(value);
 }
 
+mlir::OpFoldResult PathExpansionMaterializer::materializeOpFoldResult(
+    mlir::OpFoldResult foldResult) {
+  if (auto value = foldResult.dyn_cast<mlir::Value>()) {
+    // It's a dynamic value - materialize it through value_map_
+    return materializeValue(value);
+  }
+  // It's a static attribute - return as-is
+  return foldResult;
+}
+
 mlir::Attribute PathExpansionMaterializer::getMemorySpaceFromResource(
     ArchitectureGraph::Resource resource) {
   mlir::MLIRContext* ctx = builder_.getContext();
@@ -336,7 +346,7 @@ void PathExpansionMaterializer::materializePrivateNode(
   // Use value_map_ so stages can reference the cloned values
   mlir::Block& orig_body = orig_private.getBody().front();
   for (mlir::Operation& op : orig_body.without_terminator()) {
-    mlir::Operation* cloned_op = builder_.clone(op, value_map_);
+    builder_.clone(op, value_map_);
   }
 
   // Get the original yield operands (now mapped to cloned values)
@@ -348,8 +358,6 @@ void PathExpansionMaterializer::materializePrivateNode(
   }
 
   // Allocate new private resources (buffers and FIFOs) using factory
-  // Track the starting index for new resources in the private op results
-  size_t new_resource_start_idx = non_token_result_count;
   size_t current_result_idx = orig_result_count;
 
   for (const auto& spec_ptr : resource_factory_.getSpecs()) {
@@ -640,25 +648,27 @@ void PathExpansionMaterializer::adaptStageBodyFifoKinds(
           destination = materializeValue(transfer_op.getDestination());
         }
 
-        // Get indices and sizes from template
+        // Get indices and sizes from transfer_info (set by planner)
+        // The planner has already determined the correct sizes based on buffer
+        // shapes
         llvm::SmallVector<mlir::Value> source_indices;
-        for (mlir::Value idx : transfer_op.getSourceIndices()) {
+        for (mlir::Value idx : transfer_info.source_indices) {
           source_indices.push_back(materializeValue(idx));
         }
 
         llvm::SmallVector<mlir::OpFoldResult> source_sizes;
-        for (mlir::Value size : transfer_op.getSourceSizes()) {
-          source_sizes.push_back(materializeValue(size));
+        for (mlir::OpFoldResult size : transfer_info.source_sizes) {
+          source_sizes.push_back(materializeOpFoldResult(size));
         }
 
         llvm::SmallVector<mlir::Value> dest_indices;
-        for (mlir::Value idx : transfer_op.getDestIndices()) {
+        for (mlir::Value idx : transfer_info.dest_indices) {
           dest_indices.push_back(materializeValue(idx));
         }
 
         llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
-        for (mlir::Value size : transfer_op.getDestSizes()) {
-          dest_sizes.push_back(materializeValue(size));
+        for (mlir::OpFoldResult size : transfer_info.dest_sizes) {
+          dest_sizes.push_back(materializeOpFoldResult(size));
         }
 
         // Create the adapted transfer operation
@@ -783,25 +793,27 @@ void PathExpansionMaterializer::adaptTransferStage(
           destination = materializeValue(transfer_op.getDestination());
         }
 
-        // Get indices and sizes from template
+        // Get indices and sizes from transfer_info (set by planner)
+        // The planner has already determined the correct sizes based on buffer
+        // shapes
         llvm::SmallVector<mlir::Value> source_indices;
-        for (mlir::Value idx : transfer_op.getSourceIndices()) {
+        for (mlir::Value idx : transfer_info.source_indices) {
           source_indices.push_back(materializeValue(idx));
         }
 
         llvm::SmallVector<mlir::OpFoldResult> source_sizes;
-        for (mlir::Value size : transfer_op.getSourceSizes()) {
-          source_sizes.push_back(materializeValue(size));
+        for (mlir::OpFoldResult size : transfer_info.source_sizes) {
+          source_sizes.push_back(materializeOpFoldResult(size));
         }
 
         llvm::SmallVector<mlir::Value> dest_indices;
-        for (mlir::Value idx : transfer_op.getDestIndices()) {
+        for (mlir::Value idx : transfer_info.dest_indices) {
           dest_indices.push_back(materializeValue(idx));
         }
 
         llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
-        for (mlir::Value size : transfer_op.getDestSizes()) {
-          dest_sizes.push_back(materializeValue(size));
+        for (mlir::OpFoldResult size : transfer_info.dest_sizes) {
+          dest_sizes.push_back(materializeOpFoldResult(size));
         }
 
         // Create the adapted transfer operation
@@ -860,14 +872,14 @@ void PathExpansionMaterializer::synthesizeTransferStage(
     for (mlir::Value idx : transfer_info.source_indices) {
       source_indices.push_back(materializeValue(idx));
     }
-    for (mlir::Value size : transfer_info.source_sizes) {
-      source_sizes.push_back(materializeValue(size));
+    for (mlir::OpFoldResult size : transfer_info.source_sizes) {
+      source_sizes.push_back(materializeOpFoldResult(size));
     }
     for (mlir::Value idx : transfer_info.dest_indices) {
       dest_indices.push_back(materializeValue(idx));
     }
-    for (mlir::Value size : transfer_info.dest_sizes) {
-      dest_sizes.push_back(materializeValue(size));
+    for (mlir::OpFoldResult size : transfer_info.dest_sizes) {
+      dest_sizes.push_back(materializeOpFoldResult(size));
     }
 
     // Create the transfer operation

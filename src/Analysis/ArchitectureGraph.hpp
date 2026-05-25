@@ -17,9 +17,10 @@
 //===----------------------------------------------------------------------===//
 // Architecture Graph
 //
-// This file defines a reusable architecture-routing analysis abstraction used by
-// path expansion. The graph models legal resource-to-resource routing hops and
-// stores hop-local transfer semantics such as transfer units and FIFO kinds.
+// This file defines a reusable architecture-routing analysis abstraction used
+// by path expansion. The graph models legal resource-to-resource routing hops
+// and stores hop-local transfer semantics such as transfer units and FIFO
+// kinds.
 //
 //===----------------------------------------------------------------------===//
 
@@ -54,8 +55,9 @@ class ArchitectureGraph {
   };
 
   enum class EdgeKind {
-    StorageTransfer, // memory-to-memory
-    StreamingTransfer, // memory to compute (and vice versa), or compute-to-compute
+    StorageTransfer,    // memory-to-memory
+    StreamingTransfer,  // memory to compute (and vice versa), or
+                        // compute-to-compute
   };
 
   struct ResourceNode {
@@ -82,7 +84,7 @@ class ArchitectureGraph {
   static ArchitectureGraph createBuiltInSpyre();
 
   NodeId addNode(Resource resource);
-  void addEdge(const EdgeInfo &edge_info);
+  void addEdge(const EdgeInfo& edge_info);
 
   bool hasNode(NodeId node_id) const;
   std::optional<ResourceNode> getNode(NodeId node_id) const;
@@ -90,11 +92,11 @@ class ArchitectureGraph {
   NeighborList getNeighbors(NodeId node_id) const;
   std::optional<EdgeInfo> getEdgeInfo(NodeId source, NodeId target) const;
   std::optional<Path> findShortestPath(NodeId source, NodeId target) const;
-  
+
   /// Get the node ID for a given resource.
   NodeId getNodeIdForResource(Resource resource) const;
 
-  void dump(llvm::raw_ostream &os) const;
+  void dump(llvm::raw_ostream& os) const;
 
   static llvm::StringRef stringifyResource(Resource resource);
   static llvm::StringRef stringifyResourceKind(ResourceKind kind);
@@ -102,7 +104,6 @@ class ArchitectureGraph {
   static ResourceKind getResourceKind(Resource resource);
 
  private:
-
   NodeId next_node_id_ = 0;
   llvm::MapVector<NodeId, ResourceNode> nodes_;
   llvm::DenseMap<NodeId, EdgeList> adjacency_;
