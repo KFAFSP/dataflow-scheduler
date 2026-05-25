@@ -32,7 +32,7 @@ llvm_config.use_default_substitutions()
 
 # Add tool directories to PATH
 tool_dirs = [config.ktir_tools_dir, config.llvm_tools_dir]
-llvm_config.add_tool_substitutions(["scheduler", "FileCheck"], tool_dirs)
+llvm_config.add_tool_substitutions(["scheduler", "FileCheck", "not"], tool_dirs)
 
 # Quote tool paths that contain spaces so shell commands work correctly
 config.substitutions = [
