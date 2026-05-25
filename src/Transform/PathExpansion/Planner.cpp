@@ -66,148 +66,107 @@ void validateFifoSlotIndex(mlir::Value orig_fifo_value,
          "Slot index should be within the allocated slots for this FIFO type");
 }
 
-/// Helper to infer resource from memory space attribute
-std::optional<ArchitectureGraph::Resource> inferResourceFromMemorySpace(
-    mlir::Attribute memory_space) {
-  if (!memory_space) return std::nullopt;
+/// Unified resource inference helper
+/// Consolidates all resource inference logic into a single utility class
+class ResourceInferrer {
+ public:
+  /// Infer resource from memory space attribute
+  static std::optional<ArchitectureGraph::Resource> fromMemorySpace(
+      mlir::Attribute memory_space) {
+    if (!memory_space) return std::nullopt;
 
-  auto memory_space_attr =
-      mlir::dyn_cast<mlir::ktdf::MemorySpaceCustomAttr>(memory_space);
-  if (!memory_space_attr) return std::nullopt;
+    auto memory_space_attr =
+        mlir::dyn_cast<mlir::ktdf::MemorySpaceCustomAttr>(memory_space);
+    if (!memory_space_attr) return std::nullopt;
 
-  switch (memory_space_attr.getValue()) {
-    case mlir::ktdf::MemorySpace::HBM:
-      return ArchitectureGraph::Resource::HBM;
-    case mlir::ktdf::MemorySpace::LX:
-      return ArchitectureGraph::Resource::LX;
-    default:
-      return std::nullopt;
-  }
-}
-
-/// Helper to infer resource from FIFO type
-std::optional<ArchitectureGraph::Resource> inferResourceFromFifoType(
-    mlir::ktdf::FifoType fifo_type, bool is_producer_side) {
-  switch (fifo_type) {
-    case mlir::ktdf::FifoType::HbmToSfp:
-      return is_producer_side ? ArchitectureGraph::Resource::HBM
-                              : ArchitectureGraph::Resource::SFP;
-    case mlir::ktdf::FifoType::SfpToHbm:
-      return is_producer_side ? ArchitectureGraph::Resource::SFP
-                              : ArchitectureGraph::Resource::HBM;
-    case mlir::ktdf::FifoType::HbmToPe:
-      return is_producer_side ? ArchitectureGraph::Resource::HBM
-                              : ArchitectureGraph::Resource::PE;
-    case mlir::ktdf::FifoType::PeToHbm:
-      return is_producer_side ? ArchitectureGraph::Resource::PE
-                              : ArchitectureGraph::Resource::HBM;
-    case mlir::ktdf::FifoType::LxluToSfp:
-      return is_producer_side ? ArchitectureGraph::Resource::LX
-                              : ArchitectureGraph::Resource::SFP;
-    case mlir::ktdf::FifoType::SfpToLxsu:
-      return is_producer_side ? ArchitectureGraph::Resource::SFP
-                              : ArchitectureGraph::Resource::LX;
-    case mlir::ktdf::FifoType::LxluToPe:
-      return is_producer_side ? ArchitectureGraph::Resource::LX
-                              : ArchitectureGraph::Resource::PE;
-    case mlir::ktdf::FifoType::PeToLxsu:
-      return is_producer_side ? ArchitectureGraph::Resource::PE
-                              : ArchitectureGraph::Resource::LX;
-    case mlir::ktdf::FifoType::SfpToPe:
-      return is_producer_side ? ArchitectureGraph::Resource::SFP
-                              : ArchitectureGraph::Resource::PE;
-    case mlir::ktdf::FifoType::PeToSfp:
-      return is_producer_side ? ArchitectureGraph::Resource::PE
-                              : ArchitectureGraph::Resource::SFP;
-  }
-  return std::nullopt;
-}
-
-/// Helper to infer resource from a PrivateResourceSpec
-/// For memory buffers, returns the memory resource
-/// For FIFOs, returns the resource on the specified side (producer or consumer)
-std::optional<ArchitectureGraph::Resource> inferResourceFromPrivateSpec(
-    const PrivateResourceSpec* spec, bool is_producer_side) {
-  if (!spec) return std::nullopt;
-
-  if (spec->kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
-    return spec->memory_resource;
-  } else if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
-    return inferResourceFromFifoType(spec->fifo_type, is_producer_side);
-  }
-
-  return std::nullopt;
-}
-
-/// Helper to infer resource from a stage by inspecting its first data transfer
-/// This is useful for intermediate stages that don't have anchor resources
-/// and aren't first or last stages
-std::optional<ArchitectureGraph::Resource> inferResourceFromStage(
-    mlir::ktdf::StageOp stage_op) {
-  if (!stage_op) return std::nullopt;
-
-  // Find the first data transfer operation in the stage
-  mlir::ktdf::DataTransferOp first_transfer = nullptr;
-  stage_op.walk([&](mlir::ktdf::DataTransferOp transfer_op) {
-    if (!first_transfer) {
-      first_transfer = transfer_op;
-      return mlir::WalkResult::interrupt();
-    }
-    return mlir::WalkResult::advance();
-  });
-
-  if (!first_transfer) return std::nullopt;
-
-  // Check if source is a FIFO - if so, this stage is consuming from that FIFO
-  if (auto source_type = first_transfer.getSource().getType()) {
-    if (auto fifo_type =
-            mlir::dyn_cast<mlir::ktdf::FifoSlotType>(source_type)) {
-      // Stage is consuming from FIFO, so it's on the consumer side
-      return inferResourceFromFifoType(fifo_type.getFifoType(),
-                                       /*is_producer_side=*/false);
+    switch (memory_space_attr.getValue()) {
+      case mlir::ktdf::MemorySpace::HBM:
+        return ArchitectureGraph::Resource::HBM;
+      case mlir::ktdf::MemorySpace::LX:
+        return ArchitectureGraph::Resource::LX;
+      default:
+        return std::nullopt;
     }
   }
 
-  // Check if destination is a FIFO - if so, this stage is producing to that
-  // FIFO
-  if (auto dest_type = first_transfer.getDestination().getType()) {
-    if (auto fifo_type = mlir::dyn_cast<mlir::ktdf::FifoSlotType>(dest_type)) {
-      // Stage is producing to FIFO, so it's on the producer side
-      return inferResourceFromFifoType(fifo_type.getFifoType(),
-                                       /*is_producer_side=*/true);
-    }
+  /// Infer resource from FIFO type
+  static std::optional<ArchitectureGraph::Resource> fromFifoType(
+      mlir::ktdf::FifoType fifo_type, bool is_producer_side) {
+    return ArchitectureGraph::getResourceFromFifoType(fifo_type,
+                                                      is_producer_side);
   }
 
-  return std::nullopt;
-}
+  /// Infer resource from a PrivateResourceSpec
+  static std::optional<ArchitectureGraph::Resource> fromPrivateSpec(
+      const PrivateResourceSpec* spec, bool is_producer_side) {
+    if (!spec) return std::nullopt;
+
+    if (spec->kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
+      return spec->memory_resource;
+    } else if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
+      return fromFifoType(spec->fifo_type, is_producer_side);
+    }
+
+    return std::nullopt;
+  }
+
+  /// Infer resource from a stage by inspecting its first data transfer
+  static std::optional<ArchitectureGraph::Resource> fromStage(
+      mlir::ktdf::StageOp stage_op) {
+    if (!stage_op) return std::nullopt;
+
+    // Find the first data transfer operation in the stage
+    mlir::ktdf::DataTransferOp first_transfer = nullptr;
+    stage_op.walk([&](mlir::ktdf::DataTransferOp transfer_op) {
+      if (!first_transfer) {
+        first_transfer = transfer_op;
+        return mlir::WalkResult::interrupt();
+      }
+      return mlir::WalkResult::advance();
+    });
+
+    if (!first_transfer) return std::nullopt;
+
+    // Check if source is a FIFO - if so, this stage is consuming from that FIFO
+    if (auto source_type = first_transfer.getSource().getType()) {
+      if (auto fifo_type =
+              mlir::dyn_cast<mlir::ktdf::FifoSlotType>(source_type)) {
+        // Stage is consuming from FIFO, so it's on the consumer side
+        return fromFifoType(fifo_type.getFifoType(),
+                            /*is_producer_side=*/false);
+      }
+    }
+
+    // Check if destination is a FIFO - if so, this stage is producing to that
+    // FIFO
+    if (auto dest_type = first_transfer.getDestination().getType()) {
+      if (auto fifo_type =
+              mlir::dyn_cast<mlir::ktdf::FifoSlotType>(dest_type)) {
+        // Stage is producing to FIFO, so it's on the producer side
+        return fromFifoType(fifo_type.getFifoType(),
+                            /*is_producer_side=*/true);
+      }
+    }
+
+    return std::nullopt;
+  }
+
+  /// Infer resource from a Type (MemRefType or FifoSlotType)
+  static std::optional<ArchitectureGraph::Resource> fromType(
+      mlir::Type type, bool is_producer_side) {
+    if (auto memref_type = mlir::dyn_cast<mlir::MemRefType>(type)) {
+      return fromMemorySpace(memref_type.getMemorySpace());
+    } else if (auto fifo_type =
+                   mlir::dyn_cast<mlir::ktdf::FifoSlotType>(type)) {
+      return fromFifoType(fifo_type.getFifoType(), is_producer_side);
+    }
+    return std::nullopt;
+  }
+};
 
 /// Helper to check if a stage is an intermediate (synthetic) stage
 inline bool isIntermediateStage(const StageNode* stage) {
   return stage->getOperation() == nullptr;
-}
-
-/// Helper to derive sizes from a private resource spec
-/// Used to populate source_sizes or dest_sizes when they're empty
-void deriveSizesFromResourceSpec(
-    const PrivateResourceSpec* spec, size_t slot_index,
-    mlir::MLIRContext* context,
-    llvm::SmallVectorImpl<mlir::OpFoldResult>& sizes) {
-  if (!spec) return;
-
-  mlir::OpBuilder builder(context);
-
-  if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
-    // For FIFO, use the specific slot's capacity
-    assert(slot_index < spec->elements_per_slot.size() &&
-           "Slot index out of bounds");
-    int64_t slot_capacity = spec->elements_per_slot[slot_index];
-    sizes.push_back(builder.getI64IntegerAttr(slot_capacity));
-  } else if (spec->kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
-    // For memory buffer, use the shape
-    for (int64_t dim : spec->shape) {
-      sizes.push_back(builder.getI64IntegerAttr(dim));
-    }
-  }
 }
 
 /// Helper to determine a stage's resource from its summary and position
@@ -234,7 +193,7 @@ std::optional<ArchitectureGraph::Resource> determineStageResource(
   auto stage_op =
       mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
   if (stage_op) {
-    return inferResourceFromStage(stage_op);
+    return ResourceInferrer::fromStage(stage_op);
   }
 
   return std::nullopt;
@@ -328,28 +287,12 @@ void TransferMaterializationInfo::print(llvm::raw_ostream& os) const {
 
   if (source_private_resource) {
     os << ", priv_source=";
-#if 1
     source_private_resource->print(os);
-#else
-    if (source_private_resource->kind == PrivateResourceSpec::Kind::kFifo) {
-      os << "FIFO[" << source_slot_index << "]";
-    } else {
-      os << "Buffer";
-    }
-#endif
   }
 
   if (dest_private_resource) {
     os << ", priv_dest=";
-#if 1
     dest_private_resource->print(os);
-#else
-    if (dest_private_resource->kind == PrivateResourceSpec::Kind::kFifo) {
-      os << "FIFO[" << dest_slot_index << "]";
-    } else {
-      os << "Buffer";
-    }
-#endif
   }
 
   if (template_op) {
@@ -418,8 +361,8 @@ void StageMaterializationInfo::print(llvm::raw_ostream& os) const {
 
 #if 1
   os << "\nTransfers:\n";
-  for (const TransferMaterializationInfo& ti : transfers) {
-    ti.print(os);
+  for (const TransferMaterializationInfo* ti : transfers) {
+    ti->print(os);
     os << "\n";
   }
 #endif
@@ -470,33 +413,15 @@ mlir::FailureOr<StageSummary> analyzeStage(StageNode* stage_node) {
 
       // Analyze source endpoint
       if (auto source_type = transfer_op.getSource().getType()) {
-        if (auto memref_type = mlir::dyn_cast<mlir::MemRefType>(source_type)) {
-          if (auto resource =
-                  inferResourceFromMemorySpace(memref_type.getMemorySpace())) {
-            summary.input_endpoints.push_back({*resource, std::nullopt});
-          }
-        } else if (auto fifo_type =
-                       mlir::dyn_cast<mlir::ktdf::FifoSlotType>(source_type)) {
-          if (auto resource =
-                  inferResourceFromFifoType(fifo_type.getFifoType(), true)) {
-            summary.input_endpoints.push_back({*resource, std::nullopt});
-          }
+        if (auto resource = ResourceInferrer::fromType(source_type, true)) {
+          summary.input_endpoints.push_back({*resource, std::nullopt});
         }
       }
 
       // Analyze destination endpoint
       if (auto dest_type = transfer_op.getDestination().getType()) {
-        if (auto memref_type = mlir::dyn_cast<mlir::MemRefType>(dest_type)) {
-          if (auto resource =
-                  inferResourceFromMemorySpace(memref_type.getMemorySpace())) {
-            summary.output_endpoints.push_back({*resource, std::nullopt});
-          }
-        } else if (auto fifo_type =
-                       mlir::dyn_cast<mlir::ktdf::FifoSlotType>(dest_type)) {
-          if (auto resource =
-                  inferResourceFromFifoType(fifo_type.getFifoType(), false)) {
-            summary.output_endpoints.push_back({*resource, std::nullopt});
-          }
+        if (auto resource = ResourceInferrer::fromType(dest_type, false)) {
+          summary.output_endpoints.push_back({*resource, std::nullopt});
         }
       }
     } else if (mlir::isa<mlir::linalg::LinalgOp>(op)) {
@@ -901,50 +826,12 @@ static mlir::LogicalResult analyzeStageTransfers(
 
     assert(edge && "Edge should exist for legal hop");
 
-    // Create transfer materialization info
-    TransferMaterializationInfo transfer_info;
-    transfer_info.template_op = transfer;
-    transfer_info.hop = *edge;
-    transfer_info.source_resource =
-        intermediate_is_source ? intermediate_resource : current_resource;
-    transfer_info.dest_resource =
-        intermediate_is_source ? current_resource : intermediate_resource;
-
-    // Set up indices and sizes based on which side is the intermediate buffer.
-    // The buffer side should use the buffer's shape, while the other side
-    // uses the template's sizes.
+    // Create transfer materialization info using factory
     mlir::OpBuilder builder(transfer->getContext());
-    if (intermediate_is_source) {
-      // Source is the intermediate buffer, dest is FIFO
-      transfer_info.source_private_resource = buffer_spec;
-      // Source indices: copy from template (memref side)
-      transfer_info.source_indices.append(transfer.getSourceIndices().begin(),
-                                          transfer.getSourceIndices().end());
-      // Source sizes: use buffer shape (not template, since buffer may have
-      // different shape)
-      for (int64_t dim : buffer_spec->shape) {
-        transfer_info.source_sizes.push_back(builder.getI64IntegerAttr(dim));
-      }
-      // Dest indices and sizes: copy from template (FIFO side)
-      transfer_info.dest_indices.append(transfer.getDestIndices().begin(),
-                                        transfer.getDestIndices().end());
-      transfer_info.dest_sizes = transfer.getMixedDestSizes();
-    } else {
-      // Source is FIFO, dest is the intermediate buffer
-      transfer_info.dest_private_resource = buffer_spec;
-      // Source indices and sizes: copy from template (FIFO side)
-      transfer_info.source_indices.append(transfer.getSourceIndices().begin(),
-                                          transfer.getSourceIndices().end());
-      transfer_info.source_sizes = transfer.getMixedSourceSizes();
-      // Dest indices: copy from template (memref side)
-      transfer_info.dest_indices.append(transfer.getDestIndices().begin(),
-                                        transfer.getDestIndices().end());
-      // Dest sizes: use buffer shape (not template, since buffer may have
-      // different shape)
-      for (int64_t dim : buffer_spec->shape) {
-        transfer_info.dest_sizes.push_back(builder.getI64IntegerAttr(dim));
-      }
-    }
+    TransferMaterializationInfo* transfer_info =
+        plan->transfer_factory.createFromTemplateWithBuffer(
+            transfer, *edge, intermediate_resource, current_resource,
+            intermediate_is_source, buffer_spec, builder);
 
     stage_info.transfers.push_back(transfer_info);
 
@@ -1133,25 +1020,11 @@ static mlir::LogicalResult analyzeFifoOperations(
       // Validate slot index assignment
       validateFifoSlotIndex(fifo_slot, slot_idx, fifo_specs[fifo_type]);
 
-      // Create transfer materialization info
-      TransferMaterializationInfo transfer_info;
-      transfer_info.template_op = op;
-      transfer_info.hop = *edge;
-      transfer_info.source_resource = source_resource;
-      transfer_info.dest_resource = dest_resource;
-
-      // Note: FIFO operations (read_from_fifo/write_to_fifo) don't have
-      // indices and sizes - they work with tensors. The indices and sizes
-      // will remain empty for these operations.
-
-      // Link the FIFO spec to the appropriate side
-      if (is_read) {
-        transfer_info.source_private_resource = fifo_specs[fifo_type];
-        transfer_info.source_slot_index = slot_idx;
-      } else {
-        transfer_info.dest_private_resource = fifo_specs[fifo_type];
-        transfer_info.dest_slot_index = slot_idx;
-      }
+      // Create transfer materialization info using factory
+      TransferMaterializationInfo* transfer_info =
+          plan->transfer_factory.createFromFifoOp(
+              op, *edge, source_resource, dest_resource, fifo_specs[fifo_type],
+              slot_idx, is_read);
 
       stage_info.transfers.push_back(transfer_info);
 
@@ -1236,18 +1109,18 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
 
     llvm::SmallPtrSet<const TransferMaterializationInfo*, 4>
         visited_next_transfer;
-    for (const TransferMaterializationInfo& prev_transfer :
+    for (const TransferMaterializationInfo* prev_transfer :
          prev_info.transfers) {
       // Check if this transfer's destination is the intermediate resource
-      if (prev_transfer.dest_resource != intermediate_resource) continue;
+      if (prev_transfer->dest_resource != intermediate_resource) continue;
       // Create corresponding transfer for intermediate stage
       // This transfer goes FROM the intermediate resource TO the next stage
 
       // Reuse the private resource from prev_transfer's destination as our
       // source
-      assert(prev_transfer.dest_private_resource);
+      assert(prev_transfer->dest_private_resource);
       const PrivateResourceSpec* source_resource_spec =
-          prev_transfer.dest_private_resource;
+          prev_transfer->dest_private_resource;
 
       // Look for matching transfer in next stage to get destination resource
       // Find a transfer in next_stage that has intermediate_resource as source
@@ -1257,16 +1130,16 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       llvm::SmallVector<mlir::OpFoldResult> dest_sizes_from_next;
       assert(plan->stage_info.count(next_stage));
       StageMaterializationInfo& next_info = plan->stage_info[next_stage];
-      for (const TransferMaterializationInfo& next_transfer :
+      for (const TransferMaterializationInfo* next_transfer :
            next_info.transfers) {
-        if (visited_next_transfer.contains(&next_transfer)) continue;
-        if (next_transfer.source_resource == intermediate_resource) {
+        if (visited_next_transfer.contains(next_transfer)) continue;
+        if (next_transfer->source_resource == intermediate_resource) {
           // Found matching transfer - use its source and indices/sizes
-          dest_resource_spec = next_transfer.source_private_resource;
-          dest_slot_idx = next_transfer.source_slot_index;
-          dest_indices_from_next = next_transfer.source_indices;
-          dest_sizes_from_next = next_transfer.source_sizes;
-          visited_next_transfer.insert(&next_transfer);
+          dest_resource_spec = next_transfer->source_private_resource;
+          dest_slot_idx = next_transfer->source_slot_index;
+          dest_indices_from_next = next_transfer->source_indices;
+          dest_sizes_from_next = next_transfer->source_sizes;
+          visited_next_transfer.insert(next_transfer);
           break;
         }
       }
@@ -1275,11 +1148,11 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       // Infer actual source and destination resources from the private resource
       // specs
       std::optional<ArchitectureGraph::Resource> inferred_source_resource =
-          inferResourceFromPrivateSpec(source_resource_spec,
-                                       true);  // producer side
+          ResourceInferrer::fromPrivateSpec(source_resource_spec,
+                                            true);  // producer side
       std::optional<ArchitectureGraph::Resource> inferred_dest_resource =
-          inferResourceFromPrivateSpec(dest_resource_spec,
-                                       false);  // consumer side
+          ResourceInferrer::fromPrivateSpec(dest_resource_spec,
+                                            false);  // consumer side
 
       assert(inferred_source_resource && inferred_dest_resource &&
              "Should be able to infer resources from private specs");
@@ -1291,38 +1164,14 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
 
       assert(edge && "Edge should exist for legal hop");
 
-      // Create transfer info for intermediate stage
-      TransferMaterializationInfo transfer_info;
-      transfer_info.template_op = nullptr;  // Synthetic transfer, no template
-      transfer_info.hop = *edge;
-      transfer_info.source_resource = *inferred_source_resource;
-      transfer_info.dest_resource = *inferred_dest_resource;
-      transfer_info.source_private_resource = source_resource_spec;
-      transfer_info.source_slot_index = prev_transfer.dest_slot_index;
-      transfer_info.source_indices = prev_transfer.dest_indices;
-      transfer_info.source_sizes = prev_transfer.dest_sizes;
-      transfer_info.dest_private_resource = dest_resource_spec;
-      transfer_info.dest_slot_index = dest_slot_idx;
-      transfer_info.dest_indices = dest_indices_from_next;
-      transfer_info.dest_sizes = dest_sizes_from_next;
-
-      // Derive sizes from resource specs if empty
-      if (transfer_info.dest_sizes.empty() && dest_resource_spec) {
-        LLVM_DEBUG(llvm::dbgs()
-                   << "    Deriving dest_sizes from resource spec\n");
-        deriveSizesFromResourceSpec(
-            dest_resource_spec, transfer_info.dest_slot_index,
-            prev_stage->getOperation()->getContext(), transfer_info.dest_sizes);
-      }
-
-      if (transfer_info.source_sizes.empty() && source_resource_spec) {
-        LLVM_DEBUG(llvm::dbgs()
-                   << "    Deriving source_sizes from resource spec\n");
-        deriveSizesFromResourceSpec(source_resource_spec,
-                                    transfer_info.source_slot_index,
-                                    prev_stage->getOperation()->getContext(),
-                                    transfer_info.source_sizes);
-      }
+      // Create transfer info for intermediate stage using factory
+      TransferMaterializationInfo* transfer_info =
+          plan->transfer_factory.createSynthetic(
+              *edge, *inferred_source_resource, *inferred_dest_resource,
+              source_resource_spec, prev_transfer->dest_slot_index,
+              prev_transfer->dest_indices, prev_transfer->dest_sizes,
+              dest_resource_spec, dest_slot_idx, dest_indices_from_next,
+              dest_sizes_from_next, prev_stage->getOperation()->getContext());
 
       stage_info.transfers.push_back(transfer_info);
 
@@ -1332,21 +1181,21 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
             << ArchitectureGraph::stringifyResource(*inferred_source_resource)
             << " -> "
             << ArchitectureGraph::stringifyResource(*inferred_dest_resource);
-        if (transfer_info.source_private_resource) {
+        if (transfer_info->source_private_resource) {
           llvm::dbgs() << " (source: ";
-          if (transfer_info.source_private_resource->kind ==
+          if (transfer_info->source_private_resource->kind ==
               PrivateResourceSpec::Kind::kFifo) {
-            llvm::dbgs() << "FIFO slot " << transfer_info.source_slot_index;
+            llvm::dbgs() << "FIFO slot " << transfer_info->source_slot_index;
           } else {
             llvm::dbgs() << "buffer";
           }
           llvm::dbgs() << ")";
         }
-        if (transfer_info.dest_private_resource) {
+        if (transfer_info->dest_private_resource) {
           llvm::dbgs() << " (dest: ";
-          if (transfer_info.dest_private_resource->kind ==
+          if (transfer_info->dest_private_resource->kind ==
               PrivateResourceSpec::Kind::kFifo) {
-            llvm::dbgs() << "FIFO slot " << transfer_info.dest_slot_index;
+            llvm::dbgs() << "FIFO slot " << transfer_info->dest_slot_index;
           } else {
             llvm::dbgs() << "buffer";
           }
@@ -1360,6 +1209,28 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
   return mlir::success();
 }
 
+/// Helper to get transfer unit from architecture graph edge
+/// Returns the transfer unit for the edge between source and dest resources
+static std::optional<mlir::ktdf::ComponentType> getTransferUnitFromEdge(
+    const ArchitectureGraph& arch_graph,
+    const TransferMaterializationInfo& transfer) {
+  std::optional<ArchitectureGraph::EdgeInfo> edge =
+      arch_graph.getEdgeInfoForResources(transfer.source_resource,
+                                         transfer.dest_resource);
+
+  if (!edge) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "  Warning: No edge found for "
+               << ArchitectureGraph::stringifyResource(transfer.source_resource)
+               << " -> "
+               << ArchitectureGraph::stringifyResource(transfer.dest_resource)
+               << "\n");
+    return std::nullopt;
+  }
+
+  return edge->transfer_unit;
+}
+
 //===----------------------------------------------------------------------===//
 // Step 5: Assign Applicable Units
 //===----------------------------------------------------------------------===//
@@ -1370,6 +1241,7 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
 /// the source and destination resources. For example: LX -> SFP uses LXLU, SFP
 /// -> LX uses LXSU. For non-transfer stages, use the anchor resource if
 /// available, otherwise use the first transfer.
+
 static mlir::LogicalResult assignApplicableUnit(
     StageNode* stage, const ArchitectureGraph& arch_graph,
     StageMaterializationInfo& stage_info) {
@@ -1384,37 +1256,23 @@ static mlir::LogicalResult assignApplicableUnit(
     // For transfer stages, use the transfer unit from the architecture graph
     if (stage_info.transfers.empty()) return mlir::success();
 
-    const TransferMaterializationInfo& transfer = stage_info.transfers[0];
+    const TransferMaterializationInfo* transfer = stage_info.transfers[0];
 
-    // Query the architecture graph for the edge between source and dest
-    std::optional<ArchitectureGraph::EdgeInfo> edge =
-        arch_graph.getEdgeInfoForResources(transfer.source_resource,
-                                           transfer.dest_resource);
-
-    if (!edge) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "  Warning: No edge found for "
-                 << ArchitectureGraph::stringifyResource(
-                        transfer.source_resource)
-                 << " -> "
-                 << ArchitectureGraph::stringifyResource(transfer.dest_resource)
-                 << "\n");
-      return mlir::success();
-    }
+    // Get the transfer unit from the edge
+    std::optional<mlir::ktdf::ComponentType> transfer_unit =
+        getTransferUnitFromEdge(arch_graph, *transfer);
 
     // Assign the transfer unit as the applicable unit
-    if (edge->transfer_unit) {
-      stage_info.applicable_unit = *edge->transfer_unit;
-      LLVM_DEBUG(llvm::dbgs()
-                 << "  Stage " << stage->getStageId()
-                 << ": Assigned applicable unit "
-                 << mlir::ktdf::stringifyComponentType(*edge->transfer_unit)
-                 << " for "
-                 << ArchitectureGraph::stringifyResource(
-                        transfer.source_resource)
-                 << " -> "
-                 << ArchitectureGraph::stringifyResource(transfer.dest_resource)
-                 << "\n");
+    if (transfer_unit) {
+      stage_info.applicable_unit = *transfer_unit;
+      LLVM_DEBUG(
+          llvm::dbgs()
+          << "  Stage " << stage->getStageId() << ": Assigned applicable unit "
+          << mlir::ktdf::stringifyComponentType(*transfer_unit) << " for "
+          << ArchitectureGraph::stringifyResource(transfer->source_resource)
+          << " -> "
+          << ArchitectureGraph::stringifyResource(transfer->dest_resource)
+          << "\n");
     }
   } else {
     // For non-transfer stages (kPreserveOriginal, kAdaptFifoKinds)
@@ -1434,18 +1292,17 @@ static mlir::LogicalResult assignApplicableUnit(
       }
     } else if (!stage_info.transfers.empty()) {
       // Fallback: use the first transfer's edge to determine the unit
-      const TransferMaterializationInfo& transfer = stage_info.transfers[0];
+      const TransferMaterializationInfo* transfer = stage_info.transfers[0];
 
-      std::optional<ArchitectureGraph::EdgeInfo> edge =
-          arch_graph.getEdgeInfoForResources(transfer.source_resource,
-                                             transfer.dest_resource);
+      std::optional<mlir::ktdf::ComponentType> transfer_unit =
+          getTransferUnitFromEdge(arch_graph, *transfer);
 
-      if (edge && edge->transfer_unit) {
-        stage_info.applicable_unit = *edge->transfer_unit;
+      if (transfer_unit) {
+        stage_info.applicable_unit = *transfer_unit;
         LLVM_DEBUG(llvm::dbgs()
                    << "  Stage " << stage->getStageId()
                    << ": Assigned applicable unit "
-                   << mlir::ktdf::stringifyComponentType(*edge->transfer_unit)
+                   << mlir::ktdf::stringifyComponentType(*transfer_unit)
                    << " from first transfer\n");
       }
     }

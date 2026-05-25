@@ -156,6 +156,46 @@ class PrivateResourceFactory {
       allocations_;
 };
 
+// Forward declaration
+struct TransferMaterializationInfo;
+
+/// Factory for creating and managing TransferMaterializationInfo objects
+/// Owns all transfer info objects and provides factory methods
+class TransferInfoFactory {
+ public:
+  /// Factory method: Create transfer from template with intermediate buffer
+  TransferMaterializationInfo* createFromTemplateWithBuffer(
+      mlir::ktdf::DataTransferOp template_op,
+      const ArchitectureGraph::EdgeInfo& edge,
+      ArchitectureGraph::Resource intermediate_resource,
+      ArchitectureGraph::Resource current_resource, bool intermediate_is_source,
+      const PrivateResourceSpec* buffer_spec, mlir::OpBuilder& builder);
+
+  /// Factory method: Create transfer for FIFO operation
+  TransferMaterializationInfo* createFromFifoOp(
+      mlir::Operation* fifo_op, const ArchitectureGraph::EdgeInfo& edge,
+      ArchitectureGraph::Resource source_resource,
+      ArchitectureGraph::Resource dest_resource,
+      const PrivateResourceSpec* fifo_spec, size_t slot_index, bool is_read);
+
+  /// Factory method: Create synthetic transfer for intermediate stage
+  TransferMaterializationInfo* createSynthetic(
+      const ArchitectureGraph::EdgeInfo& edge,
+      ArchitectureGraph::Resource source_resource,
+      ArchitectureGraph::Resource dest_resource,
+      const PrivateResourceSpec* source_spec, size_t source_slot_index,
+      llvm::ArrayRef<mlir::Value> source_indices,
+      llvm::ArrayRef<mlir::OpFoldResult> source_sizes,
+      const PrivateResourceSpec* dest_spec, size_t dest_slot_index,
+      llvm::ArrayRef<mlir::Value> dest_indices,
+      llvm::ArrayRef<mlir::OpFoldResult> dest_sizes,
+      mlir::MLIRContext* context);
+
+ private:
+  // Owned transfer info objects
+  llvm::SmallVector<std::unique_ptr<TransferMaterializationInfo>> transfers_;
+};
+
 /// Information needed to materialize a transfer operation
 struct TransferMaterializationInfo {
   mlir::Operation* template_op =
@@ -212,7 +252,8 @@ struct StageMaterializationInfo {
 
   // For AdaptFifoKinds, AdaptTransfer, and SyntheticTransfer:
   // Contains transfer operations with pointers to private resources
-  llvm::SmallVector<TransferMaterializationInfo, 4> transfers;
+  // Pointers are owned by TransferInfoFactory
+  llvm::SmallVector<TransferMaterializationInfo*, 4> transfers;
 
   // which unit this stage runs on
   std::optional<mlir::ktdf::ComponentType> applicable_unit;
@@ -238,6 +279,9 @@ struct PathExpansionPlan {
   // Resource factory that owns all PrivateResourceSpec objects
   // and tracks their allocations during materialization
   PrivateResourceFactory resource_factory;
+
+  // Transfer info factory that owns all TransferMaterializationInfo objects
+  TransferInfoFactory transfer_factory;
 
   // Whether any changes were made
   bool changed = false;

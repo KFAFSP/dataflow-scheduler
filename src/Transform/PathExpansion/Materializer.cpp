@@ -21,9 +21,6 @@
 #include "Materializer.hpp"
 
 #include "llvm/Support/Debug.h"
-#include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "src/Dialects/KTDF/KTDFOps.hpp"
 
@@ -151,16 +148,6 @@ mlir::Attribute PathExpansionMaterializer::getMemorySpaceFromResource(
     default:
       llvm_unreachable("Unsupported memory resource");
   }
-}
-
-mlir::ktdf::FifoSlotType PathExpansionMaterializer::getFifoTypeFromEdge(
-    const ArchitectureGraph::EdgeInfo& edge,
-    ArchitectureGraph::Resource source_resource,
-    ArchitectureGraph::Resource dest_resource, mlir::Type element_type,
-    llvm::ArrayRef<int64_t> shape) {
-  return ArchitectureGraph::getFifoTypeFromEdge(builder_.getContext(), edge,
-                                                source_resource, dest_resource,
-                                                element_type, shape);
 }
 
 //===----------------------------------------------------------------------===//
@@ -665,9 +652,9 @@ void PathExpansionMaterializer::adaptStageBodyWithTransfers(
   // Build a map from original transfer ops to their transfer info
   llvm::DenseMap<mlir::Operation*, const TransferMaterializationInfo*>
       transfer_map;
-  for (const TransferMaterializationInfo& transfer_info : info.transfers) {
-    if (transfer_info.template_op) {
-      transfer_map[transfer_info.template_op] = &transfer_info;
+  for (const TransferMaterializationInfo* transfer_info : info.transfers) {
+    if (transfer_info->template_op) {
+      transfer_map[transfer_info->template_op] = transfer_info;
     }
   }
 
@@ -709,32 +696,32 @@ void PathExpansionMaterializer::adaptTransferStage(
 void PathExpansionMaterializer::synthesizeTransferStage(
     const StageMaterializationInfo& info) {
   // Synthesize new data transfer operations based on transfer info
-  for (const TransferMaterializationInfo& transfer_info : info.transfers) {
-    mlir::Location loc = transfer_info.template_op
-                             ? transfer_info.template_op->getLoc()
+  for (const TransferMaterializationInfo* transfer_info : info.transfers) {
+    mlir::Location loc = transfer_info->template_op
+                             ? transfer_info->template_op->getLoc()
                              : builder_.getUnknownLoc();
 
     // Get source - must be a private resource for synthetic transfers
-    assert(transfer_info.source_private_resource &&
+    assert(transfer_info->source_private_resource &&
            "Synthetic transfer must have source private resource");
     const PrivateResourceAllocation* source_alloc =
-        resource_factory_.getAllocation(transfer_info.source_private_resource);
+        resource_factory_.getAllocation(transfer_info->source_private_resource);
     assert(source_alloc && "Private resource should have been allocated");
-    assert(transfer_info.source_slot_index < source_alloc->ssa_values.size() &&
+    assert(transfer_info->source_slot_index < source_alloc->ssa_values.size() &&
            "Slot index out of bounds");
     mlir::Value source =
-        source_alloc->ssa_values[transfer_info.source_slot_index];
+        source_alloc->ssa_values[transfer_info->source_slot_index];
 
     // Get destination - must be a private resource for synthetic transfers
-    assert(transfer_info.dest_private_resource &&
+    assert(transfer_info->dest_private_resource &&
            "Synthetic transfer must have dest private resource");
     const PrivateResourceAllocation* dest_alloc =
-        resource_factory_.getAllocation(transfer_info.dest_private_resource);
+        resource_factory_.getAllocation(transfer_info->dest_private_resource);
     assert(dest_alloc && "Private resource should have been allocated");
-    assert(transfer_info.dest_slot_index < dest_alloc->ssa_values.size() &&
+    assert(transfer_info->dest_slot_index < dest_alloc->ssa_values.size() &&
            "Slot index out of bounds");
     mlir::Value destination =
-        dest_alloc->ssa_values[transfer_info.dest_slot_index];
+        dest_alloc->ssa_values[transfer_info->dest_slot_index];
 
     // Get indices and sizes from transfer_info (captured by planner from
     // neighboring transfers)
@@ -743,16 +730,16 @@ void PathExpansionMaterializer::synthesizeTransferStage(
     llvm::SmallVector<mlir::Value> dest_indices;
     llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
 
-    for (mlir::Value idx : transfer_info.source_indices) {
+    for (mlir::Value idx : transfer_info->source_indices) {
       source_indices.push_back(materializeValue(idx));
     }
-    for (mlir::OpFoldResult size : transfer_info.source_sizes) {
+    for (mlir::OpFoldResult size : transfer_info->source_sizes) {
       source_sizes.push_back(materializeOpFoldResult(size));
     }
-    for (mlir::Value idx : transfer_info.dest_indices) {
+    for (mlir::Value idx : transfer_info->dest_indices) {
       dest_indices.push_back(materializeValue(idx));
     }
-    for (mlir::OpFoldResult size : transfer_info.dest_sizes) {
+    for (mlir::OpFoldResult size : transfer_info->dest_sizes) {
       dest_sizes.push_back(materializeOpFoldResult(size));
     }
 

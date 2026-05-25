@@ -182,13 +182,6 @@ class PathExpansionMaterializer {
   void registerAllocatedResources(mlir::ktdf::PrivateOp new_private,
                                   size_t orig_result_count);
 
-  /// Helper to get or create FIFO type from edge info
-  mlir::ktdf::FifoSlotType getFifoTypeFromEdge(
-      const ArchitectureGraph::EdgeInfo& edge,
-      ArchitectureGraph::Resource source_resource,
-      ArchitectureGraph::Resource dest_resource, mlir::Type element_type,
-      llvm::ArrayRef<int64_t> shape);
-
   /// Helper to get memory space attribute from resource
   mlir::Attribute getMemorySpaceFromResource(
       ArchitectureGraph::Resource resource);

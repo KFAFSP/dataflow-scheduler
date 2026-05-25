@@ -121,6 +121,13 @@ class ArchitectureGraph {
       Resource dest_resource, mlir::Type element_type,
       llvm::ArrayRef<int64_t> shape);
 
+  /// Get the resource for a given FIFO type and side (producer or consumer)
+  /// Returns the producer resource if is_producer_side is true, otherwise
+  /// returns the consumer resource
+  /// Asserts if the FIFO type is not recognized
+  static Resource getResourceFromFifoType(mlir::ktdf::FifoType fifo_type,
+                                          bool is_producer_side);
+
  private:
   NodeId next_node_id_ = 0;
   llvm::MapVector<NodeId, ResourceNode> nodes_;

@@ -352,6 +352,34 @@ mlir::ktdf::FifoSlotType ArchitectureGraph::getFifoTypeFromEdge(
                                        element_type);
 }
 
+ArchitectureGraph::Resource ArchitectureGraph::getResourceFromFifoType(
+    mlir::ktdf::FifoType fifo_type, bool is_producer_side) {
+  // Lookup table mapping FIFO types to their producer/consumer resources
+  struct FifoResourcePair {
+    Resource producer;
+    Resource consumer;
+  };
+
+  static const llvm::DenseMap<mlir::ktdf::FifoType, FifoResourcePair>
+      kFifoResourceMap = {
+          {mlir::ktdf::FifoType::HbmToSfp, {Resource::HBM, Resource::SFP}},
+          {mlir::ktdf::FifoType::SfpToHbm, {Resource::SFP, Resource::HBM}},
+          {mlir::ktdf::FifoType::HbmToPe, {Resource::HBM, Resource::PE}},
+          {mlir::ktdf::FifoType::PeToHbm, {Resource::PE, Resource::HBM}},
+          {mlir::ktdf::FifoType::LxluToSfp, {Resource::LX, Resource::SFP}},
+          {mlir::ktdf::FifoType::SfpToLxsu, {Resource::SFP, Resource::LX}},
+          {mlir::ktdf::FifoType::LxluToPe, {Resource::LX, Resource::PE}},
+          {mlir::ktdf::FifoType::PeToLxsu, {Resource::PE, Resource::LX}},
+          {mlir::ktdf::FifoType::SfpToPe, {Resource::SFP, Resource::PE}},
+          {mlir::ktdf::FifoType::PeToSfp, {Resource::PE, Resource::SFP}},
+      };
+
+  auto it = kFifoResourceMap.find(fifo_type);
+  assert(it != kFifoResourceMap.end());
+
+  return is_producer_side ? it->second.producer : it->second.consumer;
+}
+
 }  // namespace scheduler
 
 // Made with Bob
