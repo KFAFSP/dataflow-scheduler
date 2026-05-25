@@ -35,7 +35,7 @@ Out of scope for phase 1:
 - configurable architecture descriptions from input json file
 - support for branching stage DAG legalization. Phase 1 will still analyze the full stage DAG, but rewriting is only supported when the stage topology is a single linear chain.
 - general weighted path search beyond shortest path
-- path expansion in nested pipelines where a single stage represents multiple "applicable_units"
+- path expansion in nested pipelines (for example where a single stage represents multiple "applicable_units", or through path expansion new stages are introduced that would require parent stages to inherit more "applicable_units").
 
 ---
 
