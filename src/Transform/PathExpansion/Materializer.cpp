@@ -242,9 +242,8 @@ void PathExpansionMaterializer::materializePrivateNode(
   // Identify stages that have dependencies (need tokens)
   llvm::SmallVector<StageNode*> stages_with_deps;
   for (StageNode* stage : pipeline_node->getStages()) {
-    if (!stage->getDependencies().empty()) {
-      stages_with_deps.push_back(stage);
-    }
+    if (stage->getDependencies().empty()) continue;
+    stages_with_deps.push_back(stage);
   }
 
   // Build result types for the new private operation
@@ -325,14 +324,15 @@ PathExpansionMaterializer::buildPrivateResultTypes(
           spec.shape, spec.element_type, mlir::MemRefLayoutAttrInterface{},
           memory_space);
       result_types.push_back(memref_type);
-    } else if (spec.kind == PrivateResourceSpec::Kind::kFifo) {
-      // Add one result type per FIFO slot
-      for (int64_t num_elements : spec.elements_per_slot) {
-        mlir::ktdf::FifoSlotType fifo_type =
-            mlir::ktdf::FifoSlotType::get(builder_.getContext(), spec.fifo_type,
-                                          num_elements, spec.element_type);
-        result_types.push_back(fifo_type);
-      }
+      continue;
+    }
+    if (spec.kind != PrivateResourceSpec::Kind::kFifo) continue;
+    // Add one result type per FIFO slot
+    for (int64_t num_elements : spec.elements_per_slot) {
+      mlir::ktdf::FifoSlotType fifo_type =
+          mlir::ktdf::FifoSlotType::get(builder_.getContext(), spec.fifo_type,
+                                        num_elements, spec.element_type);
+      result_types.push_back(fifo_type);
     }
   }
 
@@ -381,26 +381,28 @@ void PathExpansionMaterializer::allocateNewPrivateResources(
 
       auto alloc_op = mlir::memref::AllocOp::create(builder_, loc, memref_type);
       yield_operands.push_back(alloc_op.getResult());
+      continue;
+    }
 
-    } else if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
-      // Create FIFO allocation with multiple slots
-      llvm::SmallVector<mlir::Type> fifo_slot_types;
-      for (int64_t num_elements : spec->elements_per_slot) {
-        mlir::ktdf::FifoSlotType fifo_type = mlir::ktdf::FifoSlotType::get(
-            builder_.getContext(), spec->fifo_type, num_elements,
-            spec->element_type);
-        fifo_slot_types.push_back(fifo_type);
-      }
+    if (spec->kind != PrivateResourceSpec::Kind::kFifo) continue;
 
-      llvm::SmallVector<mlir::Value> empty_operands;
-      auto fifo_alloc = mlir::ktdf::FifoAllocateOp::create(
-          builder_, loc, fifo_slot_types, empty_operands);
+    // Create FIFO allocation with multiple slots
+    llvm::SmallVector<mlir::Type> fifo_slot_types;
+    for (int64_t num_elements : spec->elements_per_slot) {
+      mlir::ktdf::FifoSlotType fifo_type = mlir::ktdf::FifoSlotType::get(
+          builder_.getContext(), spec->fifo_type, num_elements,
+          spec->element_type);
+      fifo_slot_types.push_back(fifo_type);
+    }
 
-      // Add all slots to yield operands
-      for (size_t slot_idx = 0; slot_idx < fifo_alloc.getNumResults();
-           ++slot_idx) {
-        yield_operands.push_back(fifo_alloc.getResult(slot_idx));
-      }
+    llvm::SmallVector<mlir::Value> empty_operands;
+    auto fifo_alloc = mlir::ktdf::FifoAllocateOp::create(
+        builder_, loc, fifo_slot_types, empty_operands);
+
+    // Add all slots to yield operands
+    for (size_t slot_idx = 0; slot_idx < fifo_alloc.getNumResults();
+         ++slot_idx) {
+      yield_operands.push_back(fifo_alloc.getResult(slot_idx));
     }
   }
 }
@@ -425,16 +427,19 @@ void PathExpansionMaterializer::registerAllocatedResources(
       resource_factory_.registerAllocation(
           spec, {new_private.getResult(current_result_idx)});
       current_result_idx++;
-    } else if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
-      // Register all FIFO slot results from the private op
-      llvm::SmallVector<mlir::Value> slot_values;
-      for (size_t slot_idx = 0; slot_idx < spec->elements_per_slot.size();
-           ++slot_idx) {
-        slot_values.push_back(new_private.getResult(current_result_idx));
-        current_result_idx++;
-      }
-      resource_factory_.registerAllocation(spec, slot_values);
+      continue;
     }
+
+    if (spec->kind != PrivateResourceSpec::Kind::kFifo) continue;
+
+    // Register all FIFO slot results from the private op
+    llvm::SmallVector<mlir::Value> slot_values;
+    for (size_t slot_idx = 0; slot_idx < spec->elements_per_slot.size();
+         ++slot_idx) {
+      slot_values.push_back(new_private.getResult(current_result_idx));
+      current_result_idx++;
+    }
+    resource_factory_.registerAllocation(spec, slot_values);
   }
 }
 
