@@ -20,6 +20,7 @@ namespace scheduler {
 
 struct SchedulerExtContext {
   SchedulerExtContext() {}
+  virtual ~SchedulerExtContext() = default;
 
   /// @brief Get a default initialized context for scheduler.
   /// The dummy context is intended for use with passes and analyses that
