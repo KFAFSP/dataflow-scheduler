@@ -186,6 +186,9 @@ struct TransferMaterializationInfo {
 
   void print(llvm::raw_ostream& os) const;
   void dump() const;
+
+  /// Print debug information about this transfer (for LLVM_DEBUG)
+  void printDebug(llvm::raw_ostream& os) const;
 };
 
 /// Side information attached to a StageNode for materialization
@@ -241,6 +244,17 @@ struct PathExpansionPlan {
 
   // Default constructor
   PathExpansionPlan() = default;
+
+  /// Get stage materialization info for a stage (with assertion)
+  StageMaterializationInfo& getStageInfo(StageNode* stage) {
+    assert(stage_info.count(stage) && "Stage should have materialization info");
+    return stage_info[stage];
+  }
+
+  const StageMaterializationInfo& getStageInfo(StageNode* stage) const {
+    assert(stage_info.count(stage) && "Stage should have materialization info");
+    return stage_info.at(stage);
+  }
 
   // Delete copy operations since PipelineTree is not copyable
   PathExpansionPlan(const PathExpansionPlan&) = delete;

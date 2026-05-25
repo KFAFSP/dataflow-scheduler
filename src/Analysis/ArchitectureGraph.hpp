@@ -91,6 +91,12 @@ class ArchitectureGraph {
 
   NeighborList getNeighbors(NodeId node_id) const;
   std::optional<EdgeInfo> getEdgeInfo(NodeId source, NodeId target) const;
+
+  /// Get edge info between two resources (convenience wrapper)
+  /// This is a convenience method that looks up node IDs and calls getEdgeInfo
+  std::optional<EdgeInfo> getEdgeInfoForResources(Resource source,
+                                                  Resource dest) const;
+
   std::optional<Path> findShortestPath(NodeId source, NodeId target) const;
 
   /// Get the node ID for a given resource.
@@ -102,6 +108,11 @@ class ArchitectureGraph {
   static llvm::StringRef stringifyResourceKind(ResourceKind kind);
   static llvm::StringRef stringifyEdgeKind(EdgeKind edge_kind);
   static ResourceKind getResourceKind(Resource resource);
+
+  /// Get the component type for a compute resource
+  /// Returns nullopt for memory resources (HBM, LX)
+  static std::optional<mlir::ktdf::ComponentType>
+  getComponentTypeForComputeResource(Resource resource);
 
   /// Determine FIFO type from edge info and resources
   /// If edge has explicit fifo_type, uses that; otherwise infers from resources

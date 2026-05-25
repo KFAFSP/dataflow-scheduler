@@ -181,6 +181,65 @@ std::optional<ArchitectureGraph::Resource> inferResourceFromStage(
   return std::nullopt;
 }
 
+/// Helper to check if a stage is an intermediate (synthetic) stage
+inline bool isIntermediateStage(const StageNode* stage) {
+  return stage->getOperation() == nullptr;
+}
+
+/// Helper to derive sizes from a private resource spec
+/// Used to populate source_sizes or dest_sizes when they're empty
+void deriveSizesFromResourceSpec(
+    const PrivateResourceSpec* spec, size_t slot_index,
+    mlir::MLIRContext* context,
+    llvm::SmallVectorImpl<mlir::OpFoldResult>& sizes) {
+  if (!spec) return;
+
+  mlir::OpBuilder builder(context);
+
+  if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
+    // For FIFO, use the specific slot's capacity
+    assert(slot_index < spec->elements_per_slot.size() &&
+           "Slot index out of bounds");
+    int64_t slot_capacity = spec->elements_per_slot[slot_index];
+    sizes.push_back(builder.getI64IntegerAttr(slot_capacity));
+  } else if (spec->kind == PrivateResourceSpec::Kind::kMemoryBuffer) {
+    // For memory buffer, use the shape
+    for (int64_t dim : spec->shape) {
+      sizes.push_back(builder.getI64IntegerAttr(dim));
+    }
+  }
+}
+
+/// Helper to determine a stage's resource from its summary and position
+std::optional<ArchitectureGraph::Resource> determineStageResource(
+    StageNode* stage, size_t stage_index, size_t total_stages,
+    const StageSummary& summary) {
+  // First, check if stage has an anchor resource (compute stages)
+  if (summary.anchor_resource) {
+    return summary.anchor_resource;
+  }
+
+  // For first stage, use input endpoint
+  if (stage_index == 0 && !summary.input_endpoints.empty()) {
+    return summary.input_endpoints[0].resource;
+  }
+
+  // For last stage, use output endpoint
+  if (stage_index == total_stages - 1 && !summary.output_endpoints.empty()) {
+    return summary.output_endpoints[0].resource;
+  }
+
+  // For intermediate stages without anchor resources, try to infer from
+  // the stage's data transfer operations
+  auto stage_op =
+      mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
+  if (stage_op) {
+    return inferResourceFromStage(stage_op);
+  }
+
+  return std::nullopt;
+}
+
 //===----------------------------------------------------------------------===//
 // Debug Output Helpers
 //===----------------------------------------------------------------------===//
@@ -195,14 +254,10 @@ static void debugPrintStageList(llvm::raw_ostream& os,
   for (StageNode* stage : stages) {
     os << "  Stage " << stage->getStageId() << ": ";
 
-    // Check if this is an intermediate (synthetic) stage
-    bool is_synthetic = (stage->getOperation() == nullptr);
-
-    if (is_synthetic) {
+    if (isIntermediateStage(stage))
       os << "(synthetic, unmaterialized)";
-    } else {
+    else
       os << "(original)";
-    }
 
     // Print materialization info if available
     if (plan && plan->stage_info.count(stage)) {
@@ -310,6 +365,31 @@ void TransferMaterializationInfo::print(llvm::raw_ostream& os) const {
 void TransferMaterializationInfo::dump() const {
   print(llvm::dbgs());
   llvm::dbgs() << "\n";
+}
+
+void TransferMaterializationInfo::printDebug(llvm::raw_ostream& os) const {
+  os << ArchitectureGraph::stringifyResource(source_resource) << " -> "
+     << ArchitectureGraph::stringifyResource(dest_resource);
+
+  if (source_private_resource) {
+    os << " (source: ";
+    if (source_private_resource->kind == PrivateResourceSpec::Kind::kFifo) {
+      os << "FIFO slot " << source_slot_index;
+    } else {
+      os << "buffer";
+    }
+    os << ")";
+  }
+
+  if (dest_private_resource) {
+    os << " (dest: ";
+    if (dest_private_resource->kind == PrivateResourceSpec::Kind::kFifo) {
+      os << "FIFO slot " << dest_slot_index;
+    } else {
+      os << "buffer";
+    }
+    os << ")";
+  }
 }
 
 void StageMaterializationInfo::print(llvm::raw_ostream& os) const {
@@ -639,23 +719,9 @@ static mlir::FailureOr<llvm::SmallVector<StageNode*>> legalizeStageConnections(
     const StageSummary& current_summary = summaries[i];
 
     // Determine the resource for this stage
-    std::optional<ArchitectureGraph::Resource> current_resource;
-    if (current_summary.anchor_resource) {
-      current_resource = current_summary.anchor_resource;
-    } else if (i == 0 && !current_summary.input_endpoints.empty()) {
-      current_resource = current_summary.input_endpoints[0].resource;
-    } else if (i == original_sorted_stages.size() - 1 &&
-               !current_summary.output_endpoints.empty()) {
-      current_resource = current_summary.output_endpoints[0].resource;
-    } else {
-      // For intermediate stages without anchor resources, try to infer from
-      // the stage's data transfer operations
-      auto stage_op =
-          mlir::dyn_cast<mlir::ktdf::StageOp>(current_stage->getOperation());
-      if (stage_op) {
-        current_resource = inferResourceFromStage(stage_op);
-      }
-    }
+    std::optional<ArchitectureGraph::Resource> current_resource =
+        determineStageResource(current_stage, i, original_sorted_stages.size(),
+                               current_summary);
 
     assert(current_resource && "Unable to determine resource for stage");
 
@@ -675,9 +741,8 @@ static mlir::FailureOr<llvm::SmallVector<StageNode*>> legalizeStageConnections(
         arch_graph.getResourceKind(*current_summary.anchor_resource) ==
             ArchitectureGraph::ResourceKind::Compute) {
       info.applicable_unit =
-          (*current_summary.anchor_resource == ArchitectureGraph::Resource::SFP)
-              ? mlir::ktdf::ComponentType::SFP
-              : mlir::ktdf::ComponentType::PE;
+          ArchitectureGraph::getComponentTypeForComputeResource(
+              *current_summary.anchor_resource);
     }
 
     plan->stage_info[current_stage] = info;
@@ -692,35 +757,16 @@ static mlir::FailureOr<llvm::SmallVector<StageNode*>> legalizeStageConnections(
       const StageSummary& next_summary = summaries[i + 1];
 
       // Determine the resource for the next stage
-      std::optional<ArchitectureGraph::Resource> next_resource;
-      if (next_summary.anchor_resource) {
-        next_resource = next_summary.anchor_resource;
-      } else if (i + 1 == 0 && !next_summary.input_endpoints.empty()) {
-        next_resource = next_summary.input_endpoints[0].resource;
-      } else if (i + 1 == original_sorted_stages.size() - 1 &&
-                 !next_summary.output_endpoints.empty()) {
-        next_resource = next_summary.output_endpoints[0].resource;
-      } else {
-        // For intermediate stages without anchor resources, try to infer from
-        // the stage's data transfer operations
-        StageNode* next_stage = original_sorted_stages[i + 1];
-        auto next_stage_op =
-            mlir::dyn_cast<mlir::ktdf::StageOp>(next_stage->getOperation());
-        if (next_stage_op) {
-          next_resource = inferResourceFromStage(next_stage_op);
-        }
-      }
+      StageNode* next_stage = original_sorted_stages[i + 1];
+      std::optional<ArchitectureGraph::Resource> next_resource =
+          determineStageResource(next_stage, i + 1,
+                                 original_sorted_stages.size(), next_summary);
 
       assert(next_resource && "Unable to determine resource for next stage");
 
       // Check if the hop is legal (direct edge exists)
-      ArchitectureGraph::NodeId current_node =
-          arch_graph.getNodeIdForResource(*current_resource);
-      ArchitectureGraph::NodeId next_node =
-          arch_graph.getNodeIdForResource(*next_resource);
-
       std::optional<ArchitectureGraph::EdgeInfo> direct_edge =
-          arch_graph.getEdgeInfo(current_node, next_node);
+          arch_graph.getEdgeInfoForResources(*current_resource, *next_resource);
 
       if (!direct_edge) {
         // Hop is not legal - insert intermediate stages
@@ -782,10 +828,8 @@ static mlir::LogicalResult analyzeStageTransfers(
     StageNode* current_stage, StageNode* prev_stage, StageNode* next_stage,
     const ArchitectureGraph& arch_graph, StageMaterializationInfo& stage_info,
     PathExpansionPlan* plan) {
-  bool prev_is_intermediate =
-      prev_stage && (prev_stage->getOperation() == nullptr);
-  bool next_is_intermediate =
-      next_stage && (next_stage->getOperation() == nullptr);
+  bool prev_is_intermediate = prev_stage && isIntermediateStage(prev_stage);
+  bool next_is_intermediate = next_stage && isIntermediateStage(next_stage);
 
   // If this stage doesn't face any intermediate stages, skip it
   if (!prev_is_intermediate && !next_is_intermediate) {
@@ -944,10 +988,8 @@ static mlir::LogicalResult analyzeOriginalStageTransfers(
   for (size_t i = 0; i < sorted_stages.size(); ++i) {
     StageNode* current_stage = sorted_stages[i];
 
-    // Skip intermediate (synthetic) stages - they have null operations
-    if (current_stage->getOperation() == nullptr) {
-      continue;
-    }
+    // Skip intermediate (synthetic) stages
+    if (isIntermediateStage(current_stage)) continue;
 
     // Get the stage's materialization info
     assert(plan->stage_info.count(current_stage) &&
@@ -994,10 +1036,8 @@ static mlir::LogicalResult analyzeFifoOperations(
   for (size_t i = 0; i < sorted_stages.size(); ++i) {
     StageNode* current_stage = sorted_stages[i];
 
-    // Skip intermediate (synthetic) stages - they have null operations
-    if (current_stage->getOperation() == nullptr) {
-      continue;
-    }
+    // Skip intermediate (synthetic) stages
+    if (isIntermediateStage(current_stage)) continue;
 
     // Get the stage's materialization info
     assert(plan->stage_info.count(current_stage) &&
@@ -1009,10 +1049,8 @@ static mlir::LogicalResult analyzeFifoOperations(
     StageNode* next_stage =
         (i + 1 < sorted_stages.size()) ? sorted_stages[i + 1] : nullptr;
 
-    bool prev_is_intermediate =
-        prev_stage && (prev_stage->getOperation() == nullptr);
-    bool next_is_intermediate =
-        next_stage && (next_stage->getOperation() == nullptr);
+    bool prev_is_intermediate = prev_stage && isIntermediateStage(prev_stage);
+    bool next_is_intermediate = next_stage && isIntermediateStage(next_stage);
 
     // If this stage doesn't face any intermediate stages, skip it
     if (!prev_is_intermediate && !next_is_intermediate) {
@@ -1061,13 +1099,8 @@ static mlir::LogicalResult analyzeFifoOperations(
           is_read ? current_resource : adjacent_resource;
 
       // Get edge info from architecture graph
-      ArchitectureGraph::NodeId source_node =
-          arch_graph.getNodeIdForResource(source_resource);
-      ArchitectureGraph::NodeId dest_node =
-          arch_graph.getNodeIdForResource(dest_resource);
-
       std::optional<ArchitectureGraph::EdgeInfo> edge =
-          arch_graph.getEdgeInfo(source_node, dest_node);
+          arch_graph.getEdgeInfoForResources(source_resource, dest_resource);
       assert(edge && "Edge should exist for legal hop");
       assert(edge->fifo_type &&
              "Edge should have FIFO type for FIFO operation");
@@ -1166,10 +1199,8 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
   for (size_t i = 0; i < sorted_stages.size(); ++i) {
     StageNode* current_stage = sorted_stages[i];
 
-    // Only process intermediate (synthetic) stages - they have null operations
-    if (current_stage->getOperation() != nullptr) {
-      continue;
-    }
+    // Only process intermediate (synthetic) stages
+    if (!isIntermediateStage(current_stage)) continue;
 
     // Get the stage's materialization info
     assert(plan->stage_info.count(current_stage) &&
@@ -1254,13 +1285,9 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
              "Should be able to infer resources from private specs");
 
       // Get edge info for the actual hop
-      ArchitectureGraph::NodeId source_node =
-          arch_graph.getNodeIdForResource(*inferred_source_resource);
-      ArchitectureGraph::NodeId dest_node =
-          arch_graph.getNodeIdForResource(*inferred_dest_resource);
-
       std::optional<ArchitectureGraph::EdgeInfo> edge =
-          arch_graph.getEdgeInfo(source_node, dest_node);
+          arch_graph.getEdgeInfoForResources(*inferred_source_resource,
+                                             *inferred_dest_resource);
 
       assert(edge && "Edge should exist for legal hop");
 
@@ -1279,60 +1306,22 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       transfer_info.dest_indices = dest_indices_from_next;
       transfer_info.dest_sizes = dest_sizes_from_next;
 
-      // If dest_sizes is empty, derive it from the dest resource
-      // For FIFOs, use the slot-specific capacity; for buffers, use the shape
+      // Derive sizes from resource specs if empty
       if (transfer_info.dest_sizes.empty() && dest_resource_spec) {
-        mlir::OpBuilder builder(prev_stage->getOperation()->getContext());
-        if (dest_resource_spec->kind == PrivateResourceSpec::Kind::kFifo) {
-          // For FIFO, use the specific slot's capacity
-          assert(transfer_info.dest_slot_index <
-                     dest_resource_spec->elements_per_slot.size() &&
-                 "Slot index out of bounds");
-          int64_t slot_capacity =
-              dest_resource_spec
-                  ->elements_per_slot[transfer_info.dest_slot_index];
-          LLVM_DEBUG(llvm::dbgs() << "    Deriving dest_sizes from FIFO slot "
-                                  << transfer_info.dest_slot_index
-                                  << " capacity: [" << slot_capacity << "]\n");
-          transfer_info.dest_sizes.push_back(
-              builder.getI64IntegerAttr(slot_capacity));
-        } else {
-          // For memory buffer, use the shape
-          LLVM_DEBUG(llvm::dbgs()
-                     << "    Deriving dest_sizes from buffer shape: [");
-          for (int64_t dim : dest_resource_spec->shape) {
-            LLVM_DEBUG(llvm::dbgs() << dim << " ");
-            transfer_info.dest_sizes.push_back(builder.getI64IntegerAttr(dim));
-          }
-          LLVM_DEBUG(llvm::dbgs() << "]\n");
-        }
+        LLVM_DEBUG(llvm::dbgs()
+                   << "    Deriving dest_sizes from resource spec\n");
+        deriveSizesFromResourceSpec(
+            dest_resource_spec, transfer_info.dest_slot_index,
+            prev_stage->getOperation()->getContext(), transfer_info.dest_sizes);
       }
 
-      // Similarly, if source_sizes is empty, derive it from the source resource
       if (transfer_info.source_sizes.empty() && source_resource_spec) {
-        mlir::OpBuilder builder(prev_stage->getOperation()->getContext());
-        if (source_resource_spec->kind == PrivateResourceSpec::Kind::kFifo) {
-          // For FIFO, use the specific slot's capacity
-          assert(transfer_info.source_slot_index <
-                     source_resource_spec->elements_per_slot.size() &&
-                 "Slot index out of bounds");
-          int64_t slot_capacity =
-              source_resource_spec
-                  ->elements_per_slot[transfer_info.source_slot_index];
-          LLVM_DEBUG(llvm::dbgs() << "    Deriving source_sizes from FIFO slot "
-                                  << transfer_info.source_slot_index
-                                  << " capacity: [" << slot_capacity << "]\n");
-          transfer_info.source_sizes.push_back(
-              builder.getI64IntegerAttr(slot_capacity));
-        } else {
-          // For memory buffer, use the shape
-          LLVM_DEBUG(llvm::dbgs()
-                     << "    Deriving source_sizes from buffer shape\n");
-          for (int64_t dim : source_resource_spec->shape) {
-            transfer_info.source_sizes.push_back(
-                builder.getI64IntegerAttr(dim));
-          }
-        }
+        LLVM_DEBUG(llvm::dbgs()
+                   << "    Deriving source_sizes from resource spec\n");
+        deriveSizesFromResourceSpec(source_resource_spec,
+                                    transfer_info.source_slot_index,
+                                    prev_stage->getOperation()->getContext(),
+                                    transfer_info.source_sizes);
       }
 
       stage_info.transfers.push_back(transfer_info);
@@ -1398,13 +1387,9 @@ static mlir::LogicalResult assignApplicableUnit(
     const TransferMaterializationInfo& transfer = stage_info.transfers[0];
 
     // Query the architecture graph for the edge between source and dest
-    ArchitectureGraph::NodeId source_node =
-        arch_graph.getNodeIdForResource(transfer.source_resource);
-    ArchitectureGraph::NodeId dest_node =
-        arch_graph.getNodeIdForResource(transfer.dest_resource);
-
     std::optional<ArchitectureGraph::EdgeInfo> edge =
-        arch_graph.getEdgeInfo(source_node, dest_node);
+        arch_graph.getEdgeInfoForResources(transfer.source_resource,
+                                           transfer.dest_resource);
 
     if (!edge) {
       LLVM_DEBUG(llvm::dbgs()
@@ -1438,30 +1423,22 @@ static mlir::LogicalResult assignApplicableUnit(
       ArchitectureGraph::Resource resource = *stage_info.stage_resource;
 
       // Map resource to component type
-      // For compute resources, the component is the resource itself
-      if (resource == ArchitectureGraph::Resource::SFP) {
-        stage_info.applicable_unit = mlir::ktdf::ComponentType::SFP;
-        LLVM_DEBUG(llvm::dbgs()
-                   << "  Stage " << stage->getStageId()
-                   << ": Assigned applicable unit SFP from stage resource\n");
-      } else if (resource == ArchitectureGraph::Resource::PE) {
-        stage_info.applicable_unit = mlir::ktdf::ComponentType::PE;
-        LLVM_DEBUG(llvm::dbgs()
-                   << "  Stage " << stage->getStageId()
-                   << ": Assigned applicable unit PE from stage resource\n");
+      stage_info.applicable_unit =
+          ArchitectureGraph::getComponentTypeForComputeResource(resource);
+      if (stage_info.applicable_unit) {
+        LLVM_DEBUG(llvm::dbgs() << "  Stage " << stage->getStageId()
+                                << ": Assigned applicable unit "
+                                << mlir::ktdf::stringifyComponentType(
+                                       *stage_info.applicable_unit)
+                                << " from stage resource\n");
       }
-      // Memory resources (HBM, LX) don't have a direct component mapping
     } else if (!stage_info.transfers.empty()) {
       // Fallback: use the first transfer's edge to determine the unit
       const TransferMaterializationInfo& transfer = stage_info.transfers[0];
 
-      ArchitectureGraph::NodeId source_node =
-          arch_graph.getNodeIdForResource(transfer.source_resource);
-      ArchitectureGraph::NodeId dest_node =
-          arch_graph.getNodeIdForResource(transfer.dest_resource);
-
       std::optional<ArchitectureGraph::EdgeInfo> edge =
-          arch_graph.getEdgeInfo(source_node, dest_node);
+          arch_graph.getEdgeInfoForResources(transfer.source_resource,
+                                             transfer.dest_resource);
 
       if (edge && edge->transfer_unit) {
         stage_info.applicable_unit = *edge->transfer_unit;

@@ -192,6 +192,14 @@ ArchitectureGraph::NodeId ArchitectureGraph::getNodeIdForResource(
   llvm_unreachable("resource not found in graph");
 }
 
+std::optional<ArchitectureGraph::EdgeInfo>
+ArchitectureGraph::getEdgeInfoForResources(Resource source,
+                                           Resource dest) const {
+  NodeId source_node = getNodeIdForResource(source);
+  NodeId dest_node = getNodeIdForResource(dest);
+  return getEdgeInfo(source_node, dest_node);
+}
+
 void ArchitectureGraph::dump(llvm::raw_ostream& os) const {
   os << "ArchitectureGraph {\n";
   os << "  Nodes:\n";
@@ -251,6 +259,21 @@ ArchitectureGraph::ResourceKind ArchitectureGraph::getResourceKind(
     case Resource::SFP:
     case Resource::PE:
       return ResourceKind::Compute;
+  }
+  llvm_unreachable("unknown ArchitectureGraph::Resource");
+}
+
+std::optional<mlir::ktdf::ComponentType>
+ArchitectureGraph::getComponentTypeForComputeResource(Resource resource) {
+  switch (resource) {
+    case Resource::SFP:
+      return mlir::ktdf::ComponentType::SFP;
+    case Resource::PE:
+      return mlir::ktdf::ComponentType::PE;
+    case Resource::HBM:
+    case Resource::LX:
+      // Memory resources don't have a direct component mapping
+      return std::nullopt;
   }
   llvm_unreachable("unknown ArchitectureGraph::Resource");
 }
