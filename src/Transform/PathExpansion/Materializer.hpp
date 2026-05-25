@@ -127,6 +127,21 @@ class PathExpansionMaterializer {
                                    const StageMaterializationInfo& info,
                                    bool handle_fifo_ops);
 
+  /// Helper to adapt a DataTransferOp with new resources
+  /// Returns true if adapted, false if should be cloned as-is
+  bool tryAdaptDataTransferOp(mlir::ktdf::DataTransferOp transfer_op,
+                              const TransferMaterializationInfo* transfer_info);
+
+  /// Helper to adapt a ReadFromFifoOp with new FIFO slot
+  /// Returns true if adapted, false if should be cloned as-is
+  bool tryAdaptReadFromFifoOp(mlir::ktdf::ReadFromFifoOp read_op,
+                              const TransferMaterializationInfo* transfer_info);
+
+  /// Helper to adapt a WriteToFifoOp with new FIFO slot
+  /// Returns true if adapted, false if should be cloned as-is
+  bool tryAdaptWriteToFifoOp(mlir::ktdf::WriteToFifoOp write_op,
+                             const TransferMaterializationInfo* transfer_info);
+
   /// Helper to adapt stage body with new FIFO kinds (for kAdaptFifoKinds)
   void adaptStageBodyFifoKinds(mlir::ktdf::StageOp orig_stage,
                                const StageMaterializationInfo& info);
@@ -143,6 +158,29 @@ class PathExpansionMaterializer {
   void buildStageToTokenMapping(
       const llvm::SmallVector<StageNode*>& stages_with_deps,
       mlir::ktdf::PrivateOp new_private, size_t non_token_result_count);
+
+  /// Helper to build result types for private operation
+  llvm::SmallVector<mlir::Type> buildPrivateResultTypes(
+      mlir::ktdf::PrivateOp orig_private,
+      const llvm::SmallVector<StageNode*>& stages_with_deps,
+      size_t& out_non_token_result_count);
+
+  /// Helper to clone original private body operations
+  llvm::SmallVector<mlir::Value> cloneOriginalPrivateBody(
+      mlir::ktdf::PrivateOp orig_private);
+
+  /// Helper to allocate new private resources (buffers and FIFOs)
+  void allocateNewPrivateResources(
+      mlir::Location loc, llvm::SmallVector<mlir::Value>& yield_operands);
+
+  /// Helper to create tokens for stages with dependencies
+  void createStageTokens(mlir::Location loc,
+                         const llvm::SmallVector<StageNode*>& stages_with_deps,
+                         llvm::SmallVector<mlir::Value>& yield_operands);
+
+  /// Helper to register allocated resources with factory
+  void registerAllocatedResources(mlir::ktdf::PrivateOp new_private,
+                                  size_t orig_result_count);
 
   /// Helper to get or create FIFO type from edge info
   mlir::ktdf::FifoSlotType getFifoTypeFromEdge(

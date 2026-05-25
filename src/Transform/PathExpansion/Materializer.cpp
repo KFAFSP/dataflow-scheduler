@@ -270,16 +270,76 @@ void PathExpansionMaterializer::materializePrivateNode(
 
   auto orig_private = mlir::cast<mlir::ktdf::PrivateOp>(template_op);
   mlir::Location loc = orig_private.getLoc();
+  size_t orig_result_count = orig_private.getNumResults();
 
   // Identify stages that have dependencies (need tokens)
-  llvm::SmallVector<StageNode*> stages = pipeline_node.getStages();
   llvm::SmallVector<StageNode*> stages_with_deps;
-  for (StageNode* stage : stages) {
-    if (stage->getDependencies().empty()) continue;
-    stages_with_deps.push_back(stage);
+  for (StageNode* stage : pipeline_node.getStages()) {
+    if (!stage->getDependencies().empty()) {
+      stages_with_deps.push_back(stage);
+    }
   }
 
-  // Build result types: original resources + new resources + tokens
+  // Build result types for the new private operation
+  size_t non_token_result_count;
+  llvm::SmallVector<mlir::Type> result_types = buildPrivateResultTypes(
+      orig_private, stages_with_deps, non_token_result_count);
+
+  // Create the new private operation
+  auto new_private = mlir::ktdf::PrivateOp::create(builder_, loc, result_types);
+
+  // Set insertion point inside private body and clone original operations
+  builder_.setInsertionPointToStart(&new_private.getBody().front());
+  llvm::SmallVector<mlir::Value> yield_operands =
+      cloneOriginalPrivateBody(orig_private);
+
+  // Allocate new private resources and add to yield operands
+  allocateNewPrivateResources(loc, yield_operands);
+
+  // Create tokens for stages with dependencies
+  createStageTokens(loc, stages_with_deps, yield_operands);
+
+  // Create private_yield with all operands (original + new)
+  mlir::ktdf::PrivateYieldOp::create(builder_, loc, yield_operands);
+
+  // Build stage-to-token mapping
+  buildStageToTokenMapping(stages_with_deps, new_private,
+                           non_token_result_count);
+
+  // Map original private results to new private results in value_map_
+  for (size_t i = 0; i < orig_result_count; ++i) {
+    value_map_.map(orig_private.getResult(i), new_private.getResult(i));
+  }
+
+  // Register the private op results with the factory
+  registerAllocatedResources(new_private, orig_result_count);
+
+  // Reset insertion point to after private op
+  builder_.setInsertionPointAfter(new_private);
+
+  LLVM_DEBUG(llvm::dbgs() << "  Materialized private node with "
+                          << orig_result_count << " original resources, "
+                          << resource_factory_.getSpecs().size()
+                          << " new buffers, and " << stages_with_deps.size()
+                          << " tokens\n");
+}
+
+void PathExpansionMaterializer::buildStageToTokenMapping(
+    const llvm::SmallVector<StageNode*>& stages_with_deps,
+    mlir::ktdf::PrivateOp new_private, size_t non_token_result_count) {
+  // Map each stage to its token (results after non-token results)
+  for (size_t i = 0; i < stages_with_deps.size(); ++i) {
+    StageNode* stage = stages_with_deps[i];
+    mlir::Value token = new_private.getResult(non_token_result_count + i);
+    stage_to_token_map_[stage] = token;
+  }
+}
+
+llvm::SmallVector<mlir::Type>
+PathExpansionMaterializer::buildPrivateResultTypes(
+    mlir::ktdf::PrivateOp orig_private,
+    const llvm::SmallVector<StageNode*>& stages_with_deps,
+    size_t& out_non_token_result_count) {
   llvm::SmallVector<mlir::Type> result_types;
 
   // First, add all original private result types (existing buffers and FIFOs)
@@ -309,7 +369,7 @@ void PathExpansionMaterializer::materializePrivateNode(
     }
   }
 
-  size_t non_token_result_count = result_types.size();
+  out_non_token_result_count = result_types.size();
 
   // Add tokens for stages with dependencies
   mlir::Type token_type = mlir::ktdf::TokenType::get(builder_.getContext());
@@ -317,15 +377,13 @@ void PathExpansionMaterializer::materializePrivateNode(
     result_types.push_back(token_type);
   }
 
-  // Create the new private operation
-  auto new_private = mlir::ktdf::PrivateOp::create(builder_, loc, result_types);
+  return result_types;
+}
 
-  // Set insertion point inside private body
-  mlir::Block* private_body = &new_private.getBody().front();
-  builder_.setInsertionPointToStart(private_body);
-
+llvm::SmallVector<mlir::Value>
+PathExpansionMaterializer::cloneOriginalPrivateBody(
+    mlir::ktdf::PrivateOp orig_private) {
   // Clone operations from original private op's body (except the yield)
-  // Use value_map_ so stages can reference the cloned values
   mlir::Block& orig_body = orig_private.getBody().front();
   for (mlir::Operation& op : orig_body.without_terminator()) {
     builder_.clone(op, value_map_);
@@ -339,9 +397,11 @@ void PathExpansionMaterializer::materializePrivateNode(
     yield_operands.push_back(value_map_.lookup(orig_operand));
   }
 
-  // Allocate new private resources (buffers and FIFOs) using factory
-  size_t current_result_idx = orig_result_count;
+  return yield_operands;
+}
 
+void PathExpansionMaterializer::allocateNewPrivateResources(
+    mlir::Location loc, llvm::SmallVector<mlir::Value>& yield_operands) {
   for (const auto& spec_ptr : resource_factory_.getSpecs()) {
     const PrivateResourceSpec* spec = spec_ptr.get();
 
@@ -353,13 +413,7 @@ void PathExpansionMaterializer::materializePrivateNode(
           memory_space);
 
       auto alloc_op = mlir::memref::AllocOp::create(builder_, loc, memref_type);
-
-      // Add to yield operands
       yield_operands.push_back(alloc_op.getResult());
-
-      // Note: We'll register the private op result after creating the private
-      // op
-      current_result_idx++;
 
     } else if (spec->kind == PrivateResourceSpec::Kind::kFifo) {
       // Create FIFO allocation with multiple slots
@@ -371,8 +425,6 @@ void PathExpansionMaterializer::materializePrivateNode(
         fifo_slot_types.push_back(fifo_type);
       }
 
-      // FifoAllocateOp::create requires: builder, location, result types,
-      // operands (empty), attributes (empty)
       llvm::SmallVector<mlir::Value> empty_operands;
       auto fifo_alloc = mlir::ktdf::FifoAllocateOp::create(
           builder_, loc, fifo_slot_types, empty_operands);
@@ -382,35 +434,22 @@ void PathExpansionMaterializer::materializePrivateNode(
            ++slot_idx) {
         yield_operands.push_back(fifo_alloc.getResult(slot_idx));
       }
-
-      // Note: We'll register the private op results after creating the private
-      // op
-      current_result_idx += fifo_alloc.getNumResults();
     }
   }
+}
 
-  // Create tokens
+void PathExpansionMaterializer::createStageTokens(
+    mlir::Location loc, const llvm::SmallVector<StageNode*>& stages_with_deps,
+    llvm::SmallVector<mlir::Value>& yield_operands) {
   for (size_t i = 0; i < stages_with_deps.size(); ++i) {
     auto token_op = mlir::ktdf::CreateTokenOp::create(builder_, loc);
     yield_operands.push_back(token_op.getResult());
   }
+}
 
-  // Create private_yield with all operands (original + new)
-  mlir::ktdf::PrivateYieldOp::create(builder_, loc, yield_operands);
-
-  // Build stage-to-token mapping
-  buildStageToTokenMapping(stages_with_deps, new_private,
-                           non_token_result_count);
-
-  // Map original private results to new private results in value_map_
-  // This allows stages to reference the correct resources
-  for (size_t i = 0; i < orig_result_count; ++i) {
-    value_map_.map(orig_private.getResult(i), new_private.getResult(i));
-  }
-
-  // Now register the private op results with the factory
-  // These are the SSA values that stages can legally reference
-  current_result_idx = orig_result_count;
+void PathExpansionMaterializer::registerAllocatedResources(
+    mlir::ktdf::PrivateOp new_private, size_t orig_result_count) {
+  size_t current_result_idx = orig_result_count;
   for (const auto& spec_ptr : resource_factory_.getSpecs()) {
     const PrivateResourceSpec* spec = spec_ptr.get();
 
@@ -429,26 +468,6 @@ void PathExpansionMaterializer::materializePrivateNode(
       }
       resource_factory_.registerAllocation(spec, slot_values);
     }
-  }
-
-  // Reset insertion point to after private op
-  builder_.setInsertionPointAfter(new_private);
-
-  LLVM_DEBUG(llvm::dbgs() << "  Materialized private node with "
-                          << orig_result_count << " original resources, "
-                          << resource_factory_.getSpecs().size()
-                          << " new buffers, and " << stages_with_deps.size()
-                          << " tokens\n");
-}
-
-void PathExpansionMaterializer::buildStageToTokenMapping(
-    const llvm::SmallVector<StageNode*>& stages_with_deps,
-    mlir::ktdf::PrivateOp new_private, size_t non_token_result_count) {
-  // Map each stage to its token (results after non-token results)
-  for (size_t i = 0; i < stages_with_deps.size(); ++i) {
-    StageNode* stage = stages_with_deps[i];
-    mlir::Value token = new_private.getResult(non_token_result_count + i);
-    stage_to_token_map_[stage] = token;
   }
 }
 
@@ -572,6 +591,71 @@ void PathExpansionMaterializer::cloneStageBody(mlir::ktdf::StageOp orig_stage) {
   }
 }
 
+bool PathExpansionMaterializer::tryAdaptDataTransferOp(
+    mlir::ktdf::DataTransferOp transfer_op,
+    const TransferMaterializationInfo* transfer_info) {
+  if (!transfer_info) return false;
+
+  // Get source and destination using helper
+  mlir::Value source =
+      transfer_info->source_private_resource
+          ? getPrivateResourceValue(transfer_info->source_private_resource,
+                                    transfer_info->source_slot_index)
+          : materializeValue(transfer_op.getSource());
+
+  mlir::Value destination =
+      transfer_info->dest_private_resource
+          ? getPrivateResourceValue(transfer_info->dest_private_resource,
+                                    transfer_info->dest_slot_index)
+          : materializeValue(transfer_op.getDestination());
+
+  // Materialize transfer parameters using helper
+  auto params = materializeTransferParams(*transfer_info);
+
+  // Create the adapted transfer operation
+  mlir::ktdf::DataTransferOp::create(
+      builder_, transfer_op.getLoc(), source, params.source_indices,
+      params.source_sizes, destination, params.dest_indices, params.dest_sizes);
+
+  return true;
+}
+
+bool PathExpansionMaterializer::tryAdaptReadFromFifoOp(
+    mlir::ktdf::ReadFromFifoOp read_op,
+    const TransferMaterializationInfo* transfer_info) {
+  if (!transfer_info) return false;
+
+  assert(transfer_info->source_private_resource &&
+         "read_from_fifo should have source private resource");
+
+  mlir::Value new_fifo_slot = getPrivateResourceValue(
+      transfer_info->source_private_resource, transfer_info->source_slot_index);
+
+  auto new_read = mlir::ktdf::ReadFromFifoOp::create(
+      builder_, read_op.getLoc(), read_op.getResult().getType(), new_fifo_slot);
+  value_map_.map(read_op.getResult(), new_read.getResult());
+
+  return true;
+}
+
+bool PathExpansionMaterializer::tryAdaptWriteToFifoOp(
+    mlir::ktdf::WriteToFifoOp write_op,
+    const TransferMaterializationInfo* transfer_info) {
+  if (!transfer_info) return false;
+
+  assert(transfer_info->dest_private_resource &&
+         "write_to_fifo should have dest private resource");
+
+  mlir::Value new_fifo_slot = getPrivateResourceValue(
+      transfer_info->dest_private_resource, transfer_info->dest_slot_index);
+
+  mlir::Value data = materializeValue(write_op.getData());
+  mlir::ktdf::WriteToFifoOp::create(builder_, write_op.getLoc(), data,
+                                    new_fifo_slot);
+
+  return true;
+}
+
 void PathExpansionMaterializer::adaptStageBodyWithTransfers(
     mlir::ktdf::StageOp orig_stage, const StageMaterializationInfo& info,
     bool handle_fifo_ops) {
@@ -590,76 +674,21 @@ void PathExpansionMaterializer::adaptStageBodyWithTransfers(
   for (mlir::Operation& op : *orig_body) {
     if (op.hasTrait<mlir::OpTrait::IsTerminator>()) continue;
 
-    // Check if this is a data_transfer that needs adaptation
+    // Try to adapt based on operation type
+    bool adapted = false;
     if (auto transfer_op = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(&op)) {
-      auto it = transfer_map.find(&op);
-      if (it != transfer_map.end()) {
-        const TransferMaterializationInfo& transfer_info = *it->second;
-
-        // Get source and destination using helper
-        mlir::Value source =
-            transfer_info.source_private_resource
-                ? getPrivateResourceValue(transfer_info.source_private_resource,
-                                          transfer_info.source_slot_index)
-                : materializeValue(transfer_op.getSource());
-
-        mlir::Value destination =
-            transfer_info.dest_private_resource
-                ? getPrivateResourceValue(transfer_info.dest_private_resource,
-                                          transfer_info.dest_slot_index)
-                : materializeValue(transfer_op.getDestination());
-
-        // Materialize transfer parameters using helper
-        auto params = materializeTransferParams(transfer_info);
-
-        // Create the adapted transfer operation
-        mlir::ktdf::DataTransferOp::create(
-            builder_, transfer_op.getLoc(), source, params.source_indices,
-            params.source_sizes, destination, params.dest_indices,
-            params.dest_sizes);
-      } else {
-        builder_.clone(op, value_map_);
+      adapted = tryAdaptDataTransferOp(transfer_op, transfer_map.lookup(&op));
+    } else if (handle_fifo_ops) {
+      if (auto read_op = mlir::dyn_cast<mlir::ktdf::ReadFromFifoOp>(&op)) {
+        adapted = tryAdaptReadFromFifoOp(read_op, transfer_map.lookup(&op));
+      } else if (auto write_op =
+                     mlir::dyn_cast<mlir::ktdf::WriteToFifoOp>(&op)) {
+        adapted = tryAdaptWriteToFifoOp(write_op, transfer_map.lookup(&op));
       }
-    } else if (handle_fifo_ops && mlir::isa<mlir::ktdf::ReadFromFifoOp>(&op)) {
-      // Handle read_from_fifo - need to adapt to use new FIFO slot
-      auto read_op = mlir::cast<mlir::ktdf::ReadFromFifoOp>(&op);
-      auto it = transfer_map.find(&op);
-      if (it != transfer_map.end()) {
-        const TransferMaterializationInfo& transfer_info = *it->second;
-        assert(transfer_info.source_private_resource &&
-               "read_from_fifo should have source private resource");
+    }
 
-        mlir::Value new_fifo_slot =
-            getPrivateResourceValue(transfer_info.source_private_resource,
-                                    transfer_info.source_slot_index);
-
-        auto new_read = mlir::ktdf::ReadFromFifoOp::create(
-            builder_, read_op.getLoc(), read_op.getResult().getType(),
-            new_fifo_slot);
-        value_map_.map(read_op.getResult(), new_read.getResult());
-      } else {
-        builder_.clone(op, value_map_);
-      }
-    } else if (handle_fifo_ops && mlir::isa<mlir::ktdf::WriteToFifoOp>(&op)) {
-      // Handle write_to_fifo - need to adapt to use new FIFO slot
-      auto write_op = mlir::cast<mlir::ktdf::WriteToFifoOp>(&op);
-      auto it = transfer_map.find(&op);
-      if (it != transfer_map.end()) {
-        const TransferMaterializationInfo& transfer_info = *it->second;
-        assert(transfer_info.dest_private_resource &&
-               "write_to_fifo should have dest private resource");
-
-        mlir::Value new_fifo_slot = getPrivateResourceValue(
-            transfer_info.dest_private_resource, transfer_info.dest_slot_index);
-
-        mlir::Value data = materializeValue(write_op.getData());
-        mlir::ktdf::WriteToFifoOp::create(builder_, write_op.getLoc(), data,
-                                          new_fifo_slot);
-      } else {
-        builder_.clone(op, value_map_);
-      }
-    } else {
-      // Clone other operations as-is
+    // If not adapted, clone as-is
+    if (!adapted) {
       builder_.clone(op, value_map_);
     }
   }
