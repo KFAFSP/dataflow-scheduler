@@ -108,8 +108,7 @@ class PathExpansionMaterializer {
       const PipelineNode& pipeline_node);
 
   /// Materialize a private node by creating new ktdf.private with all resources
-  void materializePrivateNode(const PrivateNode& private_node,
-                              const PipelineNode& pipeline_node);
+  void materializePrivateNode(const PrivateNode& private_node);
 
   /// Recursively materialize a tree node and its children
   void materializeTreeNode(const PipelineTreeNode& node);

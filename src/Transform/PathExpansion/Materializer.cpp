@@ -68,10 +68,8 @@ void PathExpansionMaterializer::materializeTreeNode(
     const PipelineNode& pipeline_node = static_cast<const PipelineNode&>(node);
     materializePipelineNode(pipeline_node);
   } else if (node.isPrivateNode()) {
-    // Private nodes are handled specially within pipeline materialization
-    // They should not be materialized independently
-    llvm_unreachable(
-        "Private nodes should be materialized within pipeline context");
+    const PrivateNode& private_node = static_cast<const PrivateNode&>(node);
+    materializePrivateNode(private_node);
   } else {
     llvm_unreachable("unimplemented node type");
   }
@@ -212,33 +210,8 @@ mlir::ktdf::PipelineOp PathExpansionMaterializer::materializePipelineNode(
   // Set insertion point inside the pipeline body
   builder_.setInsertionPointToStart(&new_pipeline.getBody().front());
 
-  // Find the private node child (should be first child)
-  OperationTreeNode* child = pipeline_node.getFirstChild();
-  const PrivateNode* private_node = nullptr;
-
-  while (child) {
-    const auto pipeline_child = static_cast<const PipelineTreeNode*>(child);
-    if (pipeline_child->isPrivateNode()) {
-      private_node = static_cast<const PrivateNode*>(pipeline_child);
-      break;
-    }
-    child = child->getNextSibling();
-  }
-
-  assert(private_node && "Pipeline must have a private node");
-
-  // Materialize the private node first to create SSA values for resources
-  materializePrivateNode(*private_node, pipeline_node);
-
-  // Now materialize all stage children
-  child = pipeline_node.getFirstChild();
-  while (child) {
-    const auto pipeline_child = static_cast<const PipelineTreeNode*>(child);
-    if (pipeline_child->isStageNode()) {
-      materializeTreeNode(*pipeline_child);
-    }
-    child = child->getNextSibling();
-  }
+  // Materialize all children (private node first, then stages) via pre-order traversal
+  materializeChildren(pipeline_node);
 
   builder_.setInsertionPointAfter(new_pipeline);
 
@@ -251,7 +224,7 @@ mlir::ktdf::PipelineOp PathExpansionMaterializer::materializePipelineNode(
 //===----------------------------------------------------------------------===//
 
 void PathExpansionMaterializer::materializePrivateNode(
-    const PrivateNode& private_node, const PipelineNode& pipeline_node) {
+    const PrivateNode& private_node) {
   mlir::Operation* template_op = private_node.getOperationOrTemplate();
   assert(template_op && "Private node must have template");
 
@@ -259,9 +232,16 @@ void PathExpansionMaterializer::materializePrivateNode(
   mlir::Location loc = orig_private.getLoc();
   size_t orig_result_count = orig_private.getNumResults();
 
+  // Get parent pipeline node
+  const PipelineTreeNode* parent =
+      static_cast<const PipelineTreeNode*>(private_node.getParentNode());
+  assert(parent && parent->isPipelineNode() &&
+         "Private node must have a pipeline parent");
+  const PipelineNode* pipeline_node = static_cast<const PipelineNode*>(parent);
+
   // Identify stages that have dependencies (need tokens)
   llvm::SmallVector<StageNode*> stages_with_deps;
-  for (StageNode* stage : pipeline_node.getStages()) {
+  for (StageNode* stage : pipeline_node->getStages()) {
     if (!stage->getDependencies().empty()) {
       stages_with_deps.push_back(stage);
     }
