@@ -3,6 +3,7 @@ include(AddKTIRPython)
 set(CMAKE_PLATFORM_NO_VERSIONED_SONAME ON)
 
 set(KTIR_PYTHON_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mlir_ktir")
+set(KTIR_PYTHON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../src/Bindings/Python")
 
 ################################################################################
 # Sources
@@ -97,6 +98,19 @@ declare_mlir_python_extension(KTIRSchedulerPythonExtensions.Main
     KTIRVectorChainCAPI
   PRIVATE_LINK_LIBS
     LLVMSupport
+)
+
+declare_mlir_python_extension(KTIRSchedulerPythonExtensions.Dialects.KTDF.Nanobind
+  MODULE_NAME _ktirDialectsKTDF
+  ADD_TO_PARENT KTIRPythonSources.Dialects.ktdf
+  ROOT_DIR "${KTIR_PYTHON_SOURCE_DIR}"
+  SOURCES
+    DialectKTDF.cpp
+  PRIVATE_LINK_LIBS
+    LLVMSupport
+  EMBED_CAPI_LINK_LIBS
+    MLIRCAPIIR
+    KTIRKTDFCAPI
 )
 
 if(MLIR_PYTHON_STUBGEN_ENABLED)

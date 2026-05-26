@@ -180,9 +180,9 @@ bool StageGroupingAnalysis::shouldGroupTogether(mlir::ktdf::StageOp stage1,
     if (auto memref_type = mlir::dyn_cast<mlir::MemRefType>(val.getType())) {
       auto mem_space = memref_type.getMemorySpace();
       if (mem_space) {
-        // Try to cast to the custom MemorySpaceCustomAttr
+        // Try to cast to the custom MemorySpaceAttr
         if (auto mem_space_attr =
-                mlir::dyn_cast<mlir::ktdf::MemorySpaceCustomAttr>(mem_space)) {
+                mlir::dyn_cast<mlir::ktdf::MemorySpaceAttr>(mem_space)) {
           auto mem_space_enum = mem_space_attr.getValue();
           if (isRegisterFile(mem_space_enum)) {
             reg_files.insert(mem_space_enum);

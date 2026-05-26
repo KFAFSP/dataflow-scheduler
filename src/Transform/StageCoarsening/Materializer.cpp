@@ -279,8 +279,7 @@ mlir::ktdf::StageOp StageCoarseningMaterializer::materializeStageNode(
       llvm::SmallVector<mlir::ktdf::ComponentType> units(union_units.begin(),
                                                          union_units.end());
       new_stage.setApplicableUnitsAttr(
-          mlir::ktdf::ApplicableUnitsCustomAttr::get(builder_.getContext(),
-                                                     units));
+          mlir::ktdf::ApplicableUnitsAttr::get(builder_.getContext(), units));
     }
   }
 

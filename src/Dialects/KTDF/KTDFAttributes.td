@@ -42,7 +42,7 @@ class KTDF_Attr<string name, string attrMnemonic, list<Trait> traits = []>
 // MemorySpaceAttr
 //===----------------------------------------------------------------------===//
 
-def KTDF_MemorySpaceCustomAttr : KTDF_Attr<"MemorySpaceCustom", "memory_space"> {
+def KTDF_MemorySpaceAttr : EnumAttr<KTDF_Dialect, KTDF_MemorySpaceEnum, "memory_space"> {
   let summary = "KTDF memory space attribute for memref types";
   let description = [{
     Syntax:
@@ -60,8 +60,6 @@ def KTDF_MemorySpaceCustomAttr : KTDF_Attr<"MemorySpaceCustom", "memory_space"> 
     %hbm_buf = memref.alloc() : memref<4096xi32, #ktdf.memory_space<HBM>>
     ```
   }];
-
-  let parameters = (ins "::mlir::ktdf::MemorySpace":$value);
 
   let assemblyFormat = "`<` $value `>`";
 }
@@ -91,7 +89,7 @@ def KTDF_LoopTypeAttr : EnumAttr<KTDF_Dialect, KTDF_LoopTypeEnum, "loop_type"> {
 // ApplicableUnitsAttr
 //===----------------------------------------------------------------------===//
 
-def KTDF_ApplicableUnitsCustomAttr : KTDF_Attr<"ApplicableUnitsCustom", "applicable_units"> {
+def KTDF_ApplicableUnitsAttr : KTDF_Attr<"ApplicableUnits", "applicable_units"> {
   let summary = "KTDF applicable units attribute for stage operations";
   let description = [{
     Syntax:

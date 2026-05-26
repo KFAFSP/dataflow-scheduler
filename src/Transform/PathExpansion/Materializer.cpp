@@ -138,11 +138,10 @@ mlir::Attribute PathExpansionMaterializer::getMemorySpaceFromResource(
 
   switch (resource) {
     case ArchitectureGraph::Resource::HBM:
-      return mlir::ktdf::MemorySpaceCustomAttr::get(
-          ctx, mlir::ktdf::MemorySpace::HBM);
+      return mlir::ktdf::MemorySpaceAttr::get(ctx,
+                                              mlir::ktdf::MemorySpace::HBM);
     case ArchitectureGraph::Resource::LX:
-      return mlir::ktdf::MemorySpaceCustomAttr::get(
-          ctx, mlir::ktdf::MemorySpace::LX);
+      return mlir::ktdf::MemorySpaceAttr::get(ctx, mlir::ktdf::MemorySpace::LX);
     default:
       llvm_unreachable("Unsupported memory resource");
   }
@@ -501,8 +500,8 @@ mlir::ktdf::StageOp PathExpansionMaterializer::materializeStageNode(
     if (info_it->second.applicable_unit.has_value()) {
       llvm::SmallVector<mlir::ktdf::ComponentType> units = {
           *info_it->second.applicable_unit};
-      auto applicable_units_attr = mlir::ktdf::ApplicableUnitsCustomAttr::get(
-          builder_.getContext(), units);
+      auto applicable_units_attr =
+          mlir::ktdf::ApplicableUnitsAttr::get(builder_.getContext(), units);
       new_stage.setApplicableUnitsAttr(applicable_units_attr);
     }
   } else if (template_op) {

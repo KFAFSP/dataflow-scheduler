@@ -49,8 +49,7 @@ mlir::Attribute convertKtdpToKtdfMemorySpace(
       return nullptr;
   }
 
-  return mlir::ktdf::MemorySpaceCustomAttr::get(builder.getContext(),
-                                                ktdf_mem_space);
+  return mlir::ktdf::MemorySpaceAttr::get(builder.getContext(), ktdf_mem_space);
 }
 
 std::optional<int64_t> getStaticTripCount(mlir::scf::ForOp loop) {

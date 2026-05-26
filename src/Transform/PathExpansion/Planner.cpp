@@ -84,7 +84,7 @@ class ResourceInferrer {
     if (!memory_space) return std::nullopt;
 
     auto memory_space_attr =
-        mlir::dyn_cast<mlir::ktdf::MemorySpaceCustomAttr>(memory_space);
+        mlir::dyn_cast<mlir::ktdf::MemorySpaceAttr>(memory_space);
     if (!memory_space_attr) return std::nullopt;
 
     switch (memory_space_attr.getValue()) {

@@ -630,7 +630,7 @@ void ConstructThreeStagePipelinePass::createPipeline(
   SmallVector<mlir::ktdf::ComponentType> units;
   units.push_back(compute_unit);
   auto applicable_units_attr =
-      mlir::ktdf::ApplicableUnitsCustomAttr::get(builder.getContext(), units);
+      mlir::ktdf::ApplicableUnitsAttr::get(builder.getContext(), units);
   stage2->setAttr("applicable_units", applicable_units_attr);
 
   // Create read_from_fifos, compute operations, write_to_fifos in stage 2

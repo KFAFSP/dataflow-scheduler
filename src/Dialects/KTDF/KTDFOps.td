@@ -452,7 +452,7 @@ def KTDF_StageOp : KTDF_Op<"stage", [
   let arguments = (ins
     Variadic<KTDF_TokenType>:$depends_in,
     Variadic<KTDF_TokenType>:$depends_out,
-    OptionalAttr<KTDF_ApplicableUnitsCustomAttr>:$applicable_units
+    OptionalAttr<KTDF_ApplicableUnitsAttr>:$applicable_units
   );
 
   let regions = (region SizedRegion<1>:$body);

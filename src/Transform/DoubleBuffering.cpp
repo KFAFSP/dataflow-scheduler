@@ -71,7 +71,7 @@ struct CandidateShape {
 
 /// Extract the KTDF MemorySpace enum from a memref's memory space attribute.
 /// Returns std::nullopt if the memory space is not a KTDF
-/// MemorySpaceCustomAttr.
+/// MemorySpaceAttr.
 std::optional<mlir::ktdf::MemorySpace> extractKtdfMemorySpace(
     mlir::MemRefType memref_ty) {
   Attribute mspace_attr = memref_ty.getMemorySpace();
@@ -79,7 +79,7 @@ std::optional<mlir::ktdf::MemorySpace> extractKtdfMemorySpace(
     return std::nullopt;
   }
   if (auto ktdf_attr =
-          llvm::dyn_cast<mlir::ktdf::MemorySpaceCustomAttr>(mspace_attr)) {
+          llvm::dyn_cast<mlir::ktdf::MemorySpaceAttr>(mspace_attr)) {
     return ktdf_attr.getValue();
   }
   return std::nullopt;
