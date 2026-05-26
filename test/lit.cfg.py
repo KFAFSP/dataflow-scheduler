@@ -17,12 +17,13 @@
 import os
 import lit.formats
 import lit.llvm
+from lit.llvm.subst import ToolSubst
 
 llvm_config = lit.llvm.llvm_config
 
 config.name = "KTIR-scheduler"
 config.test_format = lit.formats.ShTest(not llvm_config.use_lit_shell)
-config.suffixes = [".mlir"]
+config.suffixes = [".mlir", ".py"]
 config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = os.path.join(config.ktir_obj_root, "test")
 
@@ -30,9 +31,28 @@ llvm_config.with_system_environment(["HOME", "INCLUDE", "LIB", "TMP", "TEMP"])
 
 llvm_config.use_default_substitutions()
 
-# Add tool directories to PATH
+config.excludes = [
+    "Inputs",
+    "CMakeLists.txt",
+    "lit.cfg.py",
+    "lit.site.cfg.py",
+]
+
+tools = ["scheduler", "FileCheck", "not"]
 tool_dirs = [config.ktir_tools_dir, config.llvm_tools_dir]
-llvm_config.add_tool_substitutions(["scheduler", "FileCheck", "not"], tool_dirs)
+
+if config.enable_python_bindings:
+    config.environment["PYTHONPATH"] = os.getenv("MLIR_LIT_PYTHONPATH", "")
+    llvm_config.with_environment(
+        "PYTHONPATH",
+        [
+            os.path.join(config.ktir_obj_root, "python_packages", "ktir"),
+        ],
+        append_path=True,
+    )
+    tools.extend([ToolSubst("python", config.python_executable)])
+
+llvm_config.add_tool_substitutions(tools, tool_dirs)
 
 # Quote tool paths that contain spaces so shell commands work correctly
 config.substitutions = [

@@ -138,12 +138,12 @@ add_mlir_python_common_capi_library(KTIRPythonCAPI
   INSTALL_COMPONENT KTIRPythonModules
   INSTALL_DESTINATION "${MLIR_BINDINGS_PYTHON_INSTALL_PREFIX}/_mlir_libs"
   OUTPUT_DIRECTORY "${KTIR_PYTHON_PACKAGE_DIR}/_mlir_libs"
-  RELATIVE_INSTALL_ROOT "../../.." # NOTE: This is fragile.
+  RELATIVE_INSTALL_ROOT "../../../.." # NOTE: This is fragile.
   DECLARED_SOURCES ${_source_components}
 )
 
 ktir_python_fix_rpath(KTIRPythonCAPI 
-  RELATIVE_INSTALL_ROOT "../../.." # NOTE: This is fragile.
+  RELATIVE_INSTALL_ROOT "../../../.." # NOTE: This is fragile.
 )
 
 add_mlir_python_modules(KTIRPythonModules

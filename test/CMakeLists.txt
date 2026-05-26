@@ -1,3 +1,9 @@
+llvm_canonicalize_cmake_booleans(
+  KTIR_ENABLE_PYTHON_BINDINGS
+  KTIR_BUILD_TOOLS
+  BUILD_SHARED_LIBS
+)
+
 configure_lit_site_cfg(
     lit.site.cfg.py.in
     ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
@@ -12,6 +18,10 @@ add_lit_testsuite(check-scheduler "Running the scheduler regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS ${KTIR_TEST_DEPENDS})
 set_target_properties(check-scheduler PROPERTIES FOLDER "Tests")
+
+if(KTIR_ENABLE_PYTHON_BINDINGS)
+  add_subdirectory(python)
+endif()
 
 add_dependencies(check-ktir check-scheduler)
 
