@@ -28,6 +28,7 @@ declare_mlir_dialect_python_bindings(
   SOURCES 
     dialects/agen.py
   DIALECT_NAME agen
+  GEN_ENUM_BINDINGS
 )
 
 declare_mlir_dialect_python_bindings(
@@ -37,6 +38,7 @@ declare_mlir_dialect_python_bindings(
   SOURCES 
     dialects/dataflow.py
   DIALECT_NAME dataflow
+  GEN_ENUM_BINDINGS
 )
 
 declare_mlir_dialect_python_bindings(
@@ -46,6 +48,7 @@ declare_mlir_dialect_python_bindings(
   SOURCES 
     dialects/ktdf.py
   DIALECT_NAME ktdf
+  GEN_ENUM_BINDINGS
 )
 
 declare_mlir_dialect_python_bindings(
@@ -64,6 +67,7 @@ declare_mlir_dialect_python_bindings(
   SOURCES 
     dialects/vectorchain.py
   DIALECT_NAME vectorchain
+  GEN_ENUM_BINDINGS
 )
 
 ################################################################################
