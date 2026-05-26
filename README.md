@@ -63,8 +63,27 @@ The following CMake variables can be configured:
 
 ## Running Tests
 
-The entire set of KTIR regression tests can be run with the following command:
+The entire set of regression tests can be run with the following command:
 
 ```sh
-cmake --build build --target check-ktir
+cmake --build build --target check-all
+```
+
+To test the external KTDP part, build `check-ktdp`. To test all dialects defined in the KTIR project, build `check-ktir`. To test the scheduler defined in this repository, build `check-scheduler`.
+
+## Python Bindings
+
+When `KTIR_ENABLE_PYTHON_BINDINGS` is set, the Python bindings will be built and output into `python_packages/ktir/mlir_ktir`, both in the build and install directories.
+
+To test the Python bindings from the build directory, run:
+
+```sh
+cmake --build build --target check-scheduler-python
+```
+
+These tests are also included in the `check-all` target, if bindings are enabled. To test the Python bindings from the install directory instead, run:
+
+```sh
+cmake --build build --target install
+PYTHONPATH=$CMAKE_INSTALL_PREFIX/python_packages/ktir python $KTIR_SRC_DIR/test/python/init.py
 ```

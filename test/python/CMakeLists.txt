@@ -4,4 +4,4 @@ add_lit_testsuite(check-scheduler-python
   DEPENDS KTIRPythonModules
 )
 
-add_dependencies(check-scheduler check-scheduler-python)
+add_dependencies(check-all check-scheduler-python)

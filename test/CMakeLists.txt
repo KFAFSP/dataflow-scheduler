@@ -5,25 +5,29 @@ llvm_canonicalize_cmake_booleans(
 )
 
 configure_lit_site_cfg(
-    lit.site.cfg.py.in
-    ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
+  ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
+  ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
   MAIN_CONFIG
-    ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
+  ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
 )
-
-set(KTIR_TEST_DEPENDS
-  scheduler)
-
-add_lit_testsuite(check-scheduler "Running the scheduler regression tests"
-  ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS ${KTIR_TEST_DEPENDS})
-set_target_properties(check-scheduler PROPERTIES FOLDER "Tests")
 
 if(KTIR_ENABLE_PYTHON_BINDINGS)
   add_subdirectory(python)
 endif()
 
+set(KTIR_TEST_DEPENDS
+  scheduler
+)
+
+add_lit_testsuite(check-scheduler "Running the scheduler regression tests"
+  ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS ${KTIR_TEST_DEPENDS}
+)
+set_target_properties(check-scheduler PROPERTIES FOLDER "Tests")
+
 add_dependencies(check-ktir check-scheduler)
 
 add_lit_testsuites(KTIR ${CMAKE_CURRENT_SOURCE_DIR}
-  DEPENDS ${KTIR_TEST_DEPENDS})
+  DEPENDS ${KTIR_TEST_DEPENDS}
+  SKIP "^python*"
+)
