@@ -54,6 +54,8 @@ if config.enable_python_bindings:
 
 llvm_config.add_tool_substitutions(tools, tool_dirs)
 
+config.substitutions.append(("%ktir_test_root", config.ktir_test_root))
+
 # Quote tool paths that contain spaces so shell commands work correctly
 config.substitutions = [
     (key, '"%s"' % val if val and " " in val and not val.startswith('"') else val)

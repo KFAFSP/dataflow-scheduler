@@ -20,6 +20,7 @@
 import sys
 
 config.llvm_tools_dir = lit_config.substitute("@LLVM_TOOLS_DIR@")
+config.ktir_test_root = "@CMAKE_CURRENT_SOURCE_DIR@"
 config.ktir_obj_root = "@KTIR_BINARY_DIR@"
 config.ktir_tools_dir = "@LLVM_RUNTIME_OUTPUT_INTDIR@"
 config.python_executable = "@Python3_EXECUTABLE@"
