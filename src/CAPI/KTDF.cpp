@@ -36,7 +36,7 @@ MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(KTDF, ktdf, mlir::ktdf::KTDFDialect)
 // TokenType
 //===----------------------------------------------------------------------===//
 
-bool mlirKTDFTypeIsATokenType(MlirType t) { return isa<TokenType>(unwrap(t)); }
+bool mlirTypeIsAKTDFTokenType(MlirType t) { return isa<TokenType>(unwrap(t)); }
 
 MlirTypeID mlirKTDFTokenTypeGetTypeID(void) {
   return wrap(TokenType::getTypeID());
@@ -50,7 +50,7 @@ MlirType mlirKTDFTokenTypeGet(MlirContext c) {
 // FifoSlotType
 //===----------------------------------------------------------------------===//
 
-bool mlirKTDFTypeIsAFifoSlotType(MlirType t) {
+bool mlirTypeIsAKTDFFifoSlotType(MlirType t) {
   return isa<FifoSlotType>(unwrap(t));
 }
 
@@ -78,10 +78,50 @@ MLIR_CAPI_EXPORTED MlirType mlirKTDFFifoSlotTypeGetElementType(MlirType t) {
 }
 
 //===----------------------------------------------------------------------===//
+// MemorySpaceAttr
+//===----------------------------------------------------------------------===//
+
+bool mlirAttributeIsAKTDFMemorySpaceAttr(MlirAttribute a) {
+  return isa<MemorySpaceAttr>(unwrap(a));
+}
+
+MlirTypeID mlirKTDFMemorySpaceAttrGetTypeID() {
+  return wrap(MemorySpaceAttr::getTypeID());
+}
+
+MlirAttribute mlirKTDFMemorySpaceAttrGet(MlirContext c, uint32_t value) {
+  return wrap(MemorySpaceAttr::get(unwrap(c), static_cast<MemorySpace>(value)));
+}
+
+uint32_t mlirKTDFMemorySpaceAttrGetValue(MlirAttribute a) {
+  return static_cast<uint32_t>(cast<MemorySpaceAttr>(unwrap(a)).getValue());
+}
+
+//===----------------------------------------------------------------------===//
+// LoopTypeAttr
+//===----------------------------------------------------------------------===//
+
+bool mlirAttributeIsAKTDFLoopTypeAttr(MlirAttribute a) {
+  return isa<LoopTypeAttr>(unwrap(a));
+}
+
+MlirTypeID mlirKTDFLoopTypeAttrGetTypeID() {
+  return wrap(LoopTypeAttr::getTypeID());
+}
+
+MlirAttribute mlirKTDFLoopTypeAttrGet(MlirContext c, uint32_t value) {
+  return wrap(LoopTypeAttr::get(unwrap(c), static_cast<LoopType>(value)));
+}
+
+uint32_t mlirKTDFLoopTypeAttrGetValue(MlirAttribute a) {
+  return static_cast<uint32_t>(cast<LoopTypeAttr>(unwrap(a)).getValue());
+}
+
+//===----------------------------------------------------------------------===//
 // ApplicableUnitsAttr
 //===----------------------------------------------------------------------===//
 
-bool mlirKTDFAttributeIsApplicableUnitsAttr(MlirAttribute a) {
+bool mlirAttributeIsAKTDFApplicableUnitsAttr(MlirAttribute a) {
   return isa<ApplicableUnitsAttr>(unwrap(a));
 }
 
@@ -89,21 +129,20 @@ MlirTypeID mlirKTDFApplicableUnitsAttrGetTypeID(void) {
   return wrap(ApplicableUnitsAttr::getTypeID());
 }
 
-MlirAttribute mlirKTDFApplicableUnitsAttrGet(MlirContext ctx,
-                                             intptr_t nComponentTypes,
-                                             uint32_t const* componentTypes) {
+MlirAttribute mlirKTDFApplicableUnitsAttrGet(MlirContext ctx, intptr_t nValues,
+                                             uint32_t const* values) {
   return wrap(ApplicableUnitsAttr::get(
-      unwrap(ctx), llvm::to_vector(llvm::map_range(
-                       ArrayRef(componentTypes, nComponentTypes),
-                       [](auto x) { return static_cast<ComponentType>(x); }))));
+      unwrap(ctx),
+      llvm::to_vector(llvm::map_range(ArrayRef(values, nValues), [](auto x) {
+        return static_cast<ComponentType>(x);
+      }))));
 }
 
-intptr_t mlirKTDFApplicableUnitsAttrGetNumComponents(MlirAttribute a) {
+intptr_t mlirKTDFApplicableUnitsAttrGetNumValues(MlirAttribute a) {
   return cast<ApplicableUnitsAttr>(unwrap(a)).getValue().size();
 }
 
-uint32_t mlirKTDFApplicableUnitsAttrGetComponent(MlirAttribute a,
-                                                 intptr_t pos) {
+uint32_t mlirKTDFApplicableUnitsAttrGetValue(MlirAttribute a, intptr_t pos) {
   return static_cast<uint32_t>(
       cast<ApplicableUnitsAttr>(unwrap(a)).getValue()[pos]);
 }
