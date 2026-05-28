@@ -1,5 +1,8 @@
+#include "src/Bindings/Python/DialectKTDF.hpp"
+
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/SmallVectorExtras.h>
 #include <mlir-c/IR.h>
 #include <nanobind/nanobind.h>
 
@@ -40,15 +43,16 @@ struct PyFifoSlotType : PyConcreteType<PyFifoSlotType> {
   static void bindDerived(ClassTy& c) {
     c.def_static(
         "get",
-        [](uint32_t fifoType, int64_t numElements, MlirType elementType) {
+        [](ktdf::FifoType fifoType, int64_t numElements, MlirType elementType) {
           return PyFifoSlotType(
               PyMlirContext::forContext(mlirTypeGetContext(elementType)),
-              mlirKTDFFifoSlotTypeGet(fifoType, numElements, elementType));
+              mlirKTDFFifoSlotTypeGet(static_cast<uint32_t>(fifoType),
+                                      numElements, elementType));
         },
         nb::arg("fifoType"), nb::arg("numElements"), nb::arg("elementType"));
 
     c.def_prop_ro("fifoType", [](PyFifoSlotType self) {
-      return mlirKTDFFifoSlotTypeGetFifoType(self);
+      return static_cast<ktdf::FifoType>(mlirKTDFFifoSlotTypeGetFifoType(self));
     });
 
     c.def_prop_ro("numElements", [](PyFifoSlotType self) {
@@ -72,15 +76,17 @@ struct PyMemorySpaceAttr : PyConcreteAttribute<PyMemorySpaceAttr> {
   static void bindDerived(ClassTy& c) {
     c.def_static(
         "get",
-        [](uint32_t value, DefaultingPyMlirContext context) {
+        [](ktdf::MemorySpace value, DefaultingPyMlirContext context) {
           return PyMemorySpaceAttr(
               context->getRef(),
-              mlirKTDFMemorySpaceAttrGet(context->get(), value));
+              mlirKTDFMemorySpaceAttrGet(context->get(),
+                                         static_cast<uint32_t>(value)));
         },
         nb::arg("value"), nb::arg("context").none() = nb::none());
 
     c.def_prop_ro("value", [](PyMemorySpaceAttr self) {
-      return mlirKTDFMemorySpaceAttrGetValue(self);
+      return static_cast<ktdf::MemorySpace>(
+          mlirKTDFMemorySpaceAttrGetValue(self));
     });
   }
 };
@@ -95,14 +101,16 @@ struct PyLoopTypeAttr : PyConcreteAttribute<PyLoopTypeAttr> {
   static void bindDerived(ClassTy& c) {
     c.def_static(
         "get",
-        [](uint32_t value, DefaultingPyMlirContext context) {
-          return PyLoopTypeAttr(context->getRef(),
-                                mlirKTDFLoopTypeAttrGet(context->get(), value));
+        [](ktdf::LoopType value, DefaultingPyMlirContext context) {
+          return PyLoopTypeAttr(
+              context->getRef(),
+              mlirKTDFLoopTypeAttrGet(context->get(),
+                                      static_cast<uint32_t>(value)));
         },
         nb::arg("value"), nb::arg("context").none() = nb::none());
 
     c.def_prop_ro("value", [](PyLoopTypeAttr self) {
-      return mlirKTDFLoopTypeAttrGetValue(self);
+      return static_cast<ktdf::LoopType>(mlirKTDFLoopTypeAttrGetValue(self));
     });
   }
 };
@@ -118,11 +126,12 @@ struct PyApplicableUnitsAttr : PyConcreteAttribute<PyApplicableUnitsAttr> {
   static void bindDerived(ClassTy& c) {
     c.def_static(
         "get",
-        [](std::optional<std::vector<uint32_t>> maybeValue,
+        [](std::optional<std::vector<ktdf::ComponentType>> maybeValue,
            DefaultingPyMlirContext context) {
-          const ArrayRef<uint32_t> value = maybeValue.has_value()
-                                               ? ArrayRef<uint32_t>(*maybeValue)
-                                               : ArrayRef<uint32_t>{};
+          const auto value = llvm::map_to_vector(
+              maybeValue.value_or(std::vector<ktdf::ComponentType>()),
+              [](auto x) { return static_cast<uint32_t>(x); });
+
           return PyApplicableUnitsAttr(
               context->getRef(),
               mlirKTDFApplicableUnitsAttrGet(context->get(), value.size(),
@@ -132,10 +141,11 @@ struct PyApplicableUnitsAttr : PyConcreteAttribute<PyApplicableUnitsAttr> {
         nb::arg("context").none() = nb::none());
 
     c.def_prop_ro("value", [](PyApplicableUnitsAttr self) {
-      std::vector<uint32_t> value(mlirKTDFApplicableUnitsAttrGetNumValues(self),
-                                  0);
+      std::vector<ktdf::ComponentType> value(
+          mlirKTDFApplicableUnitsAttrGetNumValues(self), {});
       for (auto&& [i, slot] : llvm::enumerate(value))
-        slot = mlirKTDFApplicableUnitsAttrGetValue(self, i);
+        slot = static_cast<ktdf::ComponentType>(
+            mlirKTDFApplicableUnitsAttrGetValue(self, i));
       return value;
     });
   }
