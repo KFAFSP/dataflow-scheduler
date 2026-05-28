@@ -12,6 +12,7 @@ set(KTIR_PYTHON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../src/Bindings/Python")
 declare_mlir_python_sources(KTIRSchedulerPythonSources
   ROOT_DIR "${KTIR_PYTHON_ROOT_DIR}"
   SOURCES
+    scheduler/__init__.py
     __init__.py
   ADD_TO_PARENT KTIRPythonSources
 )
@@ -113,6 +114,19 @@ declare_mlir_python_extension(KTIRSchedulerPythonExtensions.Dialects.KTDF.Nanobi
     KTIRKTDFCAPI
 )
 
+declare_mlir_python_extension(KTIRSchedulerPythonExtensions.Scheduler
+  MODULE_NAME _ktirScheduler
+  ADD_TO_PARENT KTIRSchedulerPythonExtensions
+  ROOT_DIR "${KTIR_PYTHON_SOURCE_DIR}"
+  SOURCES
+    Scheduler.cpp
+  EMBED_CAPI_LINK_LIBS
+    MLIRCAPIIR
+    KTIRSchedulerAnalysis
+  PRIVATE_LINK_LIBS
+    LLVMSupport
+)
+
 if(MLIR_PYTHON_STUBGEN_ENABLED)
   get_target_property(_ktirextension_srcs KTIRSchedulerPythonExtensions.Main INTERFACE_SOURCES)
   mlir_generate_type_stubs(
@@ -135,6 +149,28 @@ if(MLIR_PYTHON_STUBGEN_ENABLED)
     SOURCES
       _mlir_libs/_ktir.pyi
   )
+
+  get_target_property(_ktirschedulerextension_src KTIRSchedulerPythonExtensions.Scheduler INTERFACE_SOURCES)
+  mlir_generate_type_stubs(
+    MODULE_NAME mlir_ktir._mlir_libs._ktirScheduler
+    DEPENDS_TARGETS
+      KTIRPythonModules.extension._mlir.dso
+      KTIRPythonModules.extension._ktirScheduler.dso
+    OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/type_stubs/_mlir_libs"
+    OUTPUTS
+      _ktirScheduler.pyi
+    DEPENDS_TARGET_SRC_DEPS "${_ktirschedulerextension_src}"
+    IMPORT_PATHS "${KTIR_PYTHON_PACKAGE_DIR}/.."
+  )
+  set(_ktirscheduler_typestub_gen_target "${NB_STUBGEN_CUSTOM_TARGET}")
+
+  declare_mlir_python_sources(
+    KTIRSchedulerPythonExtensions.Scheduler.type_stub_gen
+    ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/type_stubs"
+    ADD_TO_PARENT KTIRSchedulerPythonSources
+    SOURCES
+      _mlir_libs/_ktirScheduler.pyi
+  )
 endif()
 
 ################################################################################
@@ -143,7 +179,11 @@ endif()
 
 set(_source_components
   MLIRPythonSources.Core
+  MLIRPythonSources.Dialects.arith
   MLIRPythonSources.Dialects.builtin
+  MLIRPythonSources.Dialects.func
+  MLIRPythonSources.Dialects.index
+  MLIRPythonSources.Dialects.memref
   KTIRPythonSources
   KTIRPythonExtensions
 )
@@ -174,4 +214,5 @@ add_mlir_python_modules(KTIRPythonModules
 
 if(MLIR_PYTHON_STUBGEN_ENABLED)
   add_dependencies(KTIRPythonModules ${_ktir_typestub_gen_target})
+  add_dependencies(KTIRPythonModules ${_ktirscheduler_typestub_gen_target})
 endif()
