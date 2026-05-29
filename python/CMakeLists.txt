@@ -13,6 +13,10 @@ declare_mlir_python_sources(KTIRSchedulerPythonSources
   ROOT_DIR "${KTIR_PYTHON_ROOT_DIR}"
   SOURCES
     scheduler/__init__.py
+    simulator/diagnostic.py
+    simulator/scev.py
+    simulator/validator.py
+    simulator/visitor.py
     __init__.py
   ADD_TO_PARENT KTIRPythonSources
 )
@@ -128,48 +132,60 @@ declare_mlir_python_extension(KTIRSchedulerPythonExtensions.Scheduler
 )
 
 if(MLIR_PYTHON_STUBGEN_ENABLED)
-  get_target_property(_ktirextension_srcs KTIRSchedulerPythonExtensions.Main INTERFACE_SOURCES)
-  mlir_generate_type_stubs(
-    MODULE_NAME mlir_ktir._mlir_libs._ktir
+  add_custom_target(KTIRSchedulerPythonTypeStubs)
+
+  function(add_ktir_python_type_stubs extension)
+    cmake_parse_arguments(ARG "" "ADD_TO_PARENT" "DEPENDS_TARGETS;OUTPUTS;IMPORT_PATHS" ${ARGN})
+
+    get_target_property(_extension_sources ${extension} INTERFACE_SOURCES)
+    get_target_property(_extension_module_name ${extension} mlir_python_EXTENSION_MODULE_NAME)
+
+    mlir_generate_type_stubs(
+      MODULE_NAME "${MLIR_PYTHON_PACKAGE_PREFIX}._mlir_libs.${_extension_module_name}"
+      DEPENDS_TARGETS "${ARG_DEPENDS_TARGETS}"
+      OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/type_stubs/_mlir_libs"
+      OUTPUTS "${ARG_OUTPUTS}"
+      DEPENDS_TARGET_SRC_DEPS "${_extension_sources}"
+      IMPORT_PATHS "${KTIR_PYTHON_PACKAGE_DIR}/..;${ARG_IMPORT_PATHS}"
+    )
+    add_dependencies(KTIRSchedulerPythonTypeStubs ${NB_STUBGEN_CUSTOM_TARGET})
+
+    set(_generated_outputs "${ARG_OUTPUTS}")
+    list(TRANSFORM _generated_outputs PREPEND "_mlir_libs/")
+
+    declare_mlir_python_sources(
+      ${extension}.type_stub_gen
+      ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/type_stubs"
+      ADD_TO_PARENT ${ARG_ADD_TO_PARENT}
+      SOURCES "${_generated_outputs}"
+    )
+  endfunction()
+
+  add_ktir_python_type_stubs(KTIRSchedulerPythonExtensions.Main
+    ADD_TO_PARENT KTIRSchedulerPythonSources
     DEPENDS_TARGETS
       KTIRPythonModules.extension._mlir.dso
       KTIRPythonModules.extension._ktir.dso
-    OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/type_stubs/_mlir_libs"
     OUTPUTS
       _ktir.pyi
-    DEPENDS_TARGET_SRC_DEPS "${_ktirextension_srcs}"
-    IMPORT_PATHS "${KTIR_PYTHON_PACKAGE_DIR}/.."
   )
-  set(_ktir_typestub_gen_target "${NB_STUBGEN_CUSTOM_TARGET}")
 
-  declare_mlir_python_sources(
-    KTIRSchedulerPythonExtensions.Main.type_stub_gen
-    ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/type_stubs"
+  add_ktir_python_type_stubs(KTIRSchedulerPythonExtensions.Dialects.KTDF.Nanobind
     ADD_TO_PARENT KTIRSchedulerPythonSources
-    SOURCES
-      _mlir_libs/_ktir.pyi
+    DEPENDS_TARGETS
+      KTIRPythonModules.extension._mlir.dso
+      KTIRPythonModules.extension._ktirDialectsKTDF.dso
+    OUTPUTS
+      _ktirDialectsKTDF.pyi
   )
 
-  get_target_property(_ktirschedulerextension_src KTIRSchedulerPythonExtensions.Scheduler INTERFACE_SOURCES)
-  mlir_generate_type_stubs(
-    MODULE_NAME mlir_ktir._mlir_libs._ktirScheduler
+  add_ktir_python_type_stubs(KTIRSchedulerPythonExtensions.Scheduler
+    ADD_TO_PARENT KTIRSchedulerPythonSources
     DEPENDS_TARGETS
       KTIRPythonModules.extension._mlir.dso
       KTIRPythonModules.extension._ktirScheduler.dso
-    OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/type_stubs/_mlir_libs"
     OUTPUTS
       _ktirScheduler.pyi
-    DEPENDS_TARGET_SRC_DEPS "${_ktirschedulerextension_src}"
-    IMPORT_PATHS "${KTIR_PYTHON_PACKAGE_DIR}/.."
-  )
-  set(_ktirscheduler_typestub_gen_target "${NB_STUBGEN_CUSTOM_TARGET}")
-
-  declare_mlir_python_sources(
-    KTIRSchedulerPythonExtensions.Scheduler.type_stub_gen
-    ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/type_stubs"
-    ADD_TO_PARENT KTIRSchedulerPythonSources
-    SOURCES
-      _mlir_libs/_ktirScheduler.pyi
   )
 endif()
 
@@ -184,6 +200,7 @@ set(_source_components
   MLIRPythonSources.Dialects.func
   MLIRPythonSources.Dialects.index
   MLIRPythonSources.Dialects.memref
+  MLIRPythonSources.Dialects.scf
   KTIRPythonSources
   KTIRPythonExtensions
 )
@@ -213,6 +230,5 @@ add_mlir_python_modules(KTIRPythonModules
 )
 
 if(MLIR_PYTHON_STUBGEN_ENABLED)
-  add_dependencies(KTIRPythonModules ${_ktir_typestub_gen_target})
-  add_dependencies(KTIRPythonModules ${_ktirscheduler_typestub_gen_target})
+  add_dependencies(KTIRPythonModules KTIRSchedulerPythonTypeStubs)
 endif()
