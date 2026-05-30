@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Final, Self, cast
 
 import mlir_ktir.dialects.ktdf as ktdf
+import mlir_ktir.dialects.memref as memref
 
 from mlir_ktir.scheduler import ArchitectureGraph
 from mlir_ktir.simulator import visitor
@@ -58,41 +59,47 @@ class IRValidator(IRVisitor):
 
     def remark(
         self: Self,
-        loc_or_op: _mlir.ir.Location | OpRef,
+        loc: _mlir.ir.Location | _mlir.ir.Value | OpRef,
         /,
         message: str,
         notes: Iterable[Note] = tuple(),
     ):
-        if not isinstance(loc_or_op, _mlir.ir.Location):
-            loc_or_op = loc_or_op.location
+        """Emits a remark."""
 
-        emit(Diagnostic(loc_or_op, Severity.REMARK, message, tuple(notes)))
+        if not isinstance(loc, _mlir.ir.Location):
+            loc = loc.location
+
+        emit(Diagnostic(loc, Severity.REMARK, message, tuple(notes)))
 
     def warn(
         self: Self,
-        loc_or_op: _mlir.ir.Location | visitor.OpRef,
+        loc: _mlir.ir.Location | _mlir.ir.Value | OpRef,
         /,
         message: str,
         notes: Iterable[Note] = tuple(),
     ):
-        if not isinstance(loc_or_op, _mlir.ir.Location):
-            loc_or_op = loc_or_op.location
+        """Emits a warning."""
 
-        diag = Diagnostic(loc_or_op, Severity.WARNING, message, tuple(notes))
+        if not isinstance(loc, _mlir.ir.Location):
+            loc = loc.location
+
+        diag = Diagnostic(loc, Severity.WARNING, message, tuple(notes))
         self._warnings.append(diag)
         emit(diag)
 
     def fail(
         self: Self,
-        loc_or_op: _mlir.ir.Location | visitor.OpRef,
+        loc: _mlir.ir.Location | _mlir.ir.Value | OpRef,
         /,
         message: str,
         notes: Iterable[Note] = tuple(),
     ):
-        if not isinstance(loc_or_op, _mlir.ir.Location):
-            loc_or_op = loc_or_op.location
+        """Emits an error that causes validation to fail."""
 
-        diag = Diagnostic(loc_or_op, Severity.ERROR, message, tuple(notes))
+        if not isinstance(loc, _mlir.ir.Location):
+            loc = loc.location
+
+        diag = Diagnostic(loc, Severity.ERROR, message, tuple(notes))
         self._errors.append(diag)
         emit(diag)
 
@@ -166,9 +173,13 @@ class TransferValidator(IRValidator):
     ):
         edge = self.architecture_graph.getEdgeInfoForResources(source, target)
         if edge is None:
-            self.fail(loc, f"no transfer path from {source.name} to {target.name}")
+            self.fail(loc, f"no direct path from {source.name} to {target.name}")
 
     def check_ktdf_fifo_allocate(self: Self, op: ktdf.FifoAllocateOp, /):
+        """Checks that a ktdf.fifo.allocate operation creates FIFOs that are
+        on a direct path on the hardware.
+        """
+
         for type in cast(Iterable[ktdf.FifoSlotType], op.results.types):
             self._check_transfer(
                 op.location,
@@ -177,9 +188,49 @@ class TransferValidator(IRValidator):
             )
 
     def check_ktdf_data_transfer(self: Self, op: ktdf.DataTransferOp, /):
+        """Checks that a ktdf.data_transfer operation moves data along a direct
+        path on the hardware.
+        """
+
         if (source := self._get_resource(op.source, True)) is None:
-            self.warn(op.source.location, "unknown memory resource")
+            self.warn(op.source, "unknown memory resource")
         if (target := self._get_resource(op.destination)) is None:
-            self.warn(op.destination.location, "uknown memory resource")
+            self.warn(op.destination, "uknown memory resource")
         if source and target:
             self._check_transfer(op.location, source, target)
+
+    def check_memref_memory_space_cast(self: Self, op: memref.MemorySpaceCastOp, /):
+        """Checks that a memref.memory_space_cast operation does not change the
+        memory space of a hardware resource.
+        """
+
+        source = self._get_resource(op.source)
+        target = self._get_resource(op.result)
+
+        if source is None and target is None:
+            return
+
+        if source is None:
+            self.warn(op.source, "unknown memory resouce")
+        elif target is None:
+            self.warn(op.result, "unknown memory resouce")
+        elif source != target:
+            self.fail(op, f"invalid cast from {source.name} to {target.name} memory")
+
+    def check_memref_copy(self: Self, op: memref.CopyOp, /):
+        """Checks that a memref.copy operation only moves data within the same
+        memory resource on the hardware.
+        """
+
+        source = self._get_resource(op.source)
+        target = self._get_resource(op.target)
+
+        if source is None and target is None:
+            return
+
+        if source is None:
+            self.warn(op.source, "unknown memory resouce")
+        elif target is None:
+            self.warn(op.target, "unknown memory resouce")
+        elif source != target:
+            self.fail(op, f"implicit transfer from {source.name} to {target.name}")
