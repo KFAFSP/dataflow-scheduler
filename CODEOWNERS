@@ -1,0 +1,7 @@
+# CODEOWNERS for torch-spyre/dataflow-scheduler-mlir-dialects
+#
+# These owners are the default owners for everything in the repository.
+# Unless a later match takes precedence, they will be requested for
+# review when someone opens a pull request.
+
+* @viji560 @bmahjour @Prasanth-Chatarasi @vswagath1989 @lupalby @acgatea1
