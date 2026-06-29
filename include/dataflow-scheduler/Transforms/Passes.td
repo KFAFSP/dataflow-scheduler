@@ -1,0 +1,303 @@
+//===-- Passes.td ------------------------------------------*- tablegen -*-===//
+//
+// Part of the Dataflow Scheduler project.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file declares all the scheduler passes.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD
+#define DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD
+
+include "mlir/Pass/PassBase.td"
+
+def PathExpansionPass : Pass<"path-expansion", "mlir::ModuleOp"> {
+  let summary = "Expand data movement paths to match architecture graph";
+  let description = [{
+    This pass legalizes data movement in ktdf.pipeline operations by expanding
+    paths to match the architecture graph. It inserts intermediate transfer
+    stages and resources where needed to ensure all data movement follows legal
+    hardware routing.
+  }];
+  let constructor = "::scheduler::createPathExpansionPass()";
+}
+
+def NormalizeGridTo1DPass : Pass<"normalize-grid-to-1d", "mlir::ModuleOp"> {
+  let summary = "Flatten N-D grids to 1-D and delinearize compute tile ids";
+  let description = [{
+    Rewrites each function's `grid` attribute from an N-D array to a single
+    1-D entry equal to the row-major product of its dimensions, and converts
+    the matching multi-result `ktdp.get_compute_tile_id` into a single-result
+    flat id whose original per-dimension coordinates are reconstructed with
+    row-major `arith.divui`/`arith.remui`. 1-D grids pass through unchanged.
+  }];
+  let constructor = "::scheduler::createNormalizeGridTo1DPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::ktdp::KtdpDialect"
+  ];
+}
+
+def TileSCFForLoopsPass : Pass<"tile-scf-for-loops", "mlir::ModuleOp"> {
+  let summary = "Tile perfectly nested scf.for loops";
+  let description = [{
+    This pass tiles perfectly nested scf.for loops with four execution modes:
+    
+    1. Static mode with custom tiling (tile-sizes specified, fallback-scf-tiling=false):
+       Uses command-line tile sizes with custom normalized tiling scheme
+    2. Static mode with fallback SCF tiling (tile-sizes specified, fallback-scf-tiling=true):
+       Uses command-line tile sizes with SCF's standard tiling (for testing)
+    3. Dynamic mode with custom tiling (tile-sizes not specified, fallback-scf-tiling=false):
+       Uses LoopTilingAnalysis to identify candidates and custom normalized tiling
+    4. Dynamic mode with fallback SCF tiling (tile-sizes not specified, fallback-scf-tiling=true):
+       Uses LoopTilingAnalysis with SCF's standard tiling (for testing)
+    
+    Custom tiling scheme example (uses ktdf.tiling.derive_size and ktdf.tiling.linearize_index):
+    ```
+    // Original normalized loops (lb=0, step=1)
+    scf.for %i = %c0 to %c23 step %c1 {
+      scf.for %j = %c0 to %c12 step %c1 {
+        %sum = arith.addi %i, %j : index
+      }
+    }
+    
+    // After custom normalized tiling with tile sizes [5, 5]
+    %n_tiles_i = arith.ceildivui %c23, %c5 : index
+    scf.for %tile_i = %c0 to %n_tiles_i step %c1 {
+      %n_tiles_j = arith.ceildivui %c12, %c5 : index
+      scf.for %tile_j = %c0 to %n_tiles_j step %c1 {
+        %tile_size_i = ktdf.tiling.derive_size [%tile_i : %c5], total_size = %c23
+        %tile_size_j = ktdf.tiling.derive_size [%tile_j : %c5], total_size = %c12
+        scf.for %point_i = %c0 to %tile_size_i step %c1 {
+          scf.for %point_j = %c0 to %tile_size_j step %c1 {
+            %i = ktdf.tiling.linearize_index[%tile_i : %c5], [%point_i : %c1]
+            %j = ktdf.tiling.linearize_index[%tile_j : %c5], [%point_j : %c1]
+            %sum = arith.addi %i, %j : index
+          }
+        }
+      }
+    }
+    
+    // After applying another round of custom tiling [3, 3] to innermost loops
+    %n_tiles_i = arith.ceildivui %c23, %c5 : index
+    scf.for %tile_i = %c0 to %n_tiles_i step %c1 {
+      %n_tiles_j = arith.ceildivui %c12, %c5 : index
+      scf.for %tile_j = %c0 to %n_tiles_j step %c1 {
+        %tile_size_i = ktdf.tiling.derive_size [%tile_i : %c5], total_size = %c23
+        %tile_size_j = ktdf.tiling.derive_size [%tile_j : %c5], total_size = %c12
+        %n_tiles_pi = arith.ceildivui %tile_size_i, %c3 : index
+        scf.for %tile_pi = %c0 to %n_tiles_pi step %c1 {
+          %n_tiles_pj = arith.ceildivui %tile_size_j, %c3 : index
+          scf.for %tile_pj = %c0 to %n_tiles_pj step %c1 {
+            %tile_size_pi = ktdf.tiling.derive_size [%tile_pi : %c3], total_size = %tile_size_i
+            %tile_size_pj = ktdf.tiling.derive_size [%tile_pj : %c3], total_size = %tile_size_j
+            scf.for %point_pi = %c0 to %tile_size_pi step %c1 {
+              scf.for %point_pj = %c0 to %tile_size_pj step %c1 {
+                %point_i = ktdf.tiling.linearize_index[%tile_pi : %c3], [%point_pi : %c1]
+                %point_j = ktdf.tiling.linearize_index[%tile_pj : %c3], [%point_pj : %c1]
+                %i = ktdf.tiling.linearize_index[%tile_i : %c5], [%point_i : %c1]
+                %j = ktdf.tiling.linearize_index[%tile_j : %c5], [%point_j : %c1]
+                %sum = arith.addi %i, %j : index
+              }
+            }
+          }
+        }
+      }
+    }
+    ```
+    
+    Standard SCF tiling example (fallback-scf-tiling=true):
+    ```
+    scf.for %i = 0 to 100 step 1 {
+      scf.for %j = 0 to 100 step 1 { ... }
+    }
+    ```
+    becomes:
+    ```
+    scf.for %i0 = 0 to 100 step 32 {
+      scf.for %j0 = 0 to 100 step 32 {
+        scf.for %i1 = %i0 to min(%i0+32, 100) step 1 {
+          scf.for %j1 = %j0 to min(%j0+32, 100) step 1 { ... }
+        }
+      }
+    }
+    ```
+  }];
+  let constructor = "::scheduler::createTileSCFForLoopsPass()";
+  let options = [
+    ListOption<"tileSizes", "tile-sizes", "int64_t",
+               "Tile sizes for each loop dimension (for testing only)">,
+    Option<"normalizeLoops", "normalize-loops", "bool",
+           /*default=*/"true",
+           "Normalize tiled loops to start at 0 and add outer IV to uses">,
+    Option<"useFallbackSCFTiling", "fallback-scf-tiling", "bool",
+           /*default=*/"false",
+           "Use SCF's standard tiling instead of custom normalized tiling (for testing)">
+  ];
+  let dependentDialects = [
+    "mlir::affine::AffineDialect",
+    "mlir::ktdf::KTDFDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
+def StripMineSCFForLoopsPass : Pass<"strip-mine-scf-for-loops", "mlir::ModuleOp"> {
+  let summary = "Strip-mine scf.for loops";
+  let description = [{
+    This pass performs strip-mining on scf.for loops.
+    Strip-mining splits a loop into an outer loop and an inner loop,
+    where the outer loop iterates over blocks and the inner loop
+    iterates within each block.
+    
+    When strip-mine-size is specified on the command line, it is used as a
+    static value for all loops (testing mode). The size must be positive.
+    
+    When strip-mine-size is not specified, the pass uses LoopTilingAnalysis to
+    identify strip-mining candidates and materializes ktdf.tiling.reserve_size 
+    ops with metadata-based attributes for each candidate loop.
+    
+    Example transformation:
+    ```
+    scf.for %i = 0 to 100 step 1 { ... }
+    ```
+    becomes:
+    ```
+    scf.for %i0 = 0 to 100 step 32 {
+      scf.for %i1 = %i0 to min(%i0+32, 100) step 1 { ... }
+    }
+    ```
+  }];
+  let constructor = "::scheduler::createStripMineSCFForLoopsPass()";
+  let options = [
+    ListOption<"stripMineSize", "strip-mine-size", "int64_t",
+               "Strip-mine factor (block size, for testing only)">,
+    Option<"normalizeLoops", "normalize-loops", "bool",
+           /*default=*/"true",
+           "Normalize loops to start at 0 and add outer IV to uses">
+  ];
+  let dependentDialects = [
+    "mlir::affine::AffineDialect",
+    "mlir::ktdf::KTDFDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
+def ParallelizeLoopsAcrossInstancesPass
+    : Pass<"parallelize-loops-across-instances", "mlir::ModuleOp"> {
+  let summary = "Map parallel loops onto hardware instances via ktdf.parallel";
+  let description = [{
+    For each ktdf.pipeline whose work is corelet-local (no core-shared
+    units in the union of its immediate stages' applicable_units), find
+    the outermost parallel-annotated scf.for in the pipeline's enclosing
+    scope whose statically-known trip count permits a split across
+    `num_instances` (preferring divisible trips; falling back to imbalanced
+    when none qualifies), and rewrite that scf.for into a ktdf.parallel op
+    with `distribute(num_instances = N)`. `N` is sourced from
+    SchedulerExtContext::getNumCorelets() at pass construction; the
+    pass itself is target-neutral.
+
+    Body legality (cross-iteration dependencies, L1 sharing) is trusted
+    via the loop_type=parallel_loop annotation set by upstream lowering.
+    Reduction loops (loop_type=reduction_loop or unannotated) are not
+    candidates.
+  }];
+  let constructor = "::scheduler::createParallelizeLoopsAcrossInstancesPass()";
+  let dependentDialects = ["mlir::ktdf::KTDFDialect", "mlir::scf::SCFDialect"];
+}
+
+def DoubleBufferingPass
+    : Pass<"double-buffering", "mlir::ModuleOp"> {
+  let summary = "Double-buffer scratchpad memrefs handed off between sibling stages";
+  let description = [{
+    For each ktdf.pipeline whose enclosing scope contains at least one scf.for
+    and which has no pre-existing modulo attribute, find scratchpad memrefs
+    yielded by the pipeline's ktdf.private region that are written by exactly
+    one sibling stage and read by one or more sibling stages (via
+    ktdf.data_transfer ops). For each such buffer, allocate two physical copies
+    just outside the pipeline scope, insert one shared ktdf.buffer_phase and
+    per-buffer ktdf.select_memref before the pipeline, rewrite the pipeline's
+    references to use the selected memrefs, and set modulo(size: 2) on the
+    pipeline.
+
+    Memory-space eligibility is determined by querying the MemoryTree to check
+    if the memory space is per-core scratchpad memory (e.g., L1 on Spyre).
+
+    The pass leaves ktdf.private's signature consistent: dropped result slots
+    are removed from the op and from ktdf.private_yield, and orphaned
+    memref.alloc ops in the private region are erased.
+  }];
+  let constructor = "::scheduler::createDoubleBufferingPass()";
+  let dependentDialects = [
+      "mlir::ktdf::KTDFDialect",
+      "mlir::ktdp::KtdpDialect",
+      "mlir::scf::SCFDialect",
+      "mlir::memref::MemRefDialect"];
+}
+
+def AffineMinCanonicalizationPass : Pass<"affine-min-canonicalization", "mlir::ModuleOp"> {
+  let summary = "Canonicalize arith.addi + arith.minsi + affine.apply to affine.min";
+  let description = [{
+    This pass transforms the pattern:
+      %add = arith.addi %iv, %step
+      %min = arith.minsi %add, %ub
+      %result = affine.apply ()[%iv, %min] -> (-iv + min)
+    
+    Into the canonical form:
+      %result = affine.min (%iv)[%ub, %step] -> (ub - iv, step)
+    
+    This simplifies the IR and makes it easier for subsequent passes like
+    address-assignment to analyze bounds. The transformation is mathematically
+    equivalent: both compute min(ub - iv, step).
+  }];
+  let constructor = "::scheduler::createAffineMinCanonicalizationPass()";
+  let dependentDialects = [
+      "mlir::affine::AffineDialect",
+      "mlir::arith::ArithDialect"];
+}
+
+def AddressAssignmentPass : Pass<"address-assignment", "mlir::ModuleOp"> {
+  let summary = "Analyze memory allocation and assign addresses";
+  let description = [{
+    This pass collects all memref.alloc operations in the module and groups
+    them by memory space (L1, DDR), analyses their sizes and assigns addresses.
+
+  }];
+  let constructor = "::scheduler::createAddressAssignmentPass()";
+  let dependentDialects = [
+      "mlir::ktdf::KTDFDialect",
+      "mlir::memref::MemRefDialect",
+      "mlir::affine::AffineDialect"];
+}
+
+def ScalarBroadcastLegalizationPass
+    : Pass<"scalar-broadcast-legalization", "mlir::ModuleOp"> {
+  let summary = "Legalize scalar broadcast inputs to linalg.generic compute ops";
+  let description = [{
+    Detects linalg.generic operations in compute stages that have input
+    indexing maps with a constant in the vector dimension (scalar broadcast).
+    When the data path hardware cannot legally carry sub-vector transfers or
+    the compute unit does not support scalar broadcast semantics natively,
+    this pass legalizes the path by:
+      1. Widening memref-side transfers to the full vector granularity.
+      2. Marking the L1->FIFO transfer with transfer_mode="splat".
+      3. Updating read_from_fifo result type and linalg.generic indexing map
+         to use the full vector identity map.
+  }];
+  let constructor = "::scheduler::createScalarBroadcastLegalizationPass()";
+}
+
+#endif // DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD

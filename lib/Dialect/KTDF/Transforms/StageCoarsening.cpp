@@ -1,0 +1,743 @@
+//===-- StageCoarsening.cpp -------------------------------------*- c++ -*-===//
+//
+// Part of the Dataflow Scheduler project.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+//
+// Stage Coarsening Transformation
+//
+// This pass implements a stage-coarsening algorithm using the following steps:
+//
+// 1: Identify stage groups using loop distribution legality rules.
+// 2: Construct a PipelineTree to represent the currect structure of the code
+// and transform it to the desired structure (this step does not modify IR)
+//   a. Distribute and sink loops into pipeline.
+//   b. Further sink into stage groups containing a single stage (expand
+//      buffers).
+//   c. Discover and correct illegal structures iteratively.
+//   d. Correct stage dependencies that cross pipeline boundaries.
+// 3: Use the manipulated PipelineTree abstraction with reference to
+//    operations in the input IR to generate the transformed IR.
+//
+// Note: Legality of stage coarsening follows loop distribution rules.
+//       Data dependence analysis may be added in future.
+//
+//===----------------------------------------------------------------------===//
+
+#include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
+#include "dataflow-scheduler/Analysis/PipelineTree.h"
+#include "dataflow-scheduler/Analysis/Utils.h"
+#include "dataflow-scheduler/Dialect/KTDF/Analysis/StageGrouping.h"
+#include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/StageCoarsening/BufferExpansion.h"
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/StageCoarsening/Materializer.h"
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/StageCoarsening/ScopeCorrection.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
+#include "dataflow-scheduler/Transforms/Utils/PipelineTreeLegalizer.h"
+#include "dataflow-scheduler/Transforms/Utils/Utils.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/Pass/Pass.h"
+
+#define PASS_NAME "stage-coarsening"
+#define DEBUG_TYPE PASS_NAME
+
+using namespace mlir;
+
+namespace mlir::ktdf {
+#define GEN_PASS_DEF_STAGECOARSENINGPASS
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h.inc"
+}  // namespace mlir::ktdf
+
+namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
+
+//===----------------------------------------------------------------------===//
+// Stage Coarsening Pass
+//===----------------------------------------------------------------------===//
+
+/// Module pass that implements the algorithm for creating hierarchical
+/// pipelines
+struct StageCoarseningPass
+    : public ktdf::impl::StageCoarseningPassBase<StageCoarseningPass> {
+  using StageCoarseningPassBase<StageCoarseningPass>::StageCoarseningPassBase;
+
+  void runOnOperation() override;
+
+ private:
+  /// Represents a candidate for stage coarsening transformation
+  struct TransformCandidate {
+    llvm::SmallVector<scf::ForOp>
+        loop_nest_;  // Perfectly nested loops to sink (outermost to innermost)
+    ktdf::PipelineOp pipeline_;    // Target pipeline
+    Operation* loop_nest_parent_;  // Parent operation of the outermost
+                                   // loop (will be tree root)
+  };
+
+  /// Identify all transform candidates in the module
+  /// Walks IR to find pipelines with 'n' perfectly nested loops above them
+  void identifyTransformCandidates(
+      ModuleOp module_op, llvm::SmallVector<TransformCandidate>& candidates);
+
+  /// Apply the transformation algorithm to a candidate
+  void applyTransformation(TransformCandidate& candidate);
+
+  //===--------------------------------------------------------------------===//
+  // Distribute and Sink Loops into Pipeline
+  //===--------------------------------------------------------------------===//
+
+  void DistributeAndSinkIntoPipeline(
+      TransformCandidate& candidate, scheduler::PipelineTree& tree,
+      const ktdf::StageGroupingAnalysis& grouping,
+      llvm::SmallVectorImpl<ktdf::BufferExpansionInfo*>& expansion_infos);
+
+  /// Perform buffer expansion analysis and record expansion information
+
+  //===--------------------------------------------------------------------===//
+  // Sink into Stage Groups Containing a Single Stage
+  //===--------------------------------------------------------------------===//
+
+  void SinkIntoSingleStage(TransformCandidate& candidate,
+                           scheduler::PipelineTree& tree,
+                           const ktdf::StageGroupingAnalysis& grouping);
+
+  //===--------------------------------------------------------------------===//
+  // Discover and Correct Illegal Structures
+  //===--------------------------------------------------------------------===//
+
+  void DiscoverAndCorrectStructure(TransformCandidate& candidate,
+                                   scheduler::PipelineTree& tree);
+
+  //===--------------------------------------------------------------------===//
+  // Correct Stage Dependencies Crossing Pipeline Boundaries
+  //===--------------------------------------------------------------------===//
+
+  void CorrectStageDependencies(TransformCandidate& candidate,
+                                scheduler::PipelineTree& tree);
+
+  //===--------------------------------------------------------------------===//
+  // Step 3: Generate Transformed IR from PipelineTree
+  //===--------------------------------------------------------------------===//
+
+  /// Generate the transformed IR from the manipulated PipelineTree
+  void GenerateTransformedIR(
+      TransformCandidate& candidate, scheduler::PipelineTree& tree,
+      llvm::ArrayRef<const ktdf::BufferExpansionInfo*> expansion_infos);
+};
+
+//===----------------------------------------------------------------------===//
+// StageCoarseningPass Implementation
+//===----------------------------------------------------------------------===//
+
+void StageCoarseningPass::runOnOperation() {
+  auto module_op = getOperation();
+
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n=== Stage Coarsening Pass ===\n";
+    llvm::dbgs() << "Loop nest depth: " << loopNestDepth << "\n\n";
+  });
+
+  // Identify all transform candidates
+  llvm::SmallVector<TransformCandidate> candidates;
+  identifyTransformCandidates(module_op, candidates);
+
+  if (candidates.empty()) {
+    LLVM_DEBUG(llvm::dbgs() << "No transform candidates found.\n");
+    return;
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "Found " << candidates.size()
+                          << " transform candidate(s)\n\n");
+
+  // Apply transformation to each candidate
+  for (TransformCandidate& candidate : candidates) {
+    applyTransformation(candidate);
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "=== Stage Coarsening Pass Complete ===\n\n");
+}
+
+void StageCoarseningPass::identifyTransformCandidates(
+    ModuleOp module_op, llvm::SmallVector<TransformCandidate>& candidates) {
+  // Walk all functions in the module
+  module_op.walk([&](func::FuncOp func_op) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "Analyzing function: " << func_op.getName() << "\n");
+
+    // Find all pipelines in this function
+    func_op.walk([&](ktdf::PipelineOp pipeline) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "  Found pipeline, checking for loop nest above it...\n");
+
+      // Walk up the parent chain to find perfectly nested loops
+      Operation* current_op = pipeline.getOperation();
+      llvm::SmallVector<scf::ForOp> loop_nest;
+
+      // Collect up to 'loopNestDepth' perfectly nested loops
+      for (unsigned i = 0; i < loopNestDepth; ++i) {
+        Operation* parent_op = current_op->getParentOp();
+        if (!parent_op) break;
+        auto for_op = dyn_cast<scf::ForOp>(parent_op);
+        if (!for_op) break;
+        auto& body_ops = for_op.getBody()->getOperations();
+
+        // Check if this is a perfectly nested loop
+        // Allow only specific simple operations between nested loops
+        bool is_perfectly_nested = true;
+        int num_sibling_loops = 0;
+        for (auto& op : body_ops) {
+          // Skip the terminator
+          if (isa<scf::YieldOp>(op)) continue;
+
+          // In the first iteration we may encounter the pipeline we started
+          // from, so just ignore it.
+          if (&op == pipeline.getOperation()) continue;
+
+          // Check if operation is a nested loop. We allow a nested loop as long
+          // as it is the only child of its parent.
+          if (auto inner_for = dyn_cast<scf::ForOp>(op)) {
+            num_sibling_loops++;
+            continue;
+          }
+
+          // Check if operation is allowed between loops using the proper
+          // function
+          if (!ktdf::StageCoarseningMaterializer::isOpAllowedBetweenLoops(
+                  &op)) {
+            is_perfectly_nested = false;
+            break;
+          }
+        }
+
+        if (is_perfectly_nested && num_sibling_loops <= 1) {
+          loop_nest.push_back(for_op);
+          current_op = for_op.getOperation();
+          continue;
+        }
+
+        // Not perfectly nested, stop looking for more loops
+        break;
+      }
+
+      // If we found any loops, this is a candidate
+      if (!loop_nest.empty()) {
+        // Reverse to get outermost-to-innermost order
+        std::reverse(loop_nest.begin(), loop_nest.end());
+
+        // Parent of outermost loop becomes tree root
+        Operation* loop_nest_parent =
+            loop_nest.empty() ? pipeline.getOperation()->getParentOp()
+                              : loop_nest.front().getOperation()->getParentOp();
+
+        candidates.push_back({loop_nest, pipeline, loop_nest_parent});
+
+        LLVM_DEBUG({
+          llvm::dbgs() << "    -> Found candidate with " << loop_nest.size()
+                       << " nested loop(s) at ";
+          scheduler::printLocation(llvm::dbgs(),
+                                   loop_nest.front().getOperation());
+          llvm::dbgs() << "\n";
+        });
+      }
+    });
+  });
+}
+
+void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n--- Applying Transformation in steps ---\n";
+    llvm::dbgs() << "Loop nest depth: " << candidate.loop_nest_.size() << "\n";
+  });
+
+  // Get device and create memory tree
+  auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();
+  auto* const device = devices.getOrImportDevice();
+  if (!device) {
+    candidate.pipeline_->emitError(
+        "Unable to import device specification for stage grouping. This could "
+        "happen if the device spec file is empty or contains multiple "
+        "devices");
+    return signalPassFailure();
+  }
+
+  scheduler::arch_view::MemoryTree memory_tree(*device);
+
+  // Build pipeline tree once - it will be manipulated throughout the
+  // transformation
+  scheduler::PipelineTree tree;
+  tree.compute(*candidate.loop_nest_parent_);
+  LLVM_DEBUG({
+    llvm::dbgs() << "=== Initial Pipeline Tree ===\n";
+    tree.print(llvm::dbgs());
+    llvm::dbgs() << "\n";
+  });
+
+  // Perform stage grouping analysis once
+  LLVM_DEBUG(llvm::dbgs() << "\n  Performing stage grouping analysis...\n");
+  ktdf::StageGroupingAnalysis grouping(candidate.pipeline_, memory_tree);
+  LLVM_DEBUG(grouping.print(llvm::dbgs()));
+
+  // Step 2a: Distribute and sink loops into pipeline
+  LLVM_DEBUG(
+      llvm::dbgs() << "\n--- Step 2a: Distribute and Sink into Pipeline ---\n");
+  llvm::SmallVector<ktdf::BufferExpansionInfo*> buffer_expansion_infos;
+  DistributeAndSinkIntoPipeline(candidate, tree, grouping,
+                                buffer_expansion_infos);
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n=== Pipeline Tree after Step 2a ===\n";
+    tree.print(llvm::dbgs());
+    llvm::dbgs() << "\n";
+  });
+
+  // Step 2b: Further sink into stage groups containing a single stage
+  // (expand buffers)
+  LLVM_DEBUG(
+      llvm::dbgs() << "\n--- Step 2b: Sink into Single-Stage Groups ---\n");
+  SinkIntoSingleStage(candidate, tree, grouping);
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n=== Pipeline Tree after Step 2b ===\n";
+    tree.print(llvm::dbgs());
+    llvm::dbgs() << "\n";
+  });
+
+  // Step 2c: Discover and correct illegal structures iteratively
+  LLVM_DEBUG(llvm::dbgs()
+             << "\n--- Step 2c: Discover and Correct Illegal Structures ---\n");
+  DiscoverAndCorrectStructure(candidate, tree);
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n=== Pipeline Tree after Step 2c ===\n";
+    tree.print(llvm::dbgs());
+    llvm::dbgs() << "\n";
+  });
+
+  // Step 2d: Correct stage dependencies that cross pipeline boundaries
+  LLVM_DEBUG(llvm::dbgs() << "\n--- Step 2d: Correct Stage Dependencies ---\n");
+  CorrectStageDependencies(candidate, tree);
+  LLVM_DEBUG({
+    llvm::dbgs() << "\n=== Pipeline Tree after Step 2d (Final) ===\n";
+    tree.print(llvm::dbgs());
+    llvm::dbgs() << "\n";
+  });
+
+  // Step 3: Generate transformed IR from the manipulated tree
+  GenerateTransformedIR(candidate, tree, buffer_expansion_infos);
+
+  // Clean up allocated expansion infos
+  for (ktdf::BufferExpansionInfo* info : buffer_expansion_infos) {
+    delete info;
+  }
+}
+
+void StageCoarseningPass::DistributeAndSinkIntoPipeline(
+    TransformCandidate& candidate, scheduler::PipelineTree& tree,
+    const ktdf::StageGroupingAnalysis& grouping,
+    llvm::SmallVectorImpl<ktdf::BufferExpansionInfo*>& expansion_infos) {
+  LLVM_DEBUG(llvm::dbgs() << "Distributing loops into pipeline...\n");
+
+  // Validate candidate
+  if (!candidate.pipeline_ || !candidate.loop_nest_parent_) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "  ERROR: Invalid candidate (null pipeline or parent)\n");
+    return;
+  }
+
+  // For each stage group, create unmaterialized loop nest and insert
+  // as children of pipeline
+  LLVM_DEBUG(
+      llvm::dbgs() << "\n  Distributing loop nests to stage groups...\n");
+
+  // Process each group
+  const llvm::SmallVector<ktdf::StageGroup>& groups = grouping.getGroups();
+  for (size_t group_idx = 0; group_idx < groups.size(); ++group_idx) {
+    const ktdf::StageGroup& group = groups[group_idx];
+    const llvm::SmallVector<ktdf::StageOp>& stages = group.getStages();
+
+    if (stages.empty()) continue;
+
+    LLVM_DEBUG(llvm::dbgs()
+               << "  Group " << group_idx << ": Creating loop nest for "
+               << stages.size() << " stage(s)\n");
+
+    // Find stage nodes for this group using the operation-to-node mapping
+    llvm::SmallVector<scheduler::StageNode*> stage_nodes;
+    scheduler::PipelineTreeNode* pipeline_parent_node =
+        tree.getNodeForOp(candidate.pipeline_.getOperation());
+    assert(pipeline_parent_node && pipeline_parent_node->isPipelineNode());
+
+    for (ktdf::StageOp stage : stages) {
+      scheduler::PipelineTreeNode* node = tree.getNodeForOp(stage);
+      assert(node);
+      assert(node->isStageNode());
+      auto* stage_node = static_cast<scheduler::StageNode*>(node);
+      stage_nodes.push_back(stage_node);
+    }
+    assert(!stage_nodes.empty());
+
+    // Create nested loop nodes (outermost to innermost)
+    // The outermost loop will be inserted as a child of the pipeline
+    // Each subsequent loop will be a child of the previous loop
+    // The stages will be moved to be children of the innermost loop
+    scheduler::OperationTreeNode* current_parent = pipeline_parent_node;
+
+    for (size_t loop_idx = 0; loop_idx < candidate.loop_nest_.size();
+         ++loop_idx) {
+      // Create unmaterialized loop node using factory method
+      scheduler::LoopNode* loop_node =
+          tree.createLoopNode(nullptr);  // Unmaterialized
+      loop_node->setTemplateOp(candidate.loop_nest_[loop_idx].getOperation());
+
+      // Insert loop node as child of current parent (pipeline or outer loop)
+      current_parent->insertChildNode(loop_node);
+
+      // This loop becomes the parent for the next loop or the stages
+      current_parent = loop_node;
+    }
+
+    // Move all stages in this group to be children of the innermost loop
+    for (scheduler::StageNode* stage_node : stage_nodes) {
+      stage_node->unlink();
+      current_parent->insertChildNode(stage_node);
+    }
+
+    LLVM_DEBUG(llvm::dbgs() << "    Moved " << stage_nodes.size()
+                            << " stage(s) under loop nest\n");
+  }
+
+  // Now remove the original loops from the tree
+  // Note that references to their operations still exist as template ops in
+  // the unmaterialized nodes
+  for (scf::ForOp loop_op : candidate.loop_nest_) {
+    scheduler::PipelineTreeNode* loop_node =
+        tree.getNodeForOp(loop_op.getOperation());
+    assert(loop_node);
+    assert(loop_node->isLoopNode() && "Expected loop node");
+    // Unlink only the node itself, not its subtree
+    // This moves the loop's children (the pipeline) up to the loop's parent
+    loop_node->unlinkNode();
+    // Delete the now-unlinked loop node
+    tree.deleteNode(loop_node);
+  }
+
+  ktdf::PerformBufferExpansionAnalysis(
+      candidate.loop_nest_, candidate.pipeline_, grouping, expansion_infos);
+
+  LLVM_DEBUG(llvm::dbgs() << "\n  Loop distribution complete.\n");
+}
+
+void StageCoarseningPass::SinkIntoSingleStage(
+    TransformCandidate& candidate, scheduler::PipelineTree& tree,
+    const ktdf::StageGroupingAnalysis& grouping) {
+  LLVM_DEBUG(llvm::dbgs() << "Sinking into single-stage groups...\n");
+
+  const llvm::SmallVector<ktdf::StageGroup>& groups = grouping.getGroups();
+
+  // Find the pipeline node in the tree
+  scheduler::PipelineTreeNode* pipeline_node =
+      tree.getNodeForOp(candidate.pipeline_.getOperation());
+  assert(pipeline_node && pipeline_node->isPipelineNode());
+
+  // Process each stage group
+  for (size_t group_idx = 0; group_idx < groups.size(); ++group_idx) {
+    const ktdf::StageGroup& group = groups[group_idx];
+
+    // Only process single-stage groups
+    if (!group.isSingleStage()) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "  Group " << group_idx << ": Skipping (contains "
+                 << group.getStages().size() << " stages)\n");
+      continue;
+    }
+
+    ktdf::StageOp stage = group.getFirstStage();
+    LLVM_DEBUG({
+      llvm::dbgs() << "  Group " << group_idx
+                   << ": Processing single-stage group with stage at ";
+      scheduler::printLocation(llvm::dbgs(), stage.getOperation());
+      llvm::dbgs() << "\n";
+    });
+
+    // Find the stage node in the tree
+    scheduler::PipelineTreeNode* stage_node =
+        tree.getNodeForOp(stage.getOperation());
+    assert(stage_node && stage_node->isStageNode());
+
+    // The stage's parent should now be the innermost loop from the candidate
+    scheduler::OperationTreeNode* innermost_loop = stage_node->getParentNode();
+    assert(innermost_loop && "Stage should have a parent by now");
+
+    scheduler::PipelineTreeNode* innermost_loop_pipeline =
+        static_cast<scheduler::PipelineTreeNode*>(innermost_loop);
+    assert(innermost_loop_pipeline->isLoopNode() &&
+           "Stage's parent should be a loop node now");
+
+    // Find the outermost loop in the nest by walking up to the pipeline
+    const scheduler::PipelineTreeNode* outermost_loop =
+        scheduler::PipelineTreeNode::findOutermostLoop(
+            innermost_loop_pipeline,
+            [](const scheduler::PipelineTreeNode* node) {
+              return node->isPipelineNode();
+            });
+    assert(outermost_loop && "Expected to find an outermost loop");
+
+    LLVM_DEBUG(llvm::dbgs() << "    Sinking loop nest into stage\n");
+
+    // Sink the loop nest into the stage:
+    scheduler::PipelineTreeNode* mutable_outermost =
+        const_cast<scheduler::PipelineTreeNode*>(outermost_loop);
+    assert(mutable_outermost->getParentNode() == pipeline_node);
+    scheduler::OperationTreeNode* insert = mutable_outermost->getPrevSibling();
+    mutable_outermost->unlink();
+    stage_node->unlink();
+    stage_node->insertChildNode(mutable_outermost);
+    pipeline_node->insertChildNode(stage_node, insert);
+
+    LLVM_DEBUG(llvm::dbgs() << "    Successfully sank loop nest into stage\n");
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "  Sinking into single-stage groups complete.\n");
+}
+
+void StageCoarseningPass::DiscoverAndCorrectStructure(
+    TransformCandidate& candidate, scheduler::PipelineTree& tree) {
+  LLVM_DEBUG(
+      llvm::dbgs() << "Discovering and correcting illegal structures...\n");
+
+  scheduler::pipeline_tree::Legalizer legalizer;
+
+  // Find and fix all violations iteratively
+  legalizer.findAndFixViolations(tree);
+
+  LLVM_DEBUG(llvm::dbgs() << "  Structure legalization complete.\n");
+}
+
+void StageCoarseningPass::CorrectStageDependencies(
+    TransformCandidate& candidate, scheduler::PipelineTree& tree) {
+  LLVM_DEBUG(llvm::dbgs() << "Correcting stage dependencies...\n");
+
+  // Step 1: Build pipeline-to-depth map and collect all stages
+  llvm::DenseMap<const scheduler::PipelineNode*, unsigned> pipeline_to_depth;
+  llvm::SmallVector<scheduler::StageNode*> all_stages;
+  unsigned pipeline_depth = 0;
+
+  scheduler::PipelineTreeNode::walk<scheduler::PipelineTreeNode::kPreOrder>(
+      tree.getRoot(), [&](scheduler::OperationTreeNode* node) {
+        auto* pnode = static_cast<scheduler::PipelineTreeNode*>(node);
+        if (pnode->isPipelineNode()) {
+          pipeline_to_depth[static_cast<const scheduler::PipelineNode*>(
+              pnode)] = pipeline_depth;
+          pipeline_depth++;
+        } else if (pnode->isStageNode()) {
+          all_stages.push_back(static_cast<scheduler::StageNode*>(pnode));
+        }
+        return node;
+      });
+
+  // Helper lambda to find a stage at the same level as the target pipeline by
+  // walking up from start_stage
+  auto findStageAtPipeline =
+      [&](scheduler::StageNode* start_stage,
+          scheduler::PipelineNode* target_pipeline) -> scheduler::StageNode* {
+    // Find the stage whose containing pipeline is at the target depth
+    scheduler::OperationTreeNode* result_stage =
+        start_stage->findParent([&](const scheduler::OperationTreeNode* node) {
+          if (!static_cast<const scheduler::PipelineTreeNode*>(node)
+                   ->isStageNode()) {
+            return false;
+          }
+          const scheduler::StageNode* stage =
+              static_cast<const scheduler::StageNode*>(node);
+          const scheduler::PipelineTreeNode* parent =
+              static_cast<const scheduler::PipelineTreeNode*>(
+                  stage->getParentNode());
+          assert(parent->isPipelineNode() && "Stage parent must be a pipeline");
+          const scheduler::PipelineNode* stage_pipeline =
+              static_cast<const scheduler::PipelineNode*>(parent);
+          return stage_pipeline == target_pipeline;
+        });
+
+    return static_cast<scheduler::StageNode*>(result_stage);
+  };
+
+  // Step 2: Process each stage and correct boundary-crossing dependencies
+  for (scheduler::StageNode* source_stage : all_stages) {
+    scheduler::PipelineTreeNode* source_parent =
+        static_cast<scheduler::PipelineTreeNode*>(
+            source_stage->getParentNode());
+    assert(source_parent->isPipelineNode() &&
+           "Stage parent must be a pipeline");
+    scheduler::PipelineNode* source_pipeline =
+        static_cast<scheduler::PipelineNode*>(source_parent);
+    unsigned source_depth = pipeline_to_depth[source_pipeline];
+
+    for (scheduler::StageNode* sink_stage : source_stage->getDependencies()) {
+      scheduler::PipelineTreeNode* sink_parent =
+          static_cast<scheduler::PipelineTreeNode*>(
+              sink_stage->getParentNode());
+      assert(sink_parent->isPipelineNode() &&
+             "Stage parent must be a pipeline");
+      scheduler::PipelineNode* sink_pipeline =
+          static_cast<scheduler::PipelineNode*>(sink_parent);
+      unsigned sink_depth = pipeline_to_depth[sink_pipeline];
+
+      // If source and sink are in the same pipeline, nothing to do
+      if (source_pipeline == sink_pipeline) continue;
+
+      // If source is at lower depth than sink (outer -> inner)
+      if (source_depth < sink_depth) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "    Correcting outer->inner dependency: Stage "
+                   << source_stage->getStageId() << " (depth " << source_depth
+                   << ") -> Stage " << sink_stage->getStageId() << " (depth "
+                   << sink_depth << ")\n");
+
+        // Walk up from sink to find stage at source's depth
+        scheduler::StageNode* new_sink =
+            findStageAtPipeline(sink_stage, source_pipeline);
+        if (new_sink) {
+          LLVM_DEBUG(llvm::dbgs() << "      Redirected to Stage "
+                                  << new_sink->getStageId() << "\n");
+          source_stage->replaceDependency(sink_stage, new_sink);
+        }
+      }
+      // If source is at higher depth than sink (inner -> outer)
+      else if (source_depth > sink_depth) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "    Correcting inner->outer dependency: Stage "
+                   << source_stage->getStageId() << " (depth " << source_depth
+                   << ") -> Stage " << sink_stage->getStageId() << " (depth "
+                   << sink_depth << ")\n");
+
+        // Walk up from source to find stage at sink's depth
+        scheduler::StageNode* new_source =
+            findStageAtPipeline(source_stage, sink_pipeline);
+        if (new_source) {
+          LLVM_DEBUG(llvm::dbgs() << "      Moved dependency to Stage "
+                                  << new_source->getStageId() << "\n");
+
+          // Add dependency to new source (if not already present)
+          const llvm::SmallVector<scheduler::StageNode*>& new_source_deps =
+              new_source->getDependencies();
+
+          bool already_has_dep = false;
+          for (scheduler::StageNode* existing_dep : new_source_deps) {
+            if (existing_dep == sink_stage) {
+              already_has_dep = true;
+              break;
+            }
+          }
+
+          if (!already_has_dep) {
+            new_source->addDependency(sink_stage);
+          }
+
+          // Mark dependency for removal by nullifying it
+          source_stage->nullifyDependency(sink_stage);
+        }
+      }
+    }
+
+    // Remove all nullified dependencies
+    source_stage->removeNullifiedDependencies();
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "  Stage dependency correction complete.\n");
+}
+
+//===----------------------------------------------------------------------===//
+// Step 3: Generate Transformed IR from PipelineTree
+//===----------------------------------------------------------------------===//
+
+void StageCoarseningPass::GenerateTransformedIR(
+    TransformCandidate& candidate, scheduler::PipelineTree& tree,
+    llvm::ArrayRef<const ktdf::BufferExpansionInfo*> expansion_infos) {
+  LLVM_DEBUG(llvm::dbgs() << "\n--- Step 3: Generate Transformed IR ---\n");
+
+  // Get the outer pipeline node from the tree
+  scheduler::PipelineTreeNode* outer_pipeline =
+      tree.getNodeForOp(candidate.pipeline_.getOperation());
+  assert(outer_pipeline);
+  assert(outer_pipeline->isPipelineNode());
+
+  // Create a builder at the location of the root (ie right before outermost
+  // loop in the original candidate loop nest)
+  Operation* root = candidate.loop_nest_.front();
+  OpBuilder builder(root);
+
+  // Create an IRMapping to track value mappings during cloning
+  IRMapping value_map;
+
+  // Create buffer cloner if we have buffers to expand
+  ktdf::BufferCloner* buffer_cloner = nullptr;
+  std::optional<ktdf::StageCoarseningBufferCloner> cloner_storage;
+  if (!expansion_infos.empty()) {
+    LLVM_DEBUG({
+      llvm::dbgs() << "  Creating buffer cloner for " << expansion_infos.size()
+                   << " buffer(s)\n";
+    });
+    cloner_storage.emplace(expansion_infos);
+    buffer_cloner = &cloner_storage.value();
+  }
+
+  // Use the stage-coarsening materializer to generate IR from the tree
+  ktdf::StageCoarseningMaterializer materializer(builder, value_map,
+                                                 buffer_cloner);
+  Operation* new_outer_pipeline = materializer.materialize(*outer_pipeline);
+
+  // Erase the original candidate loop nest and all the old ops under it
+  root->erase();
+
+  DEBUG_WITH_TYPE(VerboseDebug, {
+    llvm::dbgs() << "IR after materialization:\n";
+    new_outer_pipeline->dump();
+  });
+
+  auto new_outer_pipeline_op = dyn_cast<ktdf::PipelineOp>(new_outer_pipeline);
+  if (!new_outer_pipeline_op) {
+    return;
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "\n--- Cleaning Up Private Ops ---\n");
+  if (failed(scheduler::cleanupPrivateOpsInPipeline(new_outer_pipeline_op))) {
+    return;
+  }
+
+  DEBUG_WITH_TYPE(VerboseDebug, {
+    llvm::dbgs() << "IR after private cleanup:\n";
+    new_outer_pipeline->dump();
+  });
+
+  // Fix scoping of private results that are only used in inner pipelines
+  LLVM_DEBUG(llvm::dbgs() << "\n--- Fixing Private Result Scoping ---\n");
+  ktdf::ScopeCorrection scope_corrector(builder, new_outer_pipeline);
+  scope_corrector.run();
+
+  DEBUG_WITH_TYPE(VerboseDebug, {
+    llvm::dbgs() << "IR after private scoping correction:\n";
+    new_outer_pipeline->dump();
+  });
+
+  LLVM_DEBUG(llvm::dbgs() << "  IR generation complete.\n");
+}
+
+}  // namespace
+
+auto mlir::ktdf::createStageCoarseningPass() -> std::unique_ptr<Pass> {
+  return std::make_unique<StageCoarseningPass>();
+}

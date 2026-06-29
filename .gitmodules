@@ -1,0 +1,7 @@
+[submodule "external/ktir-mlir-frontend"]
+	path = external/ktir-mlir-frontend
+	url = https://github.com/KFAFSP/ktir-mlir-frontend.git
+	branch = kfaf/subproject
+[submodule "external/dataflow-scheduler-dialects"]
+	path = external/dataflow-scheduler-dialects
+	url = https://github.com/torch-spyre/dataflow-scheduler-mlir-dialects.git

@@ -1,0 +1,14 @@
+add_dataflow_scheduler_library(DataflowSchedulerConversionUtils
+    Utils.cpp
+
+  ADDITIONAL_HEADER_DIRS
+    ${DataflowScheduler_SOURCE_DIR}/include/dataflow-scheduler/Conversion/Utils
+
+  GROUP CONVERSION
+  EXPORT_NAME ConversionUtils
+
+  LINK_LIBS PUBLIC
+    DataflowSchedulerDialects::DataflowDialect
+    DataflowSchedulerDialects::KTDFDialect
+    DataflowSchedulerDialects::UniformDialect
+)

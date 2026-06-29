@@ -1,0 +1,565 @@
+//===----------------------------------------------------------------------===//
+//
+// Part of the Dataflow Scheduler project.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+//
+// ScalarBroadcastLegalization: legalize scalar broadcast inputs to linalg ops.
+//
+// See docs/superpowers/specs/2026-05-30-scalar-broadcast-legalization-design.md
+//
+//===----------------------------------------------------------------------===//
+
+#include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/TypeSwitch.h>
+#include <llvm/Support/LogicalResult.h>
+#include <mlir/IR/Attributes.h>
+#include <mlir/Support/WalkResult.h>
+
+#include <memory>
+
+#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDF/Analysis/DataPath.h"
+#include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Links.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
+#include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/SchedulerExtContext.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/AffineMap.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/Pass/Pass.h"
+
+using namespace scheduler;
+using ResourceType = mlir::Attribute;
+
+namespace scheduler {
+#define GEN_PASS_DEF_SCALARBROADCASTLEGALIZATIONPASS
+#include "dataflow-scheduler/Transforms/Passes.h.inc"
+}  // namespace scheduler
+
+namespace {
+
+[[nodiscard]]
+auto getResourceKind(mlir::Type type, bool is_source) -> mlir::Attribute {
+  return llvm::TypeSwitch<mlir::Type, mlir::Attribute>(type)
+      .Case([&](mlir::ktdf::FifoSlotType type) -> mlir::Attribute {
+        return is_source ? type.getDest() : type.getSrc();
+      })
+      .Case([&](mlir::MemRefType type) -> mlir::Attribute {
+        return type.getMemorySpace();
+      })
+      .Default(nullptr);
+}
+
+[[nodiscard]]
+auto getResourceKind(mlir::ktdf::StageOp stage) -> mlir::Attribute {
+  if (const auto maybe_units = stage.getApplicableUnits();
+      maybe_units && maybe_units->size() == 1) {
+    return maybe_units->getValue().front();
+  }
+
+  return nullptr;
+}
+
+[[nodiscard]]
+auto getResourceKind(mlir::Value value, bool is_source) -> mlir::Attribute {
+  // Try to get the space from the type of the value.
+  if (const auto kind = getResourceKind(value.getType(), is_source); kind) {
+    return kind;
+  }
+
+  // Infer the space from the stage transfer units.
+  if (auto stage =
+          value.getDefiningOp()->getParentOfType<mlir::ktdf::StageOp>();
+      stage) {
+    if (const auto kind = getResourceKind(stage); kind) {
+      return kind;
+    }
+  }
+
+  return nullptr;
+}
+
+}  // namespace
+
+namespace {
+
+struct Hop {
+  mlir::ktdf::DataTransferOp transfer;
+  mlir::ktdf_arch::Resource from;
+  mlir::ktdf_arch::Resource to;
+  mlir::ktdf_arch::Link via;
+};
+
+auto getHop(const arch_view::ResourceKinds& resource_kinds,
+            mlir::ktdf::DataTransferOp transfer,
+            llvm::SmallVectorImpl<Hop>& hops) -> llvm::LogicalResult {
+  // Find the source and target resources.
+  auto source_kind = getResourceKind(transfer.getSource(), true);
+  auto target_kind = getResourceKind(transfer.getDestination(), false);
+  if (!source_kind || !target_kind) {
+    return llvm::failure();
+  }
+  auto source = resource_kinds.getResource(source_kind);
+  auto target = resource_kinds.getResource(target_kind);
+  if (!source || !target) {
+    return llvm::failure();
+  }
+
+  // Find the load_store unit, if any.
+  mlir::ktdf_arch::Resource load_store;
+  if (auto stage = transfer->getParentOfType<mlir::ktdf::StageOp>(); stage) {
+    if (const auto kind = getResourceKind(stage); kind) {
+      load_store = resource_kinds.getResource(kind);
+    }
+  }
+
+  if (!load_store || source == load_store || target == load_store) {
+    // There must be an unambiguous direct link.
+    const auto link = mlir::ktdf_arch::getLink(source, target);
+    if (!link) {
+      return llvm::failure();
+    }
+
+    hops.emplace_back(Hop{transfer, source, target, link});
+    return llvm::success();
+  }
+
+  // There must be two unambiguous direct links.
+  auto incoming = mlir::ktdf_arch::getLink(source, load_store);
+  auto outgoing = mlir::ktdf_arch::getLink(load_store, target);
+  if (!incoming || !outgoing) {
+    return llvm::failure();
+  }
+  hops.emplace_back(Hop{transfer, load_store, target, outgoing});
+  hops.emplace_back(Hop{transfer, source, load_store, incoming});
+  return llvm::success();
+}
+
+[[nodiscard]]
+auto unwrap(mlir::Value value) -> mlir::Value {
+  do {
+    auto definition = llvm::dyn_cast<mlir::OpResult>(value);
+
+    // Step through ktdf.read_from_fifo.
+    if (auto read = llvm::dyn_cast_if_present<mlir::ktdf::ReadFromFifoOp>(
+            definition.getOwner());
+        read) {
+      value = read.getFifoSlot();
+      continue;
+    }
+
+    // Step through ktdf.private.
+    if (auto priv = llvm::dyn_cast_if_present<mlir::ktdf::PrivateOp>(
+            definition.getOwner());
+        priv) {
+      value = llvm::cast<mlir::ktdf::PrivateYieldOp>(
+                  priv.getBody()->getTerminator())
+                  ->getOperand(definition.getResultNumber());
+      continue;
+    }
+
+    // TODO(kfaf): Do we need to chase down more block arguments? Do we want to
+    //             reject code that does not end in an allocation?
+  } while (false);
+
+  return value;
+}
+
+auto getHop(const arch_view::ResourceKinds& resource_kinds, mlir::Value value,
+            bool is_load, llvm::SmallVectorImpl<Hop>& hops)
+    -> llvm::FailureOr<mlir::Value> {
+  // Find the single ktdf.data_transfer targeting the value.
+  mlir::ktdf::DataTransferOp transfer;
+  for (auto* user : value.getUsers()) {
+    auto candidate = llvm::dyn_cast<mlir::ktdf::DataTransferOp>(user);
+    if (!candidate) {
+      continue;
+    }
+
+    if (is_load) {
+      if (candidate.getDestination() != value) {
+        continue;
+      }
+    } else {
+      if (candidate.getSource() != value) {
+        continue;
+      }
+    }
+
+    if (transfer) {
+      auto diag = candidate->emitWarning("multiple transfers for ") << value;
+      diag.attachNote(transfer->getLoc()) << "previous transfer is here";
+      return diag;
+    }
+    transfer = candidate;
+  }
+
+  if (!transfer) {
+    return value;
+  }
+
+  if (failed(getHop(resource_kinds, transfer, hops))) {
+    return llvm::failure();
+  }
+
+  if (is_load) {
+    return transfer.getSource();
+  }
+
+  return transfer.getDestination();
+}
+
+auto getHops(const arch_view::ResourceKinds& resource_kinds, mlir::Value value,
+             bool is_load, llvm::SmallVectorImpl<Hop>& result)
+    -> llvm::LogicalResult {
+  if (auto read = value.getDefiningOp<mlir::ktdf::ReadFromFifoOp>(); read) {
+    value = read.getFifoSlot();
+  }
+
+  while (true) {
+    const auto next = getHop(resource_kinds, value, is_load, result);
+    if (llvm::failed(next)) {
+      return llvm::failure();
+    }
+
+    if (next == value) {
+      break;
+    }
+
+    value = *next;
+  }
+
+  return llvm::success();
+}
+
+[[nodiscard]]
+auto tryGetSizeInBits(mlir::Type type) -> std::optional<unsigned> {
+  return llvm::TypeSwitch<mlir::Type, std::optional<unsigned>>(type)
+      .Case([](mlir::IntegerType type) -> unsigned { return type.getWidth(); })
+      .Case([](mlir::FloatType type) -> unsigned { return type.getWidth(); })
+      .Case([](mlir::VectorType type) -> std::optional<unsigned> {
+        if (!type.hasStaticShape()) {
+          return std::nullopt;
+        }
+
+        return type.getNumElements() * type.getElementTypeBitWidth();
+      })
+      .Default(std::nullopt);
+}
+
+[[nodiscard]]
+auto tryGetSizeInBytes(mlir::Type type) -> std::optional<unsigned> {
+  if (const auto maybe_bits = tryGetSizeInBits(type); maybe_bits) {
+    return (*maybe_bits + 7) / 8;
+  }
+
+  return std::nullopt;
+}
+
+}  // namespace
+
+namespace {
+
+struct BroadcastLegalizationSite {
+  mlir::linalg::GenericOp generic_op;
+  unsigned operand_index;
+  llvm::SmallVector<Hop> hops;
+  int64_t vector_width;
+  mlir::AffineMap new_indexing_map;
+};
+
+static bool isBroadcastOverVectorDim(mlir::AffineMap m) {
+  if (m.getNumResults() == 0) return false;
+  return mlir::isa<mlir::AffineConstantExpr>(
+      m.getResult(m.getNumResults() - 1));
+}
+
+static mlir::LogicalResult collectSites(
+    mlir::ktdf::PipelineOp pipeline, const SchedulerExtContext& scheduler_ctx,
+    llvm::SmallVector<BroadcastLegalizationSite>& sites,
+    arch_view::ResourceKinds& resource_kinds) {
+  mlir::LogicalResult result = mlir::success();
+
+  pipeline.walk([&](mlir::linalg::GenericOp generic_op) {
+    if (mlir::failed(result)) return mlir::WalkResult::interrupt();
+
+    auto stage = generic_op->getParentOfType<mlir::ktdf::StageOp>();
+    if (!stage) return mlir::WalkResult::advance();
+    auto compute_kind = getResourceKind(stage);
+    if (!compute_kind) {
+      return mlir::WalkResult::advance();
+    }
+    auto compute = resource_kinds.getResource(compute_kind);
+    if (!compute) {
+      return mlir::WalkResult::advance();
+    }
+
+    auto inputs = generic_op.getDpsInputs();
+    if (inputs.empty()) return mlir::WalkResult::advance();
+    mlir::Type elem_type =
+        mlir::cast<mlir::RankedTensorType>(inputs[0].getType())
+            .getElementType();
+    int64_t vector_width =
+        compute.getFeature<mlir::ktdf_arch::feature::SIMD>().getLanes(
+            elem_type);
+    const auto maybe_size = tryGetSizeInBytes(elem_type);
+    if (vector_width == 0 || !maybe_size) {
+      generic_op->emitWarning("unsupported vector scalar type ") << elem_type;
+      return mlir::WalkResult::advance();
+    }
+
+    auto indexing_maps = generic_op.getIndexingMapsArray();
+    unsigned num_inputs = generic_op.getNumDpsInputs();
+
+    for (unsigned i = 0; i < num_inputs; ++i) {
+      mlir::AffineMap m = indexing_maps[i];
+      if (!isBroadcastOverVectorDim(m)) continue;
+
+      mlir::Value input = inputs[i];
+      llvm::SmallVector<Hop> hops;
+      if (llvm::failed(getHops(resource_kinds, input, true, hops))) {
+        generic_op.emitWarning() << "scalar broadcast operand " << i
+                                 << " has unexpected path structure — skipping";
+        continue;
+      }
+      std::reverse(hops.begin(), hops.end());
+
+      Hop* load_hop = nullptr;
+      Hop* fifo_hop = nullptr;
+      if (!hops.empty()) {
+        load_hop = &hops.front();
+
+        if (hops.front().via.getFeature<mlir::ktdf_arch::feature::Queue>()) {
+          fifo_hop = &hops.back();
+        }
+      }
+
+      bool needs_legalize = false;
+      if (load_hop) {
+        const auto load_granularity =
+            load_hop->via
+                .getProperty<mlir::ktdf_arch::TransferGranularityAttr>();
+        needs_legalize |=
+            load_granularity && !load_granularity.contains(*maybe_size);
+      }
+      needs_legalize |=
+          !compute.getFeature<mlir::ktdf_arch::feature::SIMD>().canSplat();
+
+      if (!needs_legalize) continue;
+
+      if (fifo_hop) {
+        const auto fifo_granularity =
+            fifo_hop->via
+                .getProperty<mlir::ktdf_arch::TransferGranularityAttr>();
+        if (fifo_granularity && !fifo_granularity.contains(*maybe_size)) {
+          generic_op.emitError()
+              << "transfer unit does not support sub-vector reads; "
+                 "cannot legalize scalar broadcast operand "
+              << i;
+          result = mlir::failure();
+          return mlir::WalkResult::interrupt();
+        }
+      }
+      if (fifo_hop &&
+          !fifo_hop->via.getFeature<mlir::ktdf_arch::feature::SIMD>()
+               .canSplat()) {
+        generic_op.emitError() << "transfer unit does not support splat; "
+                                  "cannot legalize scalar broadcast operand "
+                               << i;
+        result = mlir::failure();
+        return mlir::WalkResult::interrupt();
+      }
+
+      llvm::SmallVector<mlir::AffineExpr> new_results(m.getResults().begin(),
+                                                      m.getResults().end());
+      new_results.back() =
+          mlir::getAffineDimExpr(m.getNumDims() - 1, generic_op.getContext());
+      mlir::AffineMap new_map =
+          mlir::AffineMap::get(m.getNumDims(), m.getNumSymbols(), new_results,
+                               generic_op.getContext());
+
+      sites.push_back({generic_op, i, std::move(hops), vector_width, new_map});
+    }
+    return mlir::WalkResult::advance();
+  });
+
+  return result;
+}
+
+/// Widen the last dimension of the memref alloc backing `private_result`
+/// to `new_last_dim`. Creates a new alloc, replaces all uses, updates the
+/// ktdf.private result type, erases old alloc.
+static mlir::Value widenMemrefAlloc(mlir::Value private_result,
+                                    int64_t new_last_dim,
+                                    mlir::OpBuilder& builder) {
+  auto priv_op = private_result.getDefiningOp<mlir::ktdf::PrivateOp>();
+  assert(priv_op && "private_result must come from ktdf.private");
+  auto result_idx =
+      mlir::cast<mlir::OpResult>(private_result).getResultNumber();
+  mlir::ktdf::PrivateYieldOp yield = priv_op.getYieldOp();
+  mlir::Value alloc_val = yield.getOperand(result_idx);
+  auto alloc_op = alloc_val.getDefiningOp<mlir::memref::AllocOp>();
+  assert(alloc_op && "must trace back to memref.alloc");
+
+  auto orig_type = alloc_op.getType();
+  llvm::SmallVector<int64_t> new_shape(orig_type.getShape());
+  new_shape.back() = new_last_dim;
+  auto new_type = mlir::MemRefType::get(new_shape, orig_type.getElementType(),
+                                        mlir::MemRefLayoutAttrInterface(),
+                                        orig_type.getMemorySpace());
+
+  builder.setInsertionPoint(alloc_op);
+  auto new_alloc =
+      mlir::memref::AllocOp::create(builder, alloc_op.getLoc(), new_type);
+
+  alloc_op.getResult().replaceAllUsesWith(new_alloc.getResult());
+  alloc_op.erase();
+
+  // Update the ktdf.private result type in-place.
+  private_result.setType(new_type);
+
+  return private_result;
+}
+
+/// Apply all mutations for one BroadcastLegalizationSite.
+static void applyTransformation(const BroadcastLegalizationSite& site,
+                                mlir::OpBuilder& builder) {
+  mlir::linalg::GenericOp generic_op = site.generic_op;
+  mlir::Value input = generic_op.getDpsInputs()[site.operand_index];
+
+  // Step 1: Traverse hops source→target.
+  mlir::ktdf::DataTransferOp last_transfer;
+  for (auto hop : site.hops) {
+    // Visit every transfer only once.
+    if (hop.transfer == last_transfer) {
+      continue;
+    }
+    last_transfer = hop.transfer;
+
+    bool is_fifo_hop = !!hop.via.getFeature<mlir::ktdf_arch::feature::Queue>();
+
+    if (!is_fifo_hop) {
+      // Memref hop: widen the alloc and update transfer sizes.
+      widenMemrefAlloc(hop.transfer.getDestination(), site.vector_width,
+                       builder);
+
+      // Update static_dest_sizes last dim.
+      auto dest_sizes_opt = hop.transfer.getStaticDestSizesArray();
+      if (dest_sizes_opt) {
+        llvm::SmallVector<int64_t> new_dest_static(*dest_sizes_opt);
+        new_dest_static.back() = site.vector_width;
+        hop.transfer.setStaticDestSizes(
+            llvm::ArrayRef<int64_t>(new_dest_static));
+      }
+
+      // Update static_source_sizes last dim.
+      auto src_sizes_opt = hop.transfer.getStaticSourceSizesArray();
+      if (src_sizes_opt) {
+        llvm::SmallVector<int64_t> new_src_static(*src_sizes_opt);
+        new_src_static.back() = site.vector_width;
+        hop.transfer.setStaticSourceSizes(
+            llvm::ArrayRef<int64_t>(new_src_static));
+      }
+    } else {
+      // FIFO hop: mark with transfer_mode="splat".
+      hop.transfer->setAttr("transfer_mode", builder.getStringAttr("splat"));
+    }
+  }
+
+  // Step 2: Update read_from_fifo result type + linalg.generic map together.
+  auto read_op = input.getDefiningOp<mlir::ktdf::ReadFromFifoOp>();
+  assert(read_op && "target must be read_from_fifo");
+
+  auto old_result_type =
+      mlir::cast<mlir::RankedTensorType>(read_op.getResult().getType());
+  llvm::SmallVector<int64_t> new_shape(old_result_type.getShape());
+  new_shape.back() = site.vector_width;
+  auto new_result_type =
+      mlir::RankedTensorType::get(new_shape, old_result_type.getElementType());
+
+  builder.setInsertionPoint(read_op);
+  auto new_read = mlir::ktdf::ReadFromFifoOp::create(
+      builder, read_op.getLoc(), new_result_type, read_op.getFifoSlot());
+
+  read_op.getResult().replaceAllUsesWith(new_read.getResult());
+  read_op.erase();
+
+  // Update the linalg.generic indexing map for this operand.
+  auto maps = generic_op.getIndexingMapsArray();
+  maps[site.operand_index] = site.new_indexing_map;
+  generic_op.setIndexingMapsAttr(builder.getAffineMapArrayAttr(maps));
+}
+
+struct ScalarBroadcastLegalizationPass
+    : public impl::ScalarBroadcastLegalizationPassBase<
+          ScalarBroadcastLegalizationPass> {
+  ScalarBroadcastLegalizationPass()
+      : scheduler_ctx_(SchedulerExtContext::dummyContext()) {}
+  explicit ScalarBroadcastLegalizationPass(const SchedulerExtContext& ctx)
+      : scheduler_ctx_(ctx) {}
+
+  void runOnOperation() override {
+    mlir::ModuleOp module = getOperation();
+    llvm::SmallVector<BroadcastLegalizationSite> sites;
+
+    auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();
+    auto* const device = devices.getOrImportDevice();
+    if (!device) {
+      signalPassFailure();
+      return;
+    }
+    auto& resource_kinds = getChildAnalysis<arch_view::ResourceKinds>(**device);
+
+    mlir::LogicalResult status = mlir::success();
+    module.walk([&](mlir::ktdf::PipelineOp pipeline) {
+      if (mlir::failed(status)) return mlir::WalkResult::interrupt();
+      if (mlir::failed(
+              collectSites(pipeline, scheduler_ctx_, sites, resource_kinds)))
+        status = mlir::failure();
+      return mlir::WalkResult::advance();
+    });
+
+    if (mlir::failed(status)) {
+      signalPassFailure();
+      return;
+    }
+
+    // Transformation phase.
+    mlir::OpBuilder builder(&getContext());
+    for (const auto& site : sites) {
+      applyTransformation(site, builder);
+    }
+  }
+
+ private:
+  const SchedulerExtContext& scheduler_ctx_;
+};
+
+}  // namespace
+
+std::unique_ptr<mlir::Pass> scheduler::createScalarBroadcastLegalizationPass() {
+  return std::make_unique<ScalarBroadcastLegalizationPass>();
+}
+
+std::unique_ptr<mlir::Pass> scheduler::createScalarBroadcastLegalizationPass(
+    const SchedulerExtContext& scheduler_ctx) {
+  return std::make_unique<ScalarBroadcastLegalizationPass>(scheduler_ctx);
+}

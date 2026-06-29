@@ -1,0 +1,44 @@
+@PACKAGE_INIT@
+
+find_package(KTIR REQUIRED 
+  HINTS ${CMAKE_CURRENT_LIST_DIR}/../KTIR
+)
+find_package(DataflowSchedulerDialects REQUIRED 
+  HINTS ${CMAKE_CURRENT_LIST_DIR}/../DataflowSchedulerDialects
+)
+
+#
+# Exported targets
+#
+
+include("${CMAKE_CURRENT_LIST_DIR}/@PROJECT_NAME@Targets.cmake")
+
+#
+# Umbrella targets
+#
+
+if(NOT TARGET dataflow-scheduler-capi)
+  add_custom_target(dataflow-scheduler-capi)
+endif()
+if(NOT TARGET dataflow-scheduler-doc)
+  add_custom_target(dataflow-scheduler-doc)
+endif()
+if(NOT TARGET dataflow-scheduler-headers)
+  add_custom_target(dataflow-scheduler-headers)
+endif()
+
+#
+# Exported variables
+#
+
+set(DataflowScheduler_ENABLE_PYTHON_BINDINGS @DataflowScheduler_ENABLE_PYTHON_BINDINGS@)
+
+set(DataflowScheduler_INCLUDE_DIRS "${PACKAGE_PREFIX_DIR}/include")
+
+set_property(GLOBAL PROPERTY DataflowScheduler_DIALECT_LIBS "@DataflowScheduler_DIALECT_LIBS@")
+set_property(GLOBAL PROPERTY DataflowScheduler_CONVERSION_LIBS "@DataflowScheduler_CONVERSION_LIBS@")
+set_property(GLOBAL PROPERTY DataflowScheduler_EXTENSION_LIBS "@DataflowScheduler_EXTENSION_LIBS@")
+set_property(GLOBAL PROPERTY DataflowScheduler_TRANSLATION_LIBS "@DataflowScheduler_TRANSLATION_LIBS@")
+
+check_required_components(@PROJECT_NAME@)
+
