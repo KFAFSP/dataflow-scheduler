@@ -24,13 +24,12 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFTransforms
     DataflowSchedulerDialects::KTDFArchAnalysis
     DataflowScheduler::KTDFUtils
     DataflowScheduler::TransformUtils
-)
 
-mlir_target_link_libraries(DataflowSchedulerKTDFTransforms PUBLIC
-  MLIRAffineDialect
-  MLIRArithDialect
-  MLIRIR
-  MLIRMemRefDialect
-  MLIRPass
-  MLIRSCFDialect
+  LINK_MLIR_LIBS
+    MLIRAffineDialect
+    MLIRArithDialect
+    MLIRIR
+    MLIRMemRefDialect
+    MLIRPass
+    MLIRSCFDialect
 )

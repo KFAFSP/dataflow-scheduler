@@ -36,12 +36,11 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     DataflowScheduler::KTDFUtils
     DataflowScheduler::TransformUtils
     DataflowScheduler::Utils
-)
 
-mlir_target_link_libraries(DataflowSchedulerTransforms PUBLIC
-  MLIRIR
-  MLIRArithDialect
-  MLIRMathDialect
-  MLIRPass
-  MLIRTransformUtils
+  LINK_MLIR_LIBS
+    MLIRIR
+    MLIRArithDialect
+    MLIRMathDialect
+    MLIRPass
+    MLIRTransformUtils
 )

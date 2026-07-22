@@ -9,10 +9,9 @@ add_dataflow_scheduler_library(DataflowSchedulerSplitDFIROutput
     
   LINK_LIBS PUBLIC  
     DataflowSchedulerDialects::DataflowDialect
-)
 
-mlir_target_link_libraries(DataflowSchedulerSplitDFIROutput PUBLIC
-  MLIRFuncDialect
-  MLIRIR
-  MLIRPass
+  LINK_MLIR_LIBS
+    MLIRFuncDialect
+    MLIRIR
+    MLIRPass
 )

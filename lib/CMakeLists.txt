@@ -64,12 +64,11 @@ add_dataflow_scheduler_library(DataflowSchedulerRegisterEverything
     ${scheduler_dialect_libs}
     ${scheduler_extension_libs}
     ${scheduler_conversion_libs}
-)
 
-mlir_target_link_libraries(DataflowSchedulerRegisterEverything PUBLIC
-  ${mlir_dialect_libs}
-  ${mlir_extension_libs}
-  ${mlir_conversion_libs}
+  LINK_MLIR_LIBS
+    ${mlir_dialect_libs}
+    ${mlir_extension_libs}
+    ${mlir_conversion_libs}
 )
 
 #-------------------------------------------------------------------------------
@@ -84,5 +83,5 @@ add_dataflow_scheduler_library(DataflowSchedulerPipeline
   PARTIAL_SOURCES_INTENDED
 
   LINK_LIBS PUBLIC
-    DataflowSchedulerRegisterEverything
+    DataflowScheduler::RegisterEverything
 )
