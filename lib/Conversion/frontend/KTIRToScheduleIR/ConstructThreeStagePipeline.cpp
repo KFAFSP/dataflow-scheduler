@@ -186,7 +186,6 @@ struct ConstructThreeStagePipelinePass
       llvm::SmallVector<mlir::Value>& indices,
       llvm::SmallVector<int64_t>& strides);
 
-
   // Clean up operations after pipeline creation
   void cleanupOperations();
 
@@ -949,7 +948,6 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
     }
   }
 }
-
 
 }  // namespace
 
