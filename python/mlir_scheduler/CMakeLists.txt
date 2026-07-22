@@ -1,3 +1,6 @@
+include_directories(SYSTEM ${DataflowSchedulerDialects_SOURCE_DIR}/include)
+include_directories(SYSTEM ${DataflowSchedulerDialects_BINARY_DIR}/include)
+
 ################################################################################
 # Generate packages and shared library
 ################################################################################
@@ -41,13 +44,6 @@ add_mlir_python_common_capi_library(DataflowSchedulerPythonCAPI
   OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/_mlir_libs"
   DECLARED_SOURCES ${_source_components}
 )
-if(MLIR_LINK_MLIR_DYLIB)
-  get_property(_all_mlir_libs GLOBAL PROPERTY MLIR_ALL_LIBS)
-  set_property(TARGET DataflowSchedulerPythonCAPI APPEND PROPERTY
-    MLIR_AGGREGATE_EXCLUDE_LIBS "${_all_mlir_libs}"
-  )
-  target_link_libraries(DataflowSchedulerPythonCAPI PUBLIC MLIR)
-endif()
 
 add_mlir_python_modules(DataflowSchedulerPythonModules
   ROOT_PREFIX "${PYTHON_PACKAGE_DIR}"

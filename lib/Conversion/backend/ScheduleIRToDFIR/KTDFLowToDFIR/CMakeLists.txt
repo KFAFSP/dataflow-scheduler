@@ -34,13 +34,12 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFLowToDFIR
     DataflowSchedulerDialects::UniformDialect
     DataflowScheduler::Utils
     DataflowSchedulerDialects::VectorChainDialect
-)
 
-mlir_target_link_libraries(DataflowSchedulerKTDFLowToDFIR PUBLIC
-  MLIRArithDialect
-  MLIRFuncDialect
-  MLIRIR
-  MLIRPass
-  MLIRSCFDialect
-  MLIRTransformUtils
+  LINK_MLIR_LIBS
+    MLIRArithDialect
+    MLIRFuncDialect
+    MLIRIR
+    MLIRPass
+    MLIRSCFDialect
+    MLIRTransformUtils
 )
