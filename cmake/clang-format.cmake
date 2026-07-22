@@ -29,15 +29,9 @@ add_custom_target(format-dataflow-scheduler
 
 add_custom_target(check-dataflow-scheduler-format
   COMMENT "Checking clang-format"
-  COMMAND ${CLANG_FORMAT} -style=file
-            --output-replacements-xml
+  COMMAND ${CLANG_FORMAT} -style=file --dry-run -Werror
             ${DataflowScheduler_SOURCE_FILES}
-            | tee ${CMAKE_BINARY_DIR}/check_format_scheduler_file.txt | grep -c "replacement " |
-            tr -d "[:cntrl:]" && echo " replacements necessary"
-    # WARNING: fix to stop with error if there are problems
-    COMMAND ! grep -c "replacement "
-      ${CMAKE_BINARY_DIR}/check_format_scheduler_file.txt > /dev/null
-    COMMENT "Checking scheduler format compliance"
+  COMMENT "Checking scheduler format compliance"
 )
 
 add_dependencies(check-all check-dataflow-scheduler-format)
