@@ -86,7 +86,7 @@ void getNodeAccesses(mlir::ktdf_arch::Node node,
 mlir::LogicalResult scheduler::computeScratchpadConflicts(
     const StageToUnitsMap& stage_to_units,
     const mlir::ktdf::StageDependencyDAG& dag,
-    const arch_view::ResourceKinds& resource_kinds,
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds,
     std::map<std::pair<mlir::Operation*, mlir::Operation*>,
              llvm::SmallVector<scheduler::ResourceType, 2>>& conflicts) {
   LDBG(1) << "Step 3: Compute scratchpad conflicts";
@@ -119,7 +119,7 @@ mlir::LogicalResult scheduler::computeScratchpadConflicts(
         if (!producer_comp_opt.has_value()) continue;
         scheduler::ResourceType producer_comp = producer_comp_opt.value();
         auto producer =
-            resource_kinds.getResource<mlir::ktdf_arch::Node>(producer_comp);
+            resource_kinds.getInstance<mlir::ktdf_arch::Node>(producer_comp);
         if (!producer) {
           return llvm::failure();
         }
@@ -136,7 +136,7 @@ mlir::LogicalResult scheduler::computeScratchpadConflicts(
 
           scheduler::ResourceType consumer_comp = consumer_comp_opt.value();
           auto consumer =
-              resource_kinds.getResource<mlir::ktdf_arch::Node>(consumer_comp);
+              resource_kinds.getInstance<mlir::ktdf_arch::Node>(consumer_comp);
           if (!consumer) {
             return llvm::failure();
           }
