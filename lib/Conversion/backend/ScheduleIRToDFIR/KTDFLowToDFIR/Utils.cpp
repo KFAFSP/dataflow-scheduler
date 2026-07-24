@@ -21,12 +21,10 @@
 #include "Ktdp/KtdpOps.hpp"
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
-#include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -55,8 +53,12 @@ scheduler::getEnclosingProgramUnitResourceType(mlir::Operation* op) {
 }
 
 mlir::VectorType scheduler::getFlattenedVectorType(
-    mlir::Type type, arch_view::ResourceKinds& resource_kinds) {
+    mlir::Type type, mlir::ktdf_arch::Resource compute) {
   // FIXME: Get this info from somewhere else.
+
+  if (!compute) {
+    return nullptr;
+  }
 
   if (auto tensor_type = mlir::dyn_cast<mlir::RankedTensorType>(type)) {
     int64_t total_elements = 1;
@@ -65,14 +67,10 @@ mlir::VectorType scheduler::getFlattenedVectorType(
     }
 
     auto elem_type = tensor_type.getElementType();
-    const auto compute_kind = resource_kinds.getComputeKind();
-    if (!compute_kind) {
-      return nullptr;
-    }
-    const auto max_vector_length = std::max(
-        resource_kinds.getFeature<mlir::ktdf_arch::feature::SIMD>(compute_kind)
-            .getLanes(elem_type),
-        int64_t(1));
+    const auto max_vector_length =
+        std::max(compute.getFeature<mlir::ktdf_arch::feature::SIMD>().getLanes(
+                     elem_type),
+                 int64_t(1));
 
     assert(total_elements <= max_vector_length &&
            "Flattened tensor size exceeds maximum vector length");

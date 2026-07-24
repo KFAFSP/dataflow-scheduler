@@ -115,8 +115,9 @@ struct LowerLinalgGenericPattern
   mlir::LogicalResult lowerMulFOp(mlir::arith::MulFOp mulf_op,
                                   mlir::PatternRewriter& rewriter,
                                   mlir::AffineMap identity_map) const {
-    auto vector_type =
-        getFlattenedVectorType(mulf_op.getLhs().getType(), resource_kinds_);
+    auto vector_type = getFlattenedVectorType(
+        mulf_op.getLhs().getType(),
+        resource_kinds_.getResource(resource_kinds_.getComputeKind()));
     if (!vector_type) return mlir::failure();
 
     auto binary_op = mlir::vectorchain::BinaryOp::create(
@@ -133,8 +134,9 @@ struct LowerLinalgGenericPattern
   mlir::LogicalResult lowerAddFOp(mlir::arith::AddFOp addf_op,
                                   mlir::PatternRewriter& rewriter,
                                   mlir::AffineMap identity_map) const {
-    auto vector_type =
-        getFlattenedVectorType(addf_op.getLhs().getType(), resource_kinds_);
+    auto vector_type = getFlattenedVectorType(
+        addf_op.getLhs().getType(),
+        resource_kinds_.getResource(resource_kinds_.getComputeKind()));
     if (!vector_type) return mlir::failure();
 
     auto binary_op = mlir::vectorchain::BinaryOp::create(
@@ -151,8 +153,9 @@ struct LowerLinalgGenericPattern
   mlir::LogicalResult lowerSubFOp(mlir::arith::SubFOp subf_op,
                                   mlir::PatternRewriter& rewriter,
                                   mlir::AffineMap identity_map) const {
-    auto vector_type =
-        getFlattenedVectorType(subf_op.getLhs().getType(), resource_kinds_);
+    auto vector_type = getFlattenedVectorType(
+        subf_op.getLhs().getType(),
+        resource_kinds_.getResource(resource_kinds_.getComputeKind()));
     if (!vector_type) return mlir::failure();
 
     auto binary_op = mlir::vectorchain::BinaryOp::create(

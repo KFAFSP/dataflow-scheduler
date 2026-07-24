@@ -19,11 +19,13 @@
 #ifndef DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_UTILS_H_
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_UTILS_H_
 
+#include <mlir/IR/PatternMatch.h>
+
 #include <optional>
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/UnitTypeDiscovery.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchInterfaces.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -53,8 +55,8 @@ std::optional<scheduler::ResourceType> getEnclosingProgramUnitResourceType(
 
 /// Helper to get flattened vector type from tensor or vector type.
 /// Returns nullptr if the type is neither a RankedTensorType nor VectorType.
-mlir::VectorType getFlattenedVectorType(
-    mlir::Type type, arch_view::ResourceKinds& resource_kinds);
+mlir::VectorType getFlattenedVectorType(mlir::Type type,
+                                        mlir::ktdf_arch::Resource compute);
 
 /// Match units by core ID between program_unit operands and target units,
 /// create a def_immutable_mapping + query_map, and return the query result.

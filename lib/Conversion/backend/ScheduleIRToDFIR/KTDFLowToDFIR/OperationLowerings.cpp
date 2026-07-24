@@ -73,7 +73,9 @@ struct LowerReadFromFifoPattern
     auto result_type = llvm::cast<mlir::RankedTensorType>(read_op.getType());
 
     // Convert tensor to flattened vector type
-    auto vector_type = getFlattenedVectorType(result_type, resource_kinds_);
+    auto vector_type = getFlattenedVectorType(
+        result_type,
+        resource_kinds_.getResource(resource_kinds_.getComputeKind()));
     if (!vector_type) {
       return mlir::failure();
     }
@@ -128,8 +130,9 @@ struct LowerWriteToFifoPattern
         llvm::cast<mlir::ktdf::FifoSlotType>(write_op.getFifoSlot().getType());
 
     // Convert data type (tensor or vector) to flattened vector type
-    auto vector_type =
-        getFlattenedVectorType(write_op.getData().getType(), resource_kinds_);
+    auto vector_type = getFlattenedVectorType(
+        write_op.getData().getType(),
+        resource_kinds_.getResource(resource_kinds_.getComputeKind()));
     if (!vector_type) {
       return mlir::failure();
     }
