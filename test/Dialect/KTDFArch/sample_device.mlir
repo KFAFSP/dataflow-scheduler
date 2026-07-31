@@ -40,6 +40,11 @@
   }
 }
 
+#SFU_REG = {
+  kind = "SFU_REG",
+  size = 2048 //2KB
+}
+
 #L1LU = {
   kind = "L1LU",
   load_store,
@@ -86,7 +91,11 @@ ktdf_arch.device @sample_device {
     // First sub-core.
     group  share(%l1) {
       // Compute units.
-      %sfu = exec_unit #SFU
+      %sfu = group { kind = "SFU" } share() {
+         %sfp_reg = memory #SFU_REG
+         %sfp_unit = exec_unit #SFU
+         yield %sfp_unit
+      } -> exec_unit
 
       // L1 Load/Store units.
       %l1lu = exec_unit #L1LU
@@ -102,7 +111,11 @@ ktdf_arch.device @sample_device {
     // Second sub-core.
     group  share(%l1) {
       // Compute units.
-      %sfu = exec_unit #SFU
+      %sfu = group { kind = "SFU" } share() {
+         %sfp_reg = memory #SFU_REG
+         %sfp_unit = exec_unit #SFU
+         yield %sfp_unit
+      } -> exec_unit
 
       // L1 Load/Store units.
       %l1lu = exec_unit #L1LU

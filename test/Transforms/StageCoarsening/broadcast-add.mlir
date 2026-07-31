@@ -3,7 +3,6 @@
 // C[M][N] = A[N] + B[M][N]
 // The main point of this test is to make sure buffer expansion is performed correctly for the broadcast load of A (ie L1 buffer for A expanded only in the N dim)
 
-// XFAIL: *
 // RUN: dataflow-scheduler-opt --stage-coarsening --canonicalize %s | FileCheck %s
 
 

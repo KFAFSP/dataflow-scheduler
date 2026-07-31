@@ -95,9 +95,16 @@ void processRegion(mlir::Region& region, DeviceInitContext& ctx);
 void processGroupOp(mlir::ktdf_arch::GroupOp group_op, DeviceInitContext& ctx) {
   auto group_kind = group_op.getKind();
 
-  // Flatten groups: only process first instance of each kind
+  // Flatten groups: only process first instance of each kind.
+  // For skipped (deduplicated) groups, still add nodes for any yielded
+  // exec_unit results so that datapaths referencing them can be resolved.
   if (group_kind && ctx.processed_group_kinds.contains(group_kind)) {
-    return;  // Skip this group, already processed
+    for (auto result : group_op.getResults()) {
+      auto node_id = ctx.graph.addNode(
+          group_kind, RoutingGraph::ResourceNode::ResourceKind::Compute);
+      ctx.value_to_node_id[result] = node_id;
+    }
+    return;
   }
 
   if (group_kind) {

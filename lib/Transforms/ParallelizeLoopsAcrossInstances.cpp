@@ -97,6 +97,20 @@ struct Candidate {
 // Analysis helpers
 //===----------------------------------------------------------------------===//
 
+/// Returns true if @p resource's SSA result is yielded by @p group, meaning
+/// the group acts as a named wrapper around the resource rather than a scope
+/// that encloses it as a peer.
+[[nodiscard]] auto isYieldedBy(mlir::ktdf_arch::Resource resource,
+                               mlir::ktdf_arch::GroupOp group) -> bool {
+  auto* terminator = group.getBody()->getTerminator();
+  auto yield = mlir::dyn_cast<mlir::ktdf_arch::YieldOp>(terminator);
+  if (!yield) {
+    return false;
+  }
+  auto result = resource->getResult(0);
+  return llvm::is_contained(yield.getOperands(), result);
+}
+
 [[nodiscard]] auto findEnclosingGroup(
     llvm::ArrayRef<mlir::Attribute> resources,
     const arch_view::ResourceKinds& resource_kinds)
@@ -114,6 +128,15 @@ struct Candidate {
     auto group = resource->getParentOfType<mlir::ktdf_arch::GroupOp>();
     if (!group) {
       return nullptr;
+    }
+    // If the group simply wraps and re-exports this resource via its yield,
+    // it acts as a named alias rather than a true enclosing scope.  Step past
+    // it so that the LCA search operates at the correct granularity.
+    if (isYieldedBy(resource, group)) {
+      group = group->getParentOfType<mlir::ktdf_arch::GroupOp>();
+      if (!group) {
+        return nullptr;
+      }
     }
     if (!result || group->isAncestor(result)) {
       result = group;
