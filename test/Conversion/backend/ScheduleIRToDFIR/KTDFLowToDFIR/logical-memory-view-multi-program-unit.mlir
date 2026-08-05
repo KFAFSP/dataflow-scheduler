@@ -15,10 +15,15 @@
 // CHECK: #[[$ATTR_3:.+]] = affine_map<(d0) -> (d0)>
 // CHECK: #[[$ATTR_4:.+]] = affine_map<(d0, d1, d2, d3, d4) -> (d0 * 4096 + d1 * 4096 + d2 * 4096 + d3 * 64 + d4)>
 // CHECK: #[[$ATTR_5:.+]] = affine_map<(d0, d1, d2, d3, d4) -> (d0, d1, d2, d3, d4)>
-// CHECK: #[[$ATTR_6:.+]] = affine_map<(d0) -> (0, 0, 0, 0, 0)>
+// The 49152-element transfer below walks its two non-unit outer dims (12 and 64)
+// over the time axis, so ATTR_6 gains a second time dim and ATTR_9 narrows to a
+// single vector. ATTR_10/ATTR_11 are its 2-dim time_order and time_set.
+// CHECK: #[[$ATTR_6:.+]] = affine_map<(d0, d1) -> (d0, 0, 0, d1, 0)>
+// CHECK: #[[$ATTR_10:.+]] = affine_map<(d0, d1) -> (d0, d1)>
 // CHECK: #[[$ATTR_7:.+]] = affine_set<(d0, d1, d2, d3) : (d0 == 0, d1 == 0, d2 == 0, d3 >= 0, -d3 + 63 >= 0)>
 // CHECK: #[[$ATTR_8:.+]] = affine_set<(d0) : (d0 == 0)>
-// CHECK: #[[$ATTR_9:.+]] = affine_set<(d0, d1, d2, d3, d4) : (d0 >= 0, -d0 + 11 >= 0, d1 == 0, d2 == 0, d3 >= 0, -d3 + 63 >= 0, d4 >= 0, -d4 + 63 >= 0)>
+// CHECK: #[[$ATTR_9:.+]] = affine_set<(d0, d1, d2, d3, d4) : (d0 == 0, d1 == 0, d2 == 0, d3 == 0, d4 >= 0, -d4 + 63 >= 0)>
+// CHECK: #[[$ATTR_11:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 11 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK:   module {
 // CHECK:     module {
 // CHECK:     func.func @test() attributes {grid = [2]} {
@@ -82,8 +87,8 @@
 // CHECK-NEXT:           scf.for %[[VAL_9:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
 // CHECK-NEXT:             scf.for %[[VAL_10:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
 // CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_3]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_2]]{{\[}}%[[VAL_9]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[VAL_10]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_11:.*]]:vector<49152xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
+// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_11:.*]]:vector<64xf16>)
+// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_10]], time_set = #[[$ATTR_11]]}
 // CHECK-NEXT:               {
 // CHECK-NEXT:                 agen.yield
 // CHECK-NEXT:               } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
@@ -122,8 +127,8 @@
 // CHECK-NEXT:           scf.for %[[VAL_21:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
 // CHECK-NEXT:             scf.for %[[VAL_22:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
 // CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_7]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_6]]{{\[}}%[[VAL_21]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[VAL_22]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_23:.*]]:vector<49152xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
+// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_23:.*]]:vector<64xf16>)
+// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_10]], time_set = #[[$ATTR_11]]}
 // CHECK-NEXT:               {
 // CHECK-NEXT:                 agen.yield
 // CHECK-NEXT:               } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
@@ -162,8 +167,8 @@
 // CHECK-NEXT:           scf.for %[[VAL_33:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
 // CHECK-NEXT:             scf.for %[[VAL_34:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
 // CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_11]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_10]]{{\[}}%[[VAL_33]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[VAL_34]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_35:.*]]:vector<49152xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
+// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_35:.*]]:vector<64xf16>)
+// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_10]], time_set = #[[$ATTR_11]]}
 // CHECK-NEXT:               {
 // CHECK-NEXT:                 agen.yield
 // CHECK-NEXT:               } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
@@ -202,8 +207,8 @@
 // CHECK-NEXT:           scf.for %[[VAL_45:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
 // CHECK-NEXT:             scf.for %[[VAL_46:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
 // CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_15]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_14]]{{\[}}%[[VAL_45]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[VAL_46]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_47:.*]]:vector<49152xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
+// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_47:.*]]:vector<64xf16>)
+// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_10]], time_set = #[[$ATTR_11]]}
 // CHECK-NEXT:               {
 // CHECK-NEXT:                 agen.yield
 // CHECK-NEXT:               } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
@@ -242,8 +247,8 @@
 // CHECK-NEXT:           scf.for %[[VAL_57:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
 // CHECK-NEXT:             scf.for %[[VAL_58:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
 // CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_19]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_18]]{{\[}}%[[VAL_57]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[VAL_58]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_59:.*]]:vector<49152xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
+// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_59:.*]]:vector<64xf16>)
+// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_10]], time_set = #[[$ATTR_11]]}
 // CHECK-NEXT:               {
 // CHECK-NEXT:                 agen.yield
 // CHECK-NEXT:               } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>

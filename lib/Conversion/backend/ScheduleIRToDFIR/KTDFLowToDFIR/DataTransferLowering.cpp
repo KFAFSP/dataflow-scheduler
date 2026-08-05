@@ -18,6 +18,7 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/DataTransferLowering.h"
 
+#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
@@ -36,15 +37,14 @@ namespace {
 
 /// Helper to build IntegerSet from static size array
 /// Size of 1 corresponds to dk = 0, other sizes n correspond to 0 <= dk <= n-1
-mlir::IntegerSet buildIntegerSetFromSizes(mlir::OpBuilder& builder,
+mlir::IntegerSet buildIntegerSetFromSizes(mlir::MLIRContext* context,
                                           llvm::ArrayRef<int64_t> sizes) {
   if (sizes.empty()) {
-    return mlir::IntegerSet::getEmptySet(0, 0, builder.getContext());
+    return mlir::IntegerSet::getEmptySet(0, 0, context);
   }
 
   llvm::SmallVector<mlir::AffineExpr, 4> exprs;
   llvm::SmallVector<bool, 4> eq_flags;
-  auto* context = builder.getContext();
 
   for (unsigned i = 0; i < sizes.size(); ++i) {
     auto dim = mlir::getAffineDimExpr(i, context);
@@ -94,12 +94,63 @@ mlir::Value insertSplatShuffle(mlir::PatternRewriter& rewriter,
       .getOutput();
 }
 
+/// How one side of a transfer traverses the AGEN time axis: the extent of each
+/// time dimension, slowest-varying first, and the offset added to each memref
+/// index at time step (d0, ..., dn-1). `extents` becomes `time_set`, `offsets`
+/// becomes the results of that side's `*_time_addr_map`.
+struct TransferTimeDims {
+  llvm::SmallVector<int64_t> extents;
+  llvm::SmallVector<mlir::AffineExpr> offsets;  // one per memref dim
+
+  /// A traversal of a memref of `rank` dimensions that walks nothing: no time
+  /// dimensions, zero offset at every index.
+  TransferTimeDims(mlir::MLIRContext* context, size_t rank)
+      : offsets(rank, mlir::getAffineConstantExpr(0, context)) {}
+};
+
+/// Describe how `sizes` is traversed over time. Every non-unit dimension
+/// except the innermost contributes a time dimension stepping by one; the
+/// innermost contributes one stepping by a whole vector, and only when it
+/// holds more than one. With a 64-lane vector:
+///
+///   sizes           extents      offsets           time_set
+///   [1, 256, 64]    [256]        (0, d0, 0)        (d0) : 0 <= d0 <= 255
+///   [1, 1, 128]     [2]          (0, 0, 64 * d0)   (d0) : 0 <= d0 <= 1
+///   [2, 4, 8, 64]   [2, 4, 8]    (d0, d1, d2, 0)   3 dims of those extents
+///   [1, 64]         []           (0, 0)            nothing walked
+///
+/// The last row is a transfer that fits in one vector: the offsets are already
+/// the all-zero map, and the caller supplies the single pinned time step.
+TransferTimeDims describeTransferTimeDims(mlir::MLIRContext* context,
+                                          llvm::ArrayRef<int64_t> sizes,
+                                          int64_t lanes) {
+  TransferTimeDims dims(context, sizes.size());
+  // `extents.size()` is the index of the dimension being added, because
+  // dimensions are appended in the same order they are numbered. That is also
+  // why an identity `time_order` is correct: d0 is the slowest-varying.
+  auto addDim = [&](unsigned pos, int64_t extent, int64_t coeff) {
+    dims.offsets[pos] = mlir::getAffineConstantExpr(coeff, context) *
+                        mlir::getAffineDimExpr(dims.extents.size(), context);
+    dims.extents.push_back(extent);
+  };
+  for (unsigned i = 0; i + 1 < sizes.size(); ++i) {
+    if (sizes[i] != 1) addDim(i, sizes[i], /*coeff=*/1);
+  }
+  if (const int64_t vectors = sizes.back() / lanes; vectors > 1) {
+    addDim(sizes.size() - 1, vectors, /*coeff=*/lanes);
+  }
+  return dims;
+}
+
 /// Pattern to lower ktdf.data_transfer operations
 struct LowerDataTransferPattern
     : public mlir::OpRewritePattern<mlir::ktdf::DataTransferOp> {
   LowerDataTransferPattern(mlir::MLIRContext* context,
-                           const ResourceToUnits& components)
-      : OpRewritePattern(context), components_(components) {}
+                           const ResourceToUnits& components,
+                           arch_view::ResourceKinds& resource_kinds)
+      : OpRewritePattern(context),
+        components_(components),
+        resource_kinds_(resource_kinds) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::ktdf::DataTransferOp data_transfer_op,
@@ -250,8 +301,13 @@ struct LowerDataTransferPattern
 
  private:
   const ResourceToUnits& components_;
+  arch_view::ResourceKinds& resource_kinds_;
 
-  /// Lower as CompositeLoadAndStore
+  /// Lower as CompositeLoadAndStore.
+  ///
+  /// An AGEN composite transfer moves at most one hardware vector per time
+  /// step, so a transfer wider than that has to walk the remaining elements
+  /// over AGEN time dimensions instead of widening `load_iv`.
   mlir::LogicalResult lowerAsLoadAndStore(
       mlir::PatternRewriter& rewriter,
       mlir::ktdf::DataTransferOp data_transfer_op, mlir::Value src_memref,
@@ -260,46 +316,104 @@ struct LowerDataTransferPattern
       llvm::ArrayRef<int64_t> dst_static_sizes, unsigned src_num_dims,
       unsigned dst_num_dims, mlir::VectorType vector_type,
       mlir::AffineMap src_map, mlir::AffineMap dst_map) const {
-    // Build src_load_set from source sizes
-    auto src_load_set = buildIntegerSetFromSizes(rewriter, src_static_sizes);
+    auto* context = rewriter.getContext();
+    const int64_t total = vector_type.getNumElements();
 
-    // Build dst_store_set from destination sizes
-    auto dst_store_set = buildIntegerSetFromSizes(rewriter, dst_static_sizes);
+    const auto lanes =
+        getVectorLanes(vector_type.getElementType(), resource_kinds_);
+    if (!lanes) {
+      data_transfer_op.emitError(
+          "cannot determine the hardware vector width: the architecture "
+          "declares no compute resource kind");
+      return mlir::failure();
+    }
+
+    // Sizes describing the elements covered by one AGEN vector transfer, and
+    // the dimensions (if any) walked over time to cover the rest. Narrowed
+    // below when the request is wider than one hardware vector.
+    llvm::SmallVector<int64_t> load_sizes(src_static_sizes);
+    llvm::SmallVector<int64_t> store_sizes(dst_static_sizes);
+    mlir::VectorType load_iv_type = vector_type;
+    TransferTimeDims src_time_dims(context, src_static_sizes.size());
+    TransferTimeDims dst_time_dims(context, dst_static_sizes.size());
+
+    if (total > *lanes) {
+      if (src_static_sizes.empty() || dst_static_sizes.empty()) {
+        data_transfer_op.emitError()
+            << "data transfer of " << total
+            << " elements exceeds the hardware vector width of " << *lanes
+            << " but has no dimensions to split";
+        return mlir::failure();
+      }
+
+      if (src_static_sizes.back() % *lanes != 0 ||
+          dst_static_sizes.back() % *lanes != 0) {
+        data_transfer_op.emitError()
+            << "data transfer of " << total
+            << " elements exceeds the hardware vector width of " << *lanes
+            << "; splitting requires the innermost source and destination "
+               "sizes to be a multiple of the vector width, but they are "
+            << src_static_sizes.back() << " and " << dst_static_sizes.back();
+        return mlir::failure();
+      }
+
+      src_time_dims =
+          describeTransferTimeDims(context, src_static_sizes, *lanes);
+      dst_time_dims =
+          describeTransferTimeDims(context, dst_static_sizes, *lanes);
+
+      // Only the extents are compared, not positions or coefficients: the
+      // two sides may reach the same walk through different shapes, e.g.
+      // src [2, 64] and dst [1, 128] with 64 lanes both walk 2 steps.
+      if (src_time_dims.extents != dst_time_dims.extents) {
+        data_transfer_op.emitError()
+            << "source and destination walked dimensions must match to "
+               "split a transfer of "
+            << total << " elements across multiple vectors";
+        return mlir::failure();
+      }
+
+      load_iv_type =
+          mlir::VectorType::get({*lanes}, vector_type.getElementType());
+      load_sizes.assign(src_static_sizes.size(), 1);
+      load_sizes.back() = *lanes;
+      store_sizes.assign(dst_static_sizes.size(), 1);
+      store_sizes.back() = *lanes;
+    }
+
+    // Build src_load_set / dst_store_set from the per-vector sizes.
+    auto src_load_set = buildIntegerSetFromSizes(context, load_sizes);
+    auto dst_store_set = buildIntegerSetFromSizes(context, store_sizes);
 
     // load_order and store_order must match their respective set
     // dimensionality.
-    auto load_order = mlir::AffineMap::getMultiDimIdentityMap(
-        src_num_dims, rewriter.getContext());
-    auto store_order = mlir::AffineMap::getMultiDimIdentityMap(
-        dst_num_dims, rewriter.getContext());
+    auto load_order =
+        mlir::AffineMap::getMultiDimIdentityMap(src_num_dims, context);
+    auto store_order =
+        mlir::AffineMap::getMultiDimIdentityMap(dst_num_dims, context);
 
-    // Build time_set: single iteration (d0) : d0=0
-    llvm::SmallVector<mlir::AffineExpr, 1> time_exprs;
-    llvm::SmallVector<bool, 1> time_eq_flags;
-    time_exprs.push_back(mlir::getAffineDimExpr(0, rewriter.getContext()));
-    time_eq_flags.push_back(true);  // equality constraint
-    auto time_set = mlir::IntegerSet::get(1, 0, time_exprs, time_eq_flags);
-
-    // Build time_order: identity map d0->d0
+    // Time dimensions: a single pinned step for a transfer of at most one
+    // vector, one dimension per walked dimension otherwise.
+    llvm::SmallVector<int64_t> time_extents = src_time_dims.extents;
+    if (time_extents.empty()) time_extents.push_back(1);
+    const unsigned num_time_dims = time_extents.size();
+    auto time_set = buildIntegerSetFromSizes(context, time_extents);
+    // time_order: identity. Correct because the walked dimensions above are
+    // listed slowest-varying first, so time dimension 0 is already the
+    // outermost and the last time dimension the innermost/fastest-varying.
     auto time_order =
-        mlir::AffineMap::getMultiDimIdentityMap(1, rewriter.getContext());
-
-    // time_addr_maps are zero-offset maps; result count must match the rank of
-    // the corresponding memref (src for load side, dst for store side).
-    auto makeZeroAddrMap = [&](unsigned rank) {
-      llvm::SmallVector<mlir::AffineExpr> zero_exprs(
-          rank, mlir::getAffineConstantExpr(0, rewriter.getContext()));
-      return mlir::AffineMap::get(1, 0, zero_exprs, rewriter.getContext());
-    };
-    auto load_time_addr_map = makeZeroAddrMap(src_num_dims);
-    auto store_time_addr_map = makeZeroAddrMap(dst_num_dims);
+        mlir::AffineMap::getMultiDimIdentityMap(num_time_dims, context);
+    auto load_addr_map =
+        mlir::AffineMap::get(num_time_dims, 0, src_time_dims.offsets, context);
+    auto store_addr_map =
+        mlir::AffineMap::get(num_time_dims, 0, dst_time_dims.offsets, context);
 
     // Create the CompositeLoadAndStoreOp
     mlir::agen::CompositeLoadAndStoreOp::create(
         rewriter, data_transfer_op.getLoc(), src_memref, dst_memref,
         /*dbgName=*/nullptr, src_map, src_indices, dst_map, dst_indices,
         src_load_set, load_order, dst_store_set, store_order, {}, time_set,
-        time_order, load_time_addr_map, store_time_addr_map, vector_type);
+        time_order, load_addr_map, store_addr_map, load_iv_type);
 
     // Erase the original data_transfer operation
     rewriter.eraseOp(data_transfer_op);
@@ -315,7 +429,8 @@ struct LowerDataTransferPattern
       mlir::ktdf::FifoSlotType dst_fifo_slot_type, bool is_splat,
       int64_t src_total_elements) const {
     // Build load_set from source sizes
-    auto load_set = buildIntegerSetFromSizes(rewriter, src_static_sizes);
+    auto load_set =
+        buildIntegerSetFromSizes(rewriter.getContext(), src_static_sizes);
 
     // Build load_order
     auto load_order = mlir::AffineMap::getMultiDimIdentityMap(
@@ -384,7 +499,8 @@ struct LowerDataTransferPattern
       unsigned num_dims, mlir::VectorType vector_type, mlir::AffineMap dst_map,
       mlir::ktdf::FifoSlotType src_fifo_slot_type) const {
     // Build store_set from destination sizes
-    auto store_set = buildIntegerSetFromSizes(rewriter, dst_static_sizes);
+    auto store_set =
+        buildIntegerSetFromSizes(rewriter.getContext(), dst_static_sizes);
 
     // Build store_order
     auto store_order = mlir::AffineMap::getMultiDimIdentityMap(
@@ -426,6 +542,8 @@ struct LowerDataTransferPattern
 }  // namespace
 
 void scheduler::populateDataTransferLoweringPatterns(
-    mlir::RewritePatternSet& patterns, const ResourceToUnits& components) {
-  patterns.add<LowerDataTransferPattern>(patterns.getContext(), components);
+    mlir::RewritePatternSet& patterns, const ResourceToUnits& components,
+    arch_view::ResourceKinds& resource_kinds) {
+  patterns.add<LowerDataTransferPattern>(patterns.getContext(), components,
+                                         resource_kinds);
 }
