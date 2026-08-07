@@ -20,6 +20,11 @@
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Support/Casting.h>
+#include <llvm/Support/DebugLog.h>
+#include <llvm/Support/raw_ostream.h>
+#include <mlir/IR/Dominance.h>
+#include <mlir/IR/OpDefinition.h>
+#include <mlir/IR/Operation.h>
 #include <mlir/IR/Value.h>
 #include <mlir/IR/ValueRange.h>
 #include <mlir/Interfaces/ControlFlowInterfaces.h>
@@ -28,6 +33,8 @@
 #include <mlir/Pass/AnalysisManager.h>
 
 using namespace scheduler;
+
+#define DEBUG_TYPE "slice-analysis"
 
 namespace {
 
@@ -49,16 +56,33 @@ void visitControlFlow(mlir::RegionBranchOpInterface branch,
     llvm::SmallVector<mlir::RegionSuccessor> successors;
     branch.getSuccessorRegions(branch_point, successors);
     for (auto& successor : successors) {
-      const auto entry_values = successor.getSuccessorInputs();
-      const auto exit_values =
-          branch.getSuccessorOperands(branch_point, successor);
-      for (auto [entry, exit] : llvm::zip_equal(entry_values, exit_values)) {
+      const auto succ = successor.getSuccessorInputs();
+      const auto pred = branch.getSuccessorOperands(branch_point, successor);
+      for (auto [dst, src] : llvm::zip_equal(succ, pred)) {
         auto& cached =
             result
-                .try_emplace(entry,
+                .try_emplace(dst,
                              BackwardSliceAnalysis::Predecessors::exhaustive())
                 .first->getSecond();
-        cached.unite(exit);
+        cached.unite(src);
+      }
+
+      if (successor.isParent()) {
+        continue;
+      }
+
+      // The leading block arguments that aren't forwarded are considered
+      // "produced" by the operation (such as IVs).
+      auto args = successor.getSuccessor()->getArguments();
+      if (!succ.empty()) {
+        assert(mlir::cast<mlir::BlockArgument>(succ.back()).getArgNumber() ==
+               args.size() - 1);
+        args = args.take_front(
+            mlir::cast<mlir::BlockArgument>(succ.front()).getArgNumber());
+      }
+      for (auto arg : args) {
+        result.try_emplace(arg,
+                           BackwardSliceAnalysis::Predecessors::lowerBound());
       }
     }
   }
@@ -78,6 +102,8 @@ void visitControlFlow(mlir::BranchOpInterface branch,
               .first->getSecond();
       if (const auto forwarded = operands[argument.getArgNumber()]; forwarded) {
         cached.unite(forwarded);
+      } else {
+        cached.unite({}, false);
       }
     }
   }
@@ -88,6 +114,8 @@ void visitControlFlow(mlir::BranchOpInterface branch,
 //===----------------------------------------------------------------------===//
 // BackwardSliceAnalysis
 //===----------------------------------------------------------------------===//
+
+BackwardSliceAnalysis::BackwardSliceAnalysis(mlir::Operation* /*op*/) {}
 
 void BackwardSliceAnalysis::getPredecessors(
     mlir::Value value, bool& is_exhaustive,
@@ -100,14 +128,21 @@ void BackwardSliceAnalysis::getPredecessors(
   const auto& control_flow = getControlFlowPredecessors(value);
   is_exhaustive &= control_flow.is_exhaustive_;
   predecessors.insert_range(control_flow.values_);
+
+  LDBG_OS([&](llvm::raw_ostream& os) {
+    os << "getPredecessors(";
+    value.printAsOperand(os, mlir::OpPrintingFlags().skipRegions());
+    os << "): " << (is_exhaustive ? "exhaustive(" : "lowerBound(");
+    llvm::interleaveComma(predecessors, os);
+    os << ")";
+  });
 }
 
 auto BackwardSliceAnalysis::getControlFlowPredecessors(mlir::Value value)
     -> const Predecessors& {
   {
-    // Lookup in cache, emplacing inexact result if none exists.
-    auto [it, inserted] = control_flow_.try_emplace(value);
-    if (!inserted) {
+    const auto it = control_flow_.find(value);
+    if (it != control_flow_.end()) {
       return it->second;
     }
   }
@@ -158,6 +193,8 @@ auto BackwardSliceAnalysis::getControlFlowPredecessors(mlir::Value value)
                iface) {
       // Result is determined by region branch semantics.
       visitControlFlow(iface, control_flow_);
+    } else {
+      return control_flow_[value] = Predecessors::exhaustive();
     }
   }
 
@@ -200,30 +237,72 @@ auto ForwardSlice::insert(mlir::ValueRange values) -> bool {
   return true;
 }
 
+namespace {
+
+[[nodiscard]] auto isVisible(mlir::Region& scope, mlir::Region& from) -> bool {
+  for (auto* region = &from; region != nullptr;
+       region = region->getParentRegion()) {
+    if (region == &scope) {
+      return true;
+    }
+    if (region->getParentOp()->hasTrait<mlir::OpTrait::IsIsolatedFromAbove>()) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+}  // namespace
+
 auto ForwardSlice::contains(mlir::Value value) -> Result {
   if (cache_.empty()) {
     // Short-circuit on the known empty slice.
     return Result::NoContain;
   }
 
-  // Lookup cached result or initialize with MayContain.
-  auto [it, invalid] = cache_.try_emplace(value, Result::MayContain);
+  // Lookup cached result or initialize with NoContain.
+  auto [it, invalid] = cache_.try_emplace(value, Result::NoContain);
   if (!invalid) {
     return it->second;
   }
 
   // Find all predecessors of the value.
-  bool is_exhaustive;
+  auto is_exhaustive = true;
   llvm::SmallPtrSet<mlir::Value, 8U> predecessors;
   backward_.getPredecessors(value, is_exhaustive, predecessors);
 
-  // If the set of predecessors is exhaustive, we may assume that the value is
-  // independent for now. If it is visited in the recursive search (which can
-  // only happen within a graph region, or if we follow block arguments), then
-  // it being part of its own cycle should not be an obstacle to independence.
-  auto result = it->second =
-      is_exhaustive ? Result::NoContain : Result::MayContain;
+  if (!is_exhaustive) {
+    // As we were unable to determine all potential predecessors of the value,
+    // we need to fall back to a more complicated search strategy to get good
+    // results. In particular, we first check if the value can be reached from
+    // the slice instead of the other way around.
+    if (!llvm::any_of(cache_, [&](map_type::value_type& entry) -> bool {
+          if (entry.second == Result::NoContain) {
+            return false;
+          }
 
+          // TODO: Use mlir::DominanceInfo to get a more accurate result.
+          return isVisible(*entry.first.getParentRegion(),
+                           *value.getParentRegion());
+        })) {
+      // No value in the slice reaches the definition of the given value,
+      // therefore it must be independent.
+      return Result::NoContain;
+    }
+
+    // We must assume that the value is in the slice, but we can still refine
+    // the result to MustContain by inspecting the known lower bound.
+    it->second = Result::MayContain;
+  } else {
+    // We may assume that the value is independent for now. If it is visited in
+    // the recursive search (which can only happen within a graph region, or if
+    // we follow block arguments), then it being part of its own cycle does not
+    // make it a member of the slice.
+  }
+
+  // Save the result value because the iterator may be invalidated.
+  auto result = it->second;
   for (auto predecessor : predecessors) {
     switch (contains(predecessor)) {
       case Result::MustContain:
@@ -263,6 +342,9 @@ auto getLoopVariables(mlir::Operation* op) -> llvm::SmallVector<mlir::Value> {
 }  // namespace
 
 LoopSliceAnalysis::LoopSliceAnalysis(mlir::Operation* op,
+                                     BackwardSliceAnalysis& backward)
+    : ForwardSlice(backward, getLoopVariables(op)) {}
+
+LoopSliceAnalysis::LoopSliceAnalysis(mlir::Operation* op,
                                      mlir::AnalysisManager& analyses)
-    : ForwardSlice(analyses.getAnalysis<BackwardSliceAnalysis>(),
-                   getLoopVariables(op)) {}
+    : LoopSliceAnalysis(op, analyses.getAnalysis<BackwardSliceAnalysis>()) {}

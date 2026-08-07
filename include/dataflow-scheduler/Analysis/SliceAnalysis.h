@@ -193,6 +193,8 @@ class ForwardSlice {
 /// If the operation does not implement this interface, the slice is empty.
 class LoopSliceAnalysis : public ForwardSlice {
  public:
+  explicit LoopSliceAnalysis(mlir::Operation* op,
+                             BackwardSliceAnalysis& backward);
   // Allow construction as an MLIR analysis.
   explicit LoopSliceAnalysis(mlir::Operation* op,
                              mlir::AnalysisManager& analyses);
