@@ -18,6 +18,7 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/Reuse.h"
 
+#include "dataflow-scheduler/Analysis/Predecessors.h"
 #include "dataflow-scheduler/Analysis/SliceAnalysis.h"
 #include "dataflow-scheduler/Analysis/WriteSetScan.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/PipelineScope.h"
@@ -41,16 +42,15 @@ bool definedInsideRegion(Value v, Region& region) {
 /// out from the pipeline.
 int findOutermostLegalTargetDepth(::DataTransferOp transfer,
                                   const ::PipelineEnclosingScope& scope) {
-  scheduler::BackwardSliceAnalysis backward;
+  scheduler::PredecessorInfo preds;
 
   int best = -1;
   for (int i = 0; i < static_cast<int>(scope.loops.size()); ++i) {
     scf::ForOp loop = scope.loops[i];
 
-    scheduler::LoopSliceAnalysis loop_slice(loop, backward);
-    if (llvm::any_of(transfer->getOperands(), [&](Value value) {
-          return loop_slice.contains(value) !=
-                 scheduler::ForwardSlice::Result::NoContain;
+    scheduler::LoopSliceAnalysis loop_slice(loop, preds);
+    if (llvm::any_of(transfer->getOperands(), [&](Value value) -> bool {
+          return !loop_slice.contains(value).isNo();
         })) {
       break;
     }

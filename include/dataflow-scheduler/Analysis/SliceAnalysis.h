@@ -39,114 +39,9 @@
 
 #include <optional>
 
+#include "Predecessors.h"
+#include "dataflow-scheduler/Analysis/Predecessors.h"
 namespace scheduler {
-
-/// Implements a backward dataflow SSA slice analysis.
-///
-/// This analysis will (cache and) return all immediate (control flow) SSA value
-/// predecessors for a given input.
-class BackwardSliceAnalysis {
-  using set_type = llvm::SmallPtrSet<mlir::Value, 2>;
-
- public:
-  /// Indicates the set of predecessors of an SSA value.
-  struct Predecessors {
-    /// Initializes an open set (lower bound) of @p values .
-    [[nodiscard]] static auto lowerBound(mlir::ValueRange values = {})
-        -> Predecessors {
-      return Predecessors(false, values);
-    }
-    /// Initializes a closed set (exhaustive) of @p values .
-    [[nodiscard]] static auto exhaustive(mlir::ValueRange values = {})
-        -> Predecessors {
-      return Predecessors(true, values);
-    }
-
-    /// Initializes an empty lower bound.
-    /*implicit*/ Predecessors() = default;
-
-    /// Updates this set to include @p values that are @p is_exhaustive .
-    void unite(mlir::ValueRange values, bool is_exhaustive = true) {
-      is_exhaustive_ &= is_exhaustive;
-      values_.insert_range(values);
-    }
-    /// Updates this set to include @p rhs .
-    void unite(const Predecessors& rhs) {
-      is_exhaustive_ &= rhs.is_exhaustive_;
-      values_.insert_range(rhs.values_);
-    }
-
-    /// Determines whether the set of predecessor values is known to be closed.
-    ///
-    /// If `true`, then there are no predecessors besides those enumerated by
-    /// this container. If `false`, then there were types of control flow that
-    /// could not be followed, possibly due to unregistered operations.
-    [[nodiscard]] auto isExhaustive() const -> bool { return is_exhaustive_; }
-
-    /// Determines whether there are no known and unknown predecessors.
-    [[nodiscard]] auto isKnownEmpty() const -> bool {
-      return isExhaustive() && values_.empty();
-    }
-
-    /// Gets the known predecessor values.
-    [[nodiscard]] auto getValues() const -> const set_type& { return values_; }
-
-    //===------------------------------------------------------------------===//
-    // Container interface
-    //===------------------------------------------------------------------===//
-
-    using value_type = set_type::value_type;
-    using size_type = set_type::size_type;
-    using iterator = set_type::const_iterator;
-
-    [[nodiscard]] auto empty() const -> bool { return values_.empty(); }
-    [[nodiscard]] auto size() const -> size_type { return values_.size(); }
-
-    [[nodiscard]] auto begin() const -> iterator { return values_.begin(); }
-    [[nodiscard]] auto end() const -> iterator { return values_.end(); }
-
-   private:
-    friend class BackwardSliceAnalysis;
-
-    explicit Predecessors(bool is_exhaustive, mlir::ValueRange values)
-        : is_exhaustive_(is_exhaustive), values_(llvm::from_range, values) {}
-
-    bool is_exhaustive_ = false;
-    set_type values_;
-  };
-
-  using key_type = mlir::Value;
-  using mapped_type = Predecessors;
-  using map_type = llvm::DenseMap<key_type, mapped_type>;
-
-  // Allow construction as an MLIR analysis.
-  explicit BackwardSliceAnalysis(mlir::Operation* /*op*/ = nullptr);
-
-  /// Gets the immediate @p predecessors of @p value .
-  ///
-  /// @param            value         Value to query the predecessors of.
-  /// @param  [in,out]  is_exhaustive Whether the result is exhaustive.
-  /// @param  [out]     predecessors  Set of predecessors.
-  void getPredecessors(mlir::Value value, bool& is_exhaustive,
-                       llvm::SmallPtrSetImpl<mlir::Value>& predecessors);
-  /// Gets the immediate @p predecessors of @p value .
-  void getPredecessors(mlir::Value value, Predecessors& predecessors) {
-    getPredecessors(value, predecessors.is_exhaustive_, predecessors.values_);
-  }
-  /// Gets the immediate predecessors of @p value .
-  [[nodiscard]] auto getPredecessors(mlir::Value value) -> Predecessors {
-    Predecessors result;
-    getPredecessors(value, result);
-    return result;
-  }
-
-  /// Gets the immediate control flow predecessors of @p value .
-  [[nodiscard]] auto getControlFlowPredecessors(mlir::Value value)
-      -> const Predecessors&;
-
- private:
-  map_type control_flow_;
-};
 
 /// Base class for implementing a forward slice analysis.
 ///
@@ -154,23 +49,12 @@ class BackwardSliceAnalysis {
 /// dataflow starting with an initial set of values.
 class ForwardSlice {
  public:
-  /// Result of a slice membership check.
-  enum class Result : char {
-    /// Value is not in the slice.
-    NoContain = 0,
-    /// Value might be in the slice (lower bound).
-    MayContain = 0b01,
-    /// Value must be in the slice (upper bound).
-    MustContain = 0b11,
-  };
-
   using key_type = mlir::Value;
-  using mapped_type = Result;
+  using mapped_type = MembershipResult;
   using map_type = llvm::DenseMap<key_type, mapped_type>;
 
-  /// Initializes a ForwardSlice using @p backward and the initial @p values .
-  explicit ForwardSlice(BackwardSliceAnalysis& backward,
-                        mlir::ValueRange values);
+  /// Initializes a ForwardSlice using @p preds and the initial @p values .
+  explicit ForwardSlice(PredecessorInfo& preds, mlir::ValueRange values);
 
   /// Inserts additional @p values into the slice.
   ///
@@ -179,10 +63,10 @@ class ForwardSlice {
   auto insert(mlir::ValueRange values) -> bool;
 
   /// Determines whether @p value is in the slice.
-  auto contains(mlir::Value value) -> Result;
+  auto contains(mlir::Value value) -> MembershipResult;
 
  private:
-  BackwardSliceAnalysis& backward_;
+  PredecessorInfo& preds_;
   map_type cache_;
 };
 
@@ -193,17 +77,11 @@ class ForwardSlice {
 /// If the operation does not implement this interface, the slice is empty.
 class LoopSliceAnalysis : public ForwardSlice {
  public:
-  explicit LoopSliceAnalysis(mlir::Operation* op,
-                             BackwardSliceAnalysis& backward);
+  explicit LoopSliceAnalysis(mlir::Operation* op, PredecessorInfo& preds);
   // Allow construction as an MLIR analysis.
   explicit LoopSliceAnalysis(mlir::Operation* op,
                              mlir::AnalysisManager& analyses);
 };
-
-/// Backport of llvm-project/pull/188758.
-[[nodiscard]]
-auto getControlFlowPredecessors(mlir::Value value)
-    -> std::optional<llvm::SmallVector<mlir::Value>>;
 
 }  // namespace scheduler
 
