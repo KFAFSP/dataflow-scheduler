@@ -51,11 +51,11 @@ void GroupLocalMemory::initialize() {
       }
     }
 
-    // TODO: only record exec_units that have an explicit ktdf_arch.datapath
-    // to/from the memory — co-location alone does not imply access.
     for (mlir::Attribute ek : exec_kinds) {
       auto [it, inserted] = exec_to_mem_kinds_.try_emplace(ek, mem_kinds);
       if (!inserted)
+        // Set intersection: keep only mem kinds that appear in every group
+        // that contains this exec unit kind.
         it->second.remove_if(
             [&](mlir::Attribute mk) { return !mem_kinds.count(mk); });
     }

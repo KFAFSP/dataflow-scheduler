@@ -51,25 +51,8 @@ std::optional<int64_t> scheduler::getConstantIndexValue(mlir::Value value) {
 }
 
 std::optional<int64_t> scheduler::getStaticTripCount(mlir::scf::ForOp loop) {
-  auto lb_const =
-      loop.getLowerBound().getDefiningOp<mlir::arith::ConstantIndexOp>();
-  auto ub_const =
-      loop.getUpperBound().getDefiningOp<mlir::arith::ConstantIndexOp>();
-  auto step_const =
-      loop.getStep().getDefiningOp<mlir::arith::ConstantIndexOp>();
-  if (!lb_const || !ub_const || !step_const) {
-    return std::nullopt;
-  }
-  int64_t lb = lb_const.value();
-  int64_t ub = ub_const.value();
-  int64_t step = step_const.value();
-  if (step <= 0) {
-    return std::nullopt;
-  }
-  if (ub <= lb) {
-    return 0;
-  }
-  return (ub - lb + step - 1) / step;
+  if (auto tc = loop.getStaticTripCount()) return tc->getSExtValue();
+  return std::nullopt;
 }
 
 mlir::LogicalResult scheduler::cleanupPrivateOp(

@@ -204,8 +204,8 @@ static void patchDataTransferSizes(
 // a vector of all induction variables (outermost first).
 //
 // All loops are created inside `parent_block` at the current insertion point
-// of `rewriter`.  The outermost loop is tagged {loop_type = reduction_loop}
-// when `tag_outermost` is true.
+// of `rewriter`.  Every loop in the nest is tagged {loop_type =
+// reduction_loop}.
 // ---------------------------------------------------------------------------
 struct NestedForResult {
   scf::ForOp outermost_loop;
@@ -216,8 +216,7 @@ struct NestedForResult {
 NestedForResult buildNestedForLoops(OpBuilder& builder, Location loc,
                                     MLIRContext* context,
                                     ArrayRef<int64_t> dim_sizes, Value start,
-                                    Value step, bool tag_outermost,
-                                    ValueRange iter_args = {}) {
+                                    Value step, ValueRange iter_args = {}) {
   assert(!dim_sizes.empty() && "need at least one dimension");
 
   NestedForResult result;
@@ -285,6 +284,8 @@ NestedForResult buildNestedForLoops(OpBuilder& builder, Location loc,
           }
         });
 
+    loop->setAttr("loop_type", ktdf::LoopTypeAttr::get(
+                                   context, ktdf::LoopType::ReductionLoop));
     if (depth == 0) outermost = loop;
     if (is_innermost) innermost = loop;
     return loop.getResults().empty() ? Value{} : loop.getResult(0);
@@ -301,11 +302,6 @@ NestedForResult buildNestedForLoops(OpBuilder& builder, Location loc,
   result.outermost_loop = outermost;
   result.innermost_loop = innermost;
   result.ivs = collected_ivs;
-
-  if (tag_outermost)
-    outermost->setAttr(
-        "loop_type",
-        ktdf::LoopTypeAttr::get(context, ktdf::LoopType::ReductionLoop));
 
   return result;
 }
@@ -664,8 +660,8 @@ struct ReductionLoopExposurePass
     auto first_original = body->begin();
 
     rewriter.setInsertionPointToStart(body);
-    auto nested = buildNestedForLoops(rewriter, loc, ctx, dim_sizes, start,
-                                      step, /*tag_outermost=*/false);
+    auto nested =
+        buildNestedForLoops(rewriter, loc, ctx, dim_sizes, start, step);
 
     // Splice [first_original, body->end()) into the innermost loop body before
     // its yield.  body and inner_body are different lists so body->end() is a
@@ -787,9 +783,8 @@ struct ReductionLoopExposurePass
                                 output_tensor_type.getElementType());
 
     // Build the nested loops, threading the accumulator through each level.
-    auto nested = buildNestedForLoops(
-        rewriter, loc, ctx, dim_sizes, start, step,
-        /*tag_outermost=*/true, ValueRange{empty.getResult()});
+    auto nested = buildNestedForLoops(rewriter, loc, ctx, dim_sizes, start,
+                                      step, ValueRange{empty.getResult()});
 
     // Now populate the innermost loop body (before its yield).
     scf::ForOp innermost = nested.innermost_loop;
@@ -855,8 +850,8 @@ struct ReductionLoopExposurePass
     auto first_original = body->begin();
 
     rewriter.setInsertionPointToStart(body);
-    auto nested = buildNestedForLoops(rewriter, loc, ctx, dim_sizes, start,
-                                      step, /*tag_outermost=*/false);
+    auto nested =
+        buildNestedForLoops(rewriter, loc, ctx, dim_sizes, start, step);
     Block* inner_body = nested.innermost_loop.getBody();
     Operation* inner_term = inner_body->getTerminator();
 

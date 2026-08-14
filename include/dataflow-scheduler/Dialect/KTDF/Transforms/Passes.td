@@ -80,6 +80,7 @@ def ReductionLoopExposurePass : Pass<"reduction-loop-exposure", "mlir::ModuleOp"
     parent ktdf.pipeline so that the reduction becomes an explicit scf.for loop:
 
     Before (StageCoarsening output):
+    (R is the size of the reduction dimension)
 
       ktdf.private: [fifo_in(R*C elements), fifo_out(C elements), ...]
 
@@ -180,6 +181,7 @@ def MapReductionPartialsPass : Pass<"map-reduction-partials", "mlir::ModuleOp"> 
     iterator and whose first input is produced by a ktdf.read_from_fifo.
 
     The expected input shape (produced by ReductionLoopExposure) is:
+    (R is the size of the reduction dimension)
 
       %empty = tensor.empty() : tensor<...xf16>
       %result = scf.for %r = 0 to R iter_args(%carry = %empty)

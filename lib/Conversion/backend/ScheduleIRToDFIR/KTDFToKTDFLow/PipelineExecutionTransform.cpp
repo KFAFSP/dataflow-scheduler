@@ -30,7 +30,7 @@ using namespace scheduler;
 mlir::LogicalResult scheduler::transformStagesToExecuteOn(
     mlir::ktdf::PipelineOp pipeline,
     const llvm::SmallVector<mlir::ktdf::StageOp, 8>& sorted_stages,
-    const StageToUnitsMap& stage_to_units, mlir::OpBuilder& builder) {
+    const StageToUnitsMap& stage_to_units) {
   LDBG(1) << "Step 9: Transform stages to execute_on";
 
   for (auto stage : sorted_stages) {
@@ -48,7 +48,7 @@ mlir::LogicalResult scheduler::transformStagesToExecuteOn(
             << " units";
 
     // Create execute_on before the stage
-    builder.setInsertionPoint(stage);
+    mlir::OpBuilder builder(stage);
     auto stage_execute_on = mlir::ktdf_lowering::ExecuteOnOp::create(
         builder, stage.getLoc(), mlir::ValueRange(stage_units));
 
@@ -82,7 +82,7 @@ mlir::LogicalResult scheduler::transformStagesToExecuteOn(
 mlir::LogicalResult scheduler::transformPipelineToExecuteOn(
     mlir::ktdf::PipelineOp pipeline,
     const llvm::SmallVector<mlir::ktdf::StageOp, 8>& sorted_stages,
-    const StageToUnitsMap& stage_to_units, mlir::OpBuilder& builder) {
+    const StageToUnitsMap& stage_to_units) {
   LDBG(1) << "Step 11: Transform pipeline to execute_on";
 
   llvm::SmallVector<mlir::Value, 16> all_units;
@@ -109,8 +109,7 @@ mlir::LogicalResult scheduler::transformPipelineToExecuteOn(
           << " units";
 
   // Create pipeline execute_on before the pipeline
-  mlir::OpBuilder::InsertPoint insert_pt = builder.saveInsertionPoint();
-  builder.setInsertionPoint(pipeline);
+  mlir::OpBuilder builder(pipeline);
 
   auto pipeline_execute_on = mlir::ktdf_lowering::ExecuteOnOp::create(
       builder, pipeline.getLoc(), mlir::ValueRange(all_units));
@@ -165,8 +164,6 @@ mlir::LogicalResult scheduler::transformPipelineToExecuteOn(
   // Replace pipeline with execute_on
   pipeline_execute_on->moveBefore(pipeline.getOperation());
   pipeline.erase();
-
-  builder.restoreInsertionPoint(insert_pt);
 
   LDBG(1) << "  Pipeline transformed to execute_on";
   return mlir::success();

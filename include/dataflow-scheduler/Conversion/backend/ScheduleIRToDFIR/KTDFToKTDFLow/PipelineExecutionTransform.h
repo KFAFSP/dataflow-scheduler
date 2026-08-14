@@ -25,7 +25,6 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/IR/Builders.h"
 
 namespace scheduler {
 
@@ -33,13 +32,13 @@ namespace scheduler {
 mlir::LogicalResult transformStagesToExecuteOn(
     mlir::ktdf::PipelineOp pipeline,
     const llvm::SmallVector<mlir::ktdf::StageOp, 8>& sorted_stages,
-    const StageToUnitsMap& stage_to_units, mlir::OpBuilder& builder);
+    const StageToUnitsMap& stage_to_units);
 
 /// Transform pipeline to execute_on (wraps everything)
 mlir::LogicalResult transformPipelineToExecuteOn(
     mlir::ktdf::PipelineOp pipeline,
     const llvm::SmallVector<mlir::ktdf::StageOp, 8>& sorted_stages,
-    const StageToUnitsMap& stage_to_units, mlir::OpBuilder& builder);
+    const StageToUnitsMap& stage_to_units);
 
 }  // namespace scheduler
 

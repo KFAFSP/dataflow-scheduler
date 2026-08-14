@@ -25,7 +25,7 @@
 //   %empty = tensor.empty() : tensor<CxDxf16>
 //   %result = scf.for %r = 0 to R iter_args(%carry = %empty)
 //                 {loop_type = reduction_loop}
-//     <ins[0] — typically ktdf.read_from_fifo>
+//     %slice = ktdf.read_from_fifo %fifo -> tensor<CxDxf16>
 //     %new_carry = linalg.generic ins(%slice) outs(%carry)
 //     scf.if (%r == R-1): ktdf.write_to_fifo %new_carry, %fifo_out
 //     scf.yield %new_carry
@@ -35,7 +35,7 @@
 //   %alloc = memref.alloc() : memref<CxDxf16, compute_kind>
 //   linalg.fill(%zero, %alloc)
 //   scf.for %r = 0 to R {
-//     linalg.generic ins(<original ins[0]>) outs(%alloc)
+//     linalg.generic ins(%slice) outs(%alloc)
 //     scf.if (%r == R-1): ktdf.write_to_fifo %alloc, %fifo_out
 //   }
 //
@@ -63,6 +63,10 @@
 
 #define PASS_NAME "map-reduction-partials"
 #define DEBUG_TYPE PASS_NAME
+
+static llvm::cl::opt<bool> DisableThisPass(
+    "disable-" PASS_NAME, llvm::cl::desc("Disable Map Reduction Partials pass"),
+    llvm::cl::init(false));
 
 using namespace mlir;
 
@@ -207,11 +211,11 @@ static LogicalResult rewriteGeneric(
   auto stage = generic_op->getParentOfType<ktdf::StageOp>();
   assert(stage && "expected enclosing ktdf.stage");
 
-  // Stage 1: decide which memory kind backs the accumulator.
+  // Step 1: decide which memory kind backs the accumulator,
+  // and allocate the accumulator memref at the top of the stage.
   Attribute mem_space = group_local_mem.getLocalMemoryKindForStage(stage);
   if (!mem_space) return failure();
 
-  // Stage 2: rewrite the generic to buffer semantics using `mem_space`.
   OpBuilder builder(generic_op);
   Location loc = generic_op.getLoc();
 
@@ -286,6 +290,7 @@ struct MapReductionPartialsPass
       MapReductionPartialsPass>::MapReductionPartialsPassBase;
 
   void runOnOperation() override {
+    if (DisableThisPass) return;
     LDBG(1) << "========= " PASS_NAME " =========";
     ModuleOp module = getOperation();
 

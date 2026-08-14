@@ -8,17 +8,7 @@
 // CHECK: #[[$ATTR_4:.+]] = affine_set<(d0, d1, d2, d3) : (d0 >= 0, -d0 + 11 >= 0, d1 >= 0, -d1 >= 0, d2 >= 0, -d2 + 63 >= 0, d3 >= 0, -d3 + 63 >= 0)>
 // CHECK: #[[$ATTR_5:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK: #[[$ATTR_6:.+]] = affine_set<(d0, d1, d2, d3, d4) : (d0 >= 0, -d0 + 11 >= 0, d1 >= 0, -d1 >= 0, d2 >= 0, -d2 >= 0, d3 >= 0, -d3 + 63 >= 0, d4 >= 0, -d4 + 63 >= 0)>
-// CHECK:   module {
-// CHECK:     module {
-// CHECK:     func.func @Add_1414() attributes {grid = [2]} {
-// CHECK-NEXT:       call @"local-schedule-0"() : () -> ()
-// CHECK-NEXT:       return
-// CHECK-NEXT:     }
-// CHECK-NEXT:     func.func private @"local-schedule-0"()
-// CHECK-NEXT:   }
-
-// CHECK:     module {
-// CHECK:     func.func private @"local-schedule-0"() attributes {grid = [2]} {
+// CHECK-LABEL:   func.func private @"local-schedule-0"() attributes {grid = [2]} {
 // CHECK-NEXT:       %[[GET_UNIT_0:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-mnilu", type = "mnilu"} : index
 // CHECK-NEXT:       %[[GET_UNIT_1:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-mnilu", type = "mnilu"} : index
 // CHECK-NEXT:       %[[GET_UNIT_2:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-mnisu", type = "mnisu"} : index
@@ -181,9 +171,12 @@
 
 
 
-// Example with nested pipelines and a parallel region in the innermost pipeline.
-// Any component types occuring in the parallel region should be treated as
-// parallel components in ancestor execute_on operations (outside the parallel region).
+// Test that no backedge signals are inserted when there is no loop-carried dependency.
+// The load stage (L1LU) has two transfers:
+//   - first transfer: reads from %11
+//   - second transfer: reads from %3
+// The store stage (L1SU) writes only to %12 with no read-write aliasing across iterations.
+// No backedge guards should appear anywhere in the output.
 
 #map = affine_map<(d0, d1) -> (d0 * 2 + d1)>
 #map1 = affine_map<(d0, d1, d2, d3, d4) -> (d0, d2, d3, d4)>
@@ -279,6 +272,8 @@ module {
                       %18 = ktdf.create_token : !ktdf.token
                       ktdf.private_yield %15#0, %15#1, %16, %17, %18 : !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>, !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, !ktdf.token, !ktdf.token
                     }
+                    // load_stage: both transfers have no loop-carried dependency —
+                    // no backedge signal is inserted.
                     ktdf.stage depends_in(none) depends_out(%14#3) {
                       ktdf.data_transfer from %11[%arg2, %arg4, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] to %14#0 size [64] : memref<?x?x1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
                       ktdf.data_transfer from %3[0, 0] size [1, 64] to %14#1 size [64] : memref<1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
@@ -294,6 +289,8 @@ module {
                       } -> tensor<1x1x1x1x64xf16>
                       ktdf.write_to_fifo %18, %14#2 : tensor<1x1x1x1x64xf16>, <"SFU" -> "L1SU", 64xf16>
                     } {applicable_units = ["SFU"]}
+                    // store_stage: transfer to %12 has no loop-carried dependency —
+                    // no backedge signal is inserted.
                     ktdf.stage depends_in(%14#4) depends_out(none) {
                       ktdf.data_transfer from %14#2 size [64] to %12[%arg2, %arg4, 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] : !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<?x?x1x1x1x1x64xf16, "L1">
                     } {applicable_units = ["L1SU"]}

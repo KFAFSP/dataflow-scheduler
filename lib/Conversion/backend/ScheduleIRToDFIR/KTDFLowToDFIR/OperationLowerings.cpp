@@ -347,27 +347,194 @@ struct LowerSignalPattern
         scheduler::getUnitTypeFromQueryMap(curr_unit_query_map);
     assert(!curr_resource_type.empty() && "getUnitTypeFromQueryMap failed");
 
-    // Build query maps for all other units (not the current unit)
-    // Only include units with different resource types than the current unit
-    llvm::SmallVector<mlir::Value, 8> other_query_maps;
+    // Collect peer signal units: different resource type from the current unit.
+    llvm::SmallVector<mlir::Value, 8> other_signal_units;
     for (auto signal_unit : signal_units) {
-      if (signal_unit != curr_unit_query_map) {
-        auto other_resource_type =
-            scheduler::getUnitTypeFromQueryMap(signal_unit);
-        assert(!other_resource_type.empty() &&
-               "getUnitTypeFromQueryMap failed");
+      if (signal_unit == curr_unit_query_map) continue;
+      auto other_resource_type =
+          scheduler::getUnitTypeFromQueryMap(signal_unit);
+      assert(!other_resource_type.empty() && "getUnitTypeFromQueryMap failed");
+      if (other_resource_type != curr_resource_type)
+        other_signal_units.push_back(signal_unit);
+    }
 
-        // Only sync with units of different types. This avoids syncing between
-        // corelets 0 and 1 of the same unit type for example.
-        if (other_resource_type != curr_resource_type) {
-          auto other_query_map_result = UniformInfra::buildSignalQueryMap(
-              signal_unit, program_unit, rewriter, signal_op.getLoc());
-          if (mlir::failed(other_query_map_result)) {
-            signal_op.emitError("failed to build query map for signal operand");
-            return mlir::failure();
-          }
-          other_query_maps.push_back(*other_query_map_result);
+    // Decide which lowering path to use.
+    //
+    // Corelet-aware path: both the current PU's units AND the peer units carry
+    // corelet attributes.  In this case, all peer operands of the same resource
+    // type must be grouped into a single query map so that each corelet of the
+    // current unit communicates only with the matching corelet of the peer:
+    //   [pu_CL0 -> peer_CL0,  pu_CL1 -> peer_CL1]  queried by iter_arg.
+    //
+    // Other path: at least one side has no corelet attribute.  Fall through
+    // to buildSignalQueryMap (core-index matching), one entry per peer operand.
+
+    // A PU is genuinely multi-corelet only when its units carry more than one
+    // distinct corelet value (e.g. CL0 and CL1).  Units that have corelet=0
+    // set by the scheduler but no real second corelet all share the same value,
+    // so the distinct-count check correctly returns false for them.
+    bool curr_has_corelets = false;
+    {
+      llvm::DenseSet<int> corelet_ids;
+      for (mlir::Value u : program_unit.getUnits()) {
+        auto gu = mlir::dyn_cast_or_null<mlir::dataflow::GetUnitOp>(
+            u.getDefiningOp());
+        if (gu) corelet_ids.insert(mlir::dataflow::getCoreletId(gu));
+      }
+      curr_has_corelets = corelet_ids.size() > 1;
+    }
+
+    // A peer resource type is genuinely multi-corelet only when the get_unit
+    // values it maps to carry more than one distinct corelet value across all
+    // operands of that type.  Multiple operands due to multiple cores (all with
+    // corelet=0) do not qualify — the distinct-corelet-value check handles
+    // that. type_corelet_ids maps each peer resource type to the set of
+    // distinct corelet values seen across all signal operands of that type.
+    bool peers_have_corelets = false;
+    {
+      llvm::DenseMap<mlir::StringAttr, llvm::DenseSet<int>> type_corelet_ids;
+      for (mlir::Value su : other_signal_units) {
+        auto rt = scheduler::getUnitResourceType(su);
+        if (!rt) continue;
+        auto key = mlir::cast<mlir::StringAttr>(*rt);
+        auto qop = su.getDefiningOp<mlir::uniform::QueryMapOp>();
+        auto dop =
+            qop ? qop.getMap()
+                      .getDefiningOp<mlir::uniform::DefImmutableMappingOp>()
+                : nullptr;
+        if (!dop) continue;
+        for (mlir::Value val : dop.getValues()) {
+          auto gu = mlir::dyn_cast_or_null<mlir::dataflow::GetUnitOp>(
+              val.getDefiningOp());
+          if (gu)
+            type_corelet_ids[key].insert(mlir::dataflow::getCoreletId(gu));
         }
+      }
+      for (auto& kv : type_corelet_ids) {
+        if (kv.second.size() > 1) {
+          peers_have_corelets = true;
+          break;
+        }
+      }
+    }
+
+    llvm::SmallVector<mlir::Value, 8> other_query_maps;
+
+    if (curr_has_corelets && peers_have_corelets) {
+      // --- Corelet-aware path ---
+      // The signal contains one query_map per corelet of each peer resource
+      // type (e.g. %30=l1su-CL0, %32=l1su-CL1 for a two-corelet peer).
+      // We must NOT lower each one to a separate sync_send/recv — that would
+      // make every corelet signal every peer corelet.  Instead, group the peer
+      // operands by resource type, then build one merged query_map per group
+      // that dispatches to the matching corelet at runtime:
+
+      // Bucket peer operands by their resource type.
+      llvm::SmallVector<
+          std::pair<mlir::StringAttr, llvm::SmallVector<mlir::Value, 4>>, 4>
+          by_resource;
+      for (mlir::Value su : other_signal_units) {
+        auto key =
+            mlir::cast<mlir::StringAttr>(*scheduler::getUnitResourceType(su));
+        auto it =
+            llvm::find_if(by_resource, [&](auto& p) { return p.first == key; });
+        if (it == by_resource.end())
+          by_resource.push_back({key, {su}});
+        else
+          it->second.push_back(su);
+      }
+
+      // iter_arg (%arg0) is the program_unit's block argument: at runtime it
+      // holds the get_unit value of whichever corelet is currently executing.
+      // It is used as the query key so each corelet resolves to its own peer.
+      mlir::Value iter_arg = program_unit.getRegion().front().getArgument(0);
+
+      for (auto& [rtype, group] : by_resource) {
+        // For each peer signal operand in this group, extract corelet ids and
+        // get_unit results from its def_immutable_mapping. An operand may cover
+        // one corelet (single-value map) or all corelets (multi-value map).
+        llvm::SmallVector<std::pair<int, mlir::Value>, 4> cl_to_peer;
+        for (mlir::Value su : group) {
+          auto qop = su.getDefiningOp<mlir::uniform::QueryMapOp>();
+          auto dop = qop.getMap()
+                         .getDefiningOp<mlir::uniform::DefImmutableMappingOp>();
+          for (mlir::Value val : dop.getValues()) {
+            auto peer_gu =
+                mlir::cast<mlir::dataflow::GetUnitOp>(val.getDefiningOp());
+            cl_to_peer.push_back(
+                {mlir::dataflow::getCoreletId(peer_gu), peer_gu.getResult(0)});
+          }
+        }
+
+        // Check that the peer group's corelets fully cover every PU corelet.
+        // If not (e.g. the peer is a single unit whose corelet attribute is 0
+        // but which doesn't actually mirror the PU's multi-corelet layout),
+        // the per-corelet pairing is undefined — fall back to
+        // buildSignalQueryMap (core-index matching) for each operand in the
+        // group instead.
+        bool group_covers_all_pu_corelets = true;
+        for (mlir::Value pu_op : program_unit.getUnits()) {
+          auto pu_gu =
+              mlir::cast<mlir::dataflow::GetUnitOp>(pu_op.getDefiningOp());
+          int cl = mlir::dataflow::getCoreletId(pu_gu);
+          if (!llvm::any_of(cl_to_peer,
+                            [cl](auto& p) { return p.first == cl; })) {
+            group_covers_all_pu_corelets = false;
+            break;
+          }
+        }
+
+        if (!group_covers_all_pu_corelets) {
+          for (mlir::Value signal_unit : group) {
+            auto result = UniformInfra::buildSignalQueryMap(
+                signal_unit, program_unit, rewriter, signal_op.getLoc());
+            if (mlir::failed(result)) {
+              signal_op.emitError(
+                  "failed to build query map for signal operand");
+              return mlir::failure();
+            }
+            other_query_maps.push_back(*result);
+          }
+          continue;
+        }
+
+        // Build the merged mapping keys (current PU units) and values (peer
+        // units at the same corelet index).
+        // e.g. keys=[l1lu-CL0, l1lu-CL1], values=[l1su-CL0, l1su-CL1]
+        llvm::SmallVector<mlir::Value> new_keys, new_values;
+        for (mlir::Value pu_op : program_unit.getUnits()) {
+          auto pu_gu =
+              mlir::cast<mlir::dataflow::GetUnitOp>(pu_op.getDefiningOp());
+          int cl = mlir::dataflow::getCoreletId(pu_gu);
+          auto it = llvm::find_if(cl_to_peer,
+                                  [cl](auto& p) { return p.first == cl; });
+          new_keys.push_back(pu_op);
+          new_values.push_back(it->second);
+        }
+
+        // Emit the merged def_immutable_mapping + query_map.
+        // At runtime, querying with iter_arg returns the peer corelet unit
+        // that corresponds to the currently-executing corelet of this PU.
+        auto new_map = mlir::uniform::DefImmutableMappingOp::create(
+            rewriter, signal_op.getLoc(), rewriter.getIndexType(), new_keys,
+            new_values);
+        auto new_query = mlir::uniform::QueryMapOp::create(
+            rewriter, signal_op.getLoc(), rewriter.getIndexType(),
+            new_map.getResult(), iter_arg);
+        other_query_maps.push_back(new_query.getResult());
+      }
+    } else {
+      // --- at least one set of units has no corelets ---
+      // buildSignalQueryMap rebuilds the query_map substituting PU operands as
+      // keys (core-index matching).
+      for (mlir::Value signal_unit : other_signal_units) {
+        auto result = UniformInfra::buildSignalQueryMap(
+            signal_unit, program_unit, rewriter, signal_op.getLoc());
+        if (mlir::failed(result)) {
+          signal_op.emitError("failed to build query map for signal operand");
+          return mlir::failure();
+        }
+        other_query_maps.push_back(*result);
       }
     }
 
