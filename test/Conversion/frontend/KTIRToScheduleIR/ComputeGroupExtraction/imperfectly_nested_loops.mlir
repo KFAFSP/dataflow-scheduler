@@ -27,7 +27,7 @@
 // CHECK:   module @local_schedule_0 {
 // CHECK:           func.func @local_schedule_0() {
 // CHECK:             %[[CONSTANT_0:.*]] = arith.constant 20480 : index
-// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.memory_space<global>} : memref<96x64xf16>
 // CHECK:             %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
 // CHECK:             %[[CONSTANT_1:.*]] = arith.constant 3 : index
 // CHECK:             %[[MULI_0:.*]] = arith.muli %[[GET_COMPUTE_TILE_ID_0]], %[[CONSTANT_1]] : index
@@ -37,7 +37,7 @@
 // CHECK:             %[[EMPTY_0:.*]] = tensor.empty() : tensor<3x64xf16>
 // CHECK:             %[[MUL_0:.*]] = linalg.mul ins(%[[LOAD_0]], %[[LOAD_0]] : tensor<3x64xf16>, tensor<3x64xf16>) outs(%[[EMPTY_0]] : tensor<3x64xf16>) -> tensor<3x64xf16>
 // CHECK:             %[[CONSTANT_3:.*]] = arith.constant 24576 : index
-// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.memory_space<global>} : memref<96x64xf16>
 // CHECK:             %[[CONSTRUCT_ACCESS_TILE_1:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_1]]{{\[}}%[[MULI_0]], %[[CONSTANT_2]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
 // CHECK:             ktdp.store %[[MUL_0]], %[[CONSTRUCT_ACCESS_TILE_1]] : tensor<3x64xf16>, <3x64xindex>
 // CHECK:             return
@@ -47,7 +47,7 @@
 // CHECK:   module @local_schedule_1 {
 // CHECK:           func.func @local_schedule_1() {
 // CHECK:             %[[CONSTANT_0:.*]] = arith.constant 16384 : index
-// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.memory_space<global>} : memref<96x64xf16>
 // CHECK:             %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
 // CHECK:             %[[CONSTANT_1:.*]] = arith.constant 3 : index
 // CHECK:             %[[MULI_0:.*]] = arith.muli %[[GET_COMPUTE_TILE_ID_0]], %[[CONSTANT_1]] : index
@@ -57,7 +57,7 @@
 // CHECK:             %[[EMPTY_0:.*]] = tensor.empty() : tensor<3x64xf16>
 // CHECK:             %[[ADD_0:.*]] = linalg.add ins(%[[LOAD_0]], %[[LOAD_0]] : tensor<3x64xf16>, tensor<3x64xf16>) outs(%[[EMPTY_0]] : tensor<3x64xf16>) -> tensor<3x64xf16>
 // CHECK:             %[[CONSTANT_3:.*]] = arith.constant 20480 : index
-// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.memory_space<global>} : memref<96x64xf16>
 // CHECK:             %[[CONSTRUCT_ACCESS_TILE_1:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_1]]{{\[}}%[[MULI_0]], %[[CONSTANT_2]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
 // CHECK:             ktdp.store %[[ADD_0]], %[[CONSTRUCT_ACCESS_TILE_1]] : tensor<3x64xf16>, <3x64xindex>
 // CHECK:             return
@@ -67,7 +67,7 @@
 // CHECK:   module @local_schedule_2 {
 // CHECK:           func.func @local_schedule_2() {
 // CHECK:             %[[CONSTANT_0:.*]] = arith.constant 24576 : index
-// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.memory_space<global>} : memref<96x64xf16>
 // CHECK:             %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
 // CHECK:             %[[CONSTANT_1:.*]] = arith.constant 3 : index
 // CHECK:             %[[MULI_0:.*]] = arith.muli %[[GET_COMPUTE_TILE_ID_0]], %[[CONSTANT_1]] : index
@@ -77,7 +77,7 @@
 // CHECK:             %[[EMPTY_0:.*]] = tensor.empty() : tensor<3x64xf16>
 // CHECK:             %[[SUB_0:.*]] = linalg.sub ins(%[[LOAD_0]], %[[LOAD_0]] : tensor<3x64xf16>, tensor<3x64xf16>) outs(%[[EMPTY_0]] : tensor<3x64xf16>) -> tensor<3x64xf16>
 // CHECK:             %[[CONSTANT_3:.*]] = arith.constant 28672 : index
-// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
+// CHECK:             %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_3]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.memory_space<global>} : memref<96x64xf16>
 // CHECK:             %[[CONSTRUCT_ACCESS_TILE_1:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_1]]{{\[}}%[[MULI_0]], %[[CONSTANT_2]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
 // CHECK:             ktdp.store %[[SUB_0]], %[[CONSTRUCT_ACCESS_TILE_1]] : tensor<3x64xf16>, <3x64xindex>
 // CHECK:             return
@@ -103,7 +103,7 @@ module {
     // Construct memory views and access tiles for A, B, C, D
     %A_view = ktdp.construct_memory_view %A_addr, sizes: [96, 64], strides: [64, 1] {
         coordinate_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
-        memory_space = #ktdp.spyre_memory_space<HBM>
+        memory_space = #ktdp.memory_space<global>
     } : memref<96x64xf16>
     %A_access_tile = ktdp.construct_access_tile %A_view[%start_row, %c0] {
         access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 2 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
@@ -112,7 +112,7 @@ module {
 
     %B_view = ktdp.construct_memory_view %B_addr, sizes: [96, 64], strides: [64, 1] {
         coordinate_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
-        memory_space = #ktdp.spyre_memory_space<HBM>
+        memory_space = #ktdp.memory_space<global>
     } : memref<96x64xf16>
     %B_access_tile = ktdp.construct_access_tile %B_view[%start_row, %c0] {
         access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 2 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
@@ -121,7 +121,7 @@ module {
 
     %C_view = ktdp.construct_memory_view %C_addr, sizes: [96, 64], strides: [64, 1] {
         coordinate_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
-        memory_space = #ktdp.spyre_memory_space<HBM>
+        memory_space = #ktdp.memory_space<global>
     } : memref<96x64xf16>
     %C_access_tile = ktdp.construct_access_tile %C_view[%start_row, %c0] {
         access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 2 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
@@ -130,7 +130,7 @@ module {
 
     %D_view = ktdp.construct_memory_view %D_addr, sizes: [96, 64], strides: [64, 1] {
         coordinate_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>,
-        memory_space = #ktdp.spyre_memory_space<HBM>
+        memory_space = #ktdp.memory_space<global>
     } : memref<96x64xf16>
     %D_access_tile = ktdp.construct_access_tile %D_view[%start_row, %c0] {
         access_tile_set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 2 >= 0, d1 >= 0, -d1 + 63 >= 0)>,

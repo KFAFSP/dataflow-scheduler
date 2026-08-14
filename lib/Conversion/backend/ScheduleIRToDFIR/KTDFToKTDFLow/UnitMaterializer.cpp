@@ -33,12 +33,20 @@ using ResourceType = mlir::Attribute;
 
 // Lowercase unit-type tag for the emitted dataflow.get_unit `type`/`name`
 // strings (DFIR code generation requires lowercase). Compute resource tokens
-// are lowercased directly; Spyre memory-space attributes become their
-// lowercased kind ("l1"/"ddr"); any other attribute falls back to its
-// lowercased printed form so nothing is left uppercase.
+// are lowercased directly;
+// FIXME: currently the code generator consuming DFIR expects hardware names
+// ("hbm" for global, "lx" for ct_local). For now memory-space attributes are
+// translated to the expected strings, while any other attribute falls back to
+// its lowercased printed form. In future this mapping should either come from
+// arch spec mem_space_mapping or be handled by the code generator itself.
 static std::string unitTypeTag(ResourceType rt) {
-  if (auto ms = mlir::dyn_cast<mlir::ktdp::SpyreMemorySpaceAttr>(rt)) {
-    return mlir::ktdp::stringifySpyreMemorySpaceKind(ms.getValue()).lower();
+  if (auto ms = mlir::dyn_cast<mlir::ktdp::MemorySpaceAttr>(rt)) {
+    switch (ms.getKind()) {
+      case mlir::ktdp::MemorySpaceKind::global:
+        return "hbm";
+      case mlir::ktdp::MemorySpaceKind::ct_local:
+        return "lx";
+    }
   }
   if (auto s = mlir::dyn_cast<mlir::StringAttr>(rt)) {
     return s.getValue().lower();

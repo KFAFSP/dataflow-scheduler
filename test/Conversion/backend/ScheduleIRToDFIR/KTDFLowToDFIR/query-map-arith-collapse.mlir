@@ -35,7 +35,7 @@ module {
     %amap = uniform.def_immutable_mapping([%0 -> %c0], [%1 -> %c6], [%2 -> %c12], [%3 -> %c18]):index
     %aq = uniform.query_map(map:%amap, key:%tid) : index
     %d = arith.divui %aq, %c6 : index
-    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16, "DDR">
+    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<96x64xf16, "DDR">
     %rc = memref.reinterpret_cast %mv to offset: [%d], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
     scf.for %arg1 = %c0 to %c1 step %c1 {
       scf.for %arg2 = %c0 to %c64 step %c64 {
@@ -79,7 +79,7 @@ module {
     %amap = uniform.def_immutable_mapping([%0 -> %c0], [%1 -> %c4]):index
     %aq = uniform.query_map(map:%amap, key:%tid) : index
     %d = arith.subi %c10, %aq : index
-    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16, "DDR">
+    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<96x64xf16, "DDR">
     %rc = memref.reinterpret_cast %mv to offset: [%d], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
     scf.for %arg1 = %c0 to %c1 step %c1 {
       scf.for %arg2 = %c0 to %c64 step %c64 {
@@ -124,7 +124,7 @@ module {
     %amap = uniform.def_immutable_mapping([%0 -> %c7], [%1 -> %c9]):index
     %aq = uniform.query_map(map:%amap, key:%tid) : index
     %d = arith.remui %aq, %c4 : index
-    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16, "DDR">
+    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<96x64xf16, "DDR">
     %rc = memref.reinterpret_cast %mv to offset: [%d], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
     scf.for %arg1 = %c0 to %c1 step %c1 {
       scf.for %arg2 = %c0 to %c64 step %c64 {
@@ -172,7 +172,7 @@ module {
     %qa = uniform.query_map(map:%ma, key:%tid) : index
     %qb = uniform.query_map(map:%mb, key:%tid) : index
     %d = arith.addi %qa, %qb : index
-    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16, "DDR">
+    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<96x64xf16, "DDR">
     %rc = memref.reinterpret_cast %mv to offset: [%d], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
     scf.for %arg1 = %c0 to %c1 step %c1 {
       scf.for %arg2 = %c0 to %c64 step %c64 {
@@ -226,7 +226,7 @@ module {
     %a = arith.muli %row, %c4 : index
     %b = arith.muli %col, %c5 : index
     %sum = arith.addi %a, %b : index
-    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16, "DDR">
+    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<96x64xf16, "DDR">
     %rc = memref.reinterpret_cast %mv to offset: [%sum], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
     scf.for %arg1 = %c0 to %c1 step %c1 {
       scf.for %arg2 = %c0 to %c64 step %c64 {
@@ -267,7 +267,7 @@ module {
     %qa = uniform.query_map(map:%ma, key:%tid) : index
     %qb = uniform.query_map(map:%ma, key:%arg0) : index
     %d = arith.addi %qa, %qb : index
-    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16, "DDR">
+    %mv = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<96x64xf16, "DDR">
     %rc = memref.reinterpret_cast %mv to offset: [%d], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
     scf.for %arg1 = %c0 to %c1 step %c1 {
       scf.for %arg2 = %c0 to %c64 step %c64 {

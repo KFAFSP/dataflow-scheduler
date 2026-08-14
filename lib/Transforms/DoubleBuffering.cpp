@@ -80,15 +80,15 @@ struct CandidateShape {
 };
 
 /// Extract the memory space attribute from a memref type.
-/// Returns std::nullopt if the memory space is not a KtdpMemorySpaceAttr.
-std::optional<mlir::ktdp::KtdpMemorySpaceAttr> extractMemorySpace(
+/// Returns std::nullopt if the memory space is not a MemorySpaceAttr.
+std::optional<mlir::ktdp::MemorySpaceAttr> extractMemorySpace(
     mlir::MemRefType memref_ty) {
   mlir::Attribute mspace_attr = memref_ty.getMemorySpace();
   if (!mspace_attr) {
     return std::nullopt;
   }
   if (auto ktdp_attr =
-          mlir::dyn_cast<mlir::ktdp::KtdpMemorySpaceAttr>(mspace_attr)) {
+          mlir::dyn_cast<mlir::ktdp::MemorySpaceAttr>(mspace_attr)) {
     return ktdp_attr;
   }
   return std::nullopt;

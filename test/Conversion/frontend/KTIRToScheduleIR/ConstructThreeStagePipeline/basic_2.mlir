@@ -25,9 +25,9 @@
 // CHECK-NEXT:     %[[CONSTANT_14:.*]] = arith.constant 0 : index
 // CHECK-NEXT:     %[[CONSTANT_15:.*]] = arith.constant 32 : index
 // CHECK-NEXT:     %[[CONSTANT_16:.*]] = arith.constant 32 : index
-// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_5]], sizes: [96, 4, 32], strides: [128, 32, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x4x32xf16>
-// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_6]], sizes: [96, 4, 32], strides: [128, 32, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x4x32xf16>
-// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_2:.*]] = ktdp.construct_memory_view %[[CONSTANT_7]], sizes: [96, 4, 32], strides: [128, 32, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x4x32xf16>
+// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_5]], sizes: [96, 4, 32], strides: [128, 32, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.memory_space<global>} : memref<96x4x32xf16>
+// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_6]], sizes: [96, 4, 32], strides: [128, 32, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.memory_space<global>} : memref<96x4x32xf16>
+// CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_2:.*]] = ktdp.construct_memory_view %[[CONSTANT_7]], sizes: [96, 4, 32], strides: [128, 32, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.memory_space<global>} : memref<96x4x32xf16>
 // CHECK-NEXT:     %[[CONSTANT_17:.*]] = arith.constant 128 : index
 // CHECK-NEXT:     %[[MULI_1:.*]] = arith.muli %[[ADDI_0]], %[[CONSTANT_17]] : index
 // CHECK-NEXT:     %[[ADDI_1:.*]] = arith.addi %[[MULI_1]], %[[CONSTANT_3]] : index
@@ -82,7 +82,7 @@
 
 
 module {
-    ktdf_arch.device @sample_device attributes {mem_space_mapping = #ktdf_arch.map<#ktdp.spyre_memory_space<HBM> = "DDR", #ktdp.spyre_memory_space<LX> = "L1">} import("../../../../Dialect/KTDFArch/sample_device.mlir")
+    ktdf_arch.device @sample_device attributes {mem_space_mapping = #ktdf_arch.map<#ktdp.memory_space<global> = "DDR", #ktdp.memory_space<ct_local> = "L1">} import("../../../../Dialect/KTDFArch/sample_device.mlir")
     func.func @local_schedule_1(%i: index) {
         %c0 = arith.constant 0 : index
         %c0_1 = arith.constant 1 : index
@@ -97,19 +97,19 @@ module {
         // Construct a memory view of A from a given address
         %A_view = ktdp.construct_memory_view %A_start_address, sizes: [96, 4, 32], strides: [128, 32, 1] {
             coordinate_set = affine_set<(d0, d1, d2) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 3 >= 0, d2 >= 0, -d2 + 31 >= 0)>,
-            memory_space = #ktdp.spyre_memory_space<HBM>
+            memory_space = #ktdp.memory_space<global>
         } : memref<96x4x32xf16>
     
         // Construct a memory view of B from a given address
         %B_view = ktdp.construct_memory_view %B_start_address, sizes: [96, 4, 32], strides: [128, 32, 1] {
             coordinate_set = affine_set<(d0, d1, d2) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 3 >= 0, d2 >= 0, -d2 + 31 >= 0)>,
-            memory_space = #ktdp.spyre_memory_space<HBM>
+            memory_space = #ktdp.memory_space<global>
         } : memref<96x4x32xf16>
     
         // Construct a memory view of C from a given address
         %C_view = ktdp.construct_memory_view %C_start_address, sizes: [96, 4, 32], strides: [128, 32, 1] {
             coordinate_set = affine_set<(d0, d1, d2) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 3 >= 0, d2 >= 0, -d2 + 31 >= 0)>,
-            memory_space = #ktdp.spyre_memory_space<HBM>
+            memory_space = #ktdp.memory_space<global>
         } : memref<96x4x32xf16>
         
         %start_row_i = arith.addi %start_row, %i : index

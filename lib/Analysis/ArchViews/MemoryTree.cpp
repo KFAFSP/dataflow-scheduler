@@ -426,9 +426,9 @@ void MemoryTree::populateAliases(mlir::Attribute mem_space_mapping_attr) {
   }
 
   // In the mapping: key = value
-  // - value is the canonical resource (e.g., "DDR") - this is what's in the
+  // - value is the canonical resource (e.g., "global") - this is what's in the
   // tree
-  // - key is the alias (e.g., #ktdp.spyre_memory_space<DDR>)
+  // - key is the alias (e.g., #ktdp.memory_space<global>)
   for (auto [key, value] : mem_space_mapping.getEntries()) {
     // Find the node with the VALUE resource (the canonical one from the device
     // file)

@@ -33,7 +33,7 @@ module {
       %tile_id = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
       %dyn = arith.muli %c64, %tile_id : index
       dataflow.program_unit iter_arg : %arg0 -> (%0, %1) : {
-        %10 = ktdp.construct_memory_view %c64000, sizes: [12, 1, 64, 64], strides: [4096, 4096, 64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<12x1x64x64xf16>
+        %10 = ktdp.construct_memory_view %c64000, sizes: [12, 1, 64, 64], strides: [4096, 4096, 64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<12x1x64x64xf16>
         %msc = memref.memory_space_cast %10 : memref<12x1x64x64xf16> to memref<12x1x64x64xf16, "DDR">
         %rc = memref.reinterpret_cast %msc to offset: [%dyn], sizes: [12, 1, 64, 64], strides: [4096, 4096, 64, 1] : memref<12x1x64x64xf16, "DDR"> to memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">
         %cast = memref.cast %rc : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR"> to memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">
@@ -80,7 +80,7 @@ module {
       %c64000 = arith.constant 64000 : index
       %c128 = arith.constant 128 : index
       dataflow.program_unit iter_arg : %arg0 -> (%0, %1) : {
-        %10 = ktdp.construct_memory_view %c64000, sizes: [12, 1, 64, 64], strides: [4096, 4096, 64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<12x1x64x64xf16>
+        %10 = ktdp.construct_memory_view %c64000, sizes: [12, 1, 64, 64], strides: [4096, 4096, 64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<12x1x64x64xf16>
         %msc = memref.memory_space_cast %10 : memref<12x1x64x64xf16> to memref<12x1x64x64xf16, "DDR">
         %rc = memref.reinterpret_cast %msc to offset: [128], sizes: [12, 1, 64, 64], strides: [4096, 4096, 64, 1] : memref<12x1x64x64xf16, "DDR"> to memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: 128>, "DDR">
         %cast = memref.cast %rc : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: 128>, "DDR"> to memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">

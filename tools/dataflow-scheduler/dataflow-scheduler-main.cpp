@@ -91,7 +91,7 @@ struct SchedulerOptMainConfigCLOptions
 auto getDeviceName(const std::filesystem::path& path) -> StringRef {
   DialectRegistry registry;
   registry.insert<ktdf_arch::KTDFArchDialect>();
-  // Device specs may reference #ktdp.spyre_memory_space<...> in memory `kind`
+  // Device specs may reference #ktdp.memory_space<...> in memory `kind`
   // attributes, so the ktdp dialect must be available when parsing the file.
   registry.insert<mlir::ktdp::KtdpDialect>();
   MLIRContext context(registry);

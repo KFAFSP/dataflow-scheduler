@@ -18,7 +18,7 @@
 // CHECK-NEXT:       %[[MAP_CORE:.*]] = uniform.def_immutable_mapping({{\[}}%[[MNILU_0]] -> %[[C0]]], {{\[}}%[[MNILU_1]] -> %[[C3]]]):index
 // CHECK-NEXT:       %[[CORE_IDX:.*]] = uniform.query_map(map:%[[MAP_CORE]], key:%[[ARG_MNILU]]) : index
 // CHECK-NEXT:       %[[ADDI_0:.*]] = arith.addi %[[CORE_IDX]], %[[ARG0]] : index
-// CHECK-NEXT:       %[[CMV_0:.*]] = ktdp.construct_memory_view %[[C1024]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_3]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16, "DDR">
+// CHECK-NEXT:       %[[CMV_0:.*]] = ktdp.construct_memory_view %[[C1024]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_3]], memory_space = #ktdp.memory_space<global>} : memref<96x64xf16, "DDR">
 // CHECK-NEXT:       %[[MULI_0:.*]] = arith.muli %[[ADDI_0]], %[[C64]] : index
 // CHECK-NEXT:       %[[RC_0:.*]] = memref.reinterpret_cast %[[CMV_0]] to offset: {{\[}}%[[MULI_0]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
 // CHECK-NEXT:       %[[ALLOC_0:.*]] = memref.alloc() : memref<1x64xf16, "L1">
@@ -63,7 +63,7 @@ module {
     %c1_4 = arith.constant 1 : index
     %c0_5 = arith.constant 0 : index
     %c64_6 = arith.constant 64 : index
-    %8 = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16, "DDR">
+    %8 = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<96x64xf16, "DDR">
     %c64_7 = arith.constant 64 : index
     %9 = arith.muli %7, %c64_7 : index
     %reinterpret_cast = memref.reinterpret_cast %8 to offset: [%9], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">

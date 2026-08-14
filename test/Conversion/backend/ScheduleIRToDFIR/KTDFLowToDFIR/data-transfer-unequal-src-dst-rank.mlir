@@ -44,7 +44,7 @@ module {
     // Destination: rank-5 DDR buffer.
     %ddr_view = ktdp.construct_memory_view %c113216, sizes: [12, 1, 1, 64, 64], strides: [4096, 4096, 4096, 64, 1] {
       coordinate_set = #set,
-      memory_space = #ktdp.spyre_memory_space<HBM>
+      memory_space = #ktdp.memory_space<global>
     } : memref<12x1x1x64x64xf16>
     %memspacecast = memref.memory_space_cast %ddr_view : memref<12x1x1x64x64xf16> to memref<12x1x1x64x64xf16, "DDR">
     %reinterpret = memref.reinterpret_cast %memspacecast to offset: [0], sizes: [12, 1, 1, 64, 64], strides: [4096, 4096, 4096, 64, 1] : memref<12x1x1x64x64xf16, "DDR"> to memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1]>, "DDR">

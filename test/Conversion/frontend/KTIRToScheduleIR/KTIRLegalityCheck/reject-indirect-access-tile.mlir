@@ -12,13 +12,13 @@ func.func @indirect_access_tile() {
   %idx_view = ktdp.construct_memory_view %addr_idx,
       sizes: [8], strides: [1] {
       coordinate_set = #coord_set_1d_8,
-      memory_space = #ktdp.spyre_memory_space<HBM>
+      memory_space = #ktdp.memory_space<global>
   } : memref<8xi32>
 
   %x_view = ktdp.construct_memory_view %addr_x,
       sizes: [100, 16], strides: [16, 1] {
       coordinate_set = #coord_set_2d_100x16,
-      memory_space = #ktdp.spyre_memory_space<HBM>
+      memory_space = #ktdp.memory_space<global>
   } : memref<100x16xf16>
 
   // expected-error @+1 {{V1 does not support ktdp.construct_indirect_access_tile}}

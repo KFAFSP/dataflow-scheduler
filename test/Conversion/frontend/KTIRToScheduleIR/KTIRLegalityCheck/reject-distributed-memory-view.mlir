@@ -6,7 +6,7 @@ func.func @distributed_view() {
   %A_start_address = arith.constant 1024 : index
 
   %A_view = ktdp.construct_memory_view %A_start_address, sizes: [32, 64], strides: [64, 1] {
-      coordinate_set = #set, memory_space = #ktdp.spyre_memory_space<HBM>
+      coordinate_set = #set, memory_space = #ktdp.memory_space<global>
   } : memref<32x64xf16>
 
   // expected-error @+1 {{V1 does not support ktdp.construct_distributed_memory_view}}
