@@ -133,9 +133,7 @@
 // CHECK-NEXT:                     %[[CREATE_TOKEN_3:.*]] = ktdf.create_token : !ktdf.token
 // CHECK-NEXT:                     ktdf_lowering.execute_on %[[QUERY_MAP_2]], %[[QUERY_MAP_3]] {
 // CHECK-NEXT:                       %[[CMPI_0:.*]] = arith.cmpi ne, %[[VAL_6]], %[[CONSTANT_19]] : index
-// CHECK-NEXT:                       %[[CMPI_1:.*]] = arith.cmpi ne, %[[VAL_0]], %[[CONSTANT_19]] : index
-// CHECK-NEXT:                       %[[ANDI_0:.*]] = arith.andi %[[CMPI_0]], %[[CMPI_1]] : i1
-// CHECK-NEXT:                       scf.if %[[ANDI_0]] {
+// CHECK-NEXT:                       scf.if %[[CMPI_0]] {
 // CHECK-NEXT:                         ktdf_lowering.signal %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]]
 // CHECK-NEXT:                       }
 // CHECK-NEXT:                       ktdf.data_transfer from %[[SELECT_MEMREF_0]]{{\[}}%[[VAL_4]], %[[VAL_6]], 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] to %[[FIFO_0]]#0 size [64] : memref<?x?x1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
@@ -156,11 +154,8 @@
 // CHECK-NEXT:                       ktdf.data_transfer from %[[FIFO_1]] size [64] to %[[SELECT_MEMREF_1]]{{\[}}%[[VAL_4]], %[[VAL_6]], 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] : !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<?x?x1x1x1x1x64xf16, "L1">
 // CHECK-NEXT:                       ktdf.data_transfer from %[[FIFO_1]] size [64] to %[[UNREALIZED_CONVERSION_CAST_5]]{{\[}}%[[VAL_0]], %[[VAL_6]], %[[CONSTANT_19]]] size [1, 1, 64] : !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<6x32x64xf16, "L1">
 // CHECK-NEXT:                       %[[SUBI_0:.*]] = arith.subi %[[TILING_1]], %[[CONSTANT_20]] : index
-// CHECK-NEXT:                       %[[CMPI_2:.*]] = arith.cmpi ne, %[[VAL_6]], %[[SUBI_0]] : index
-// CHECK-NEXT:                       %[[SUBI_1:.*]] = arith.subi %[[CONSTANT_17]], %[[CONSTANT_20]] : index
-// CHECK-NEXT:                       %[[CMPI_3:.*]] = arith.cmpi ne, %[[VAL_0]], %[[SUBI_1]] : index
-// CHECK-NEXT:                       %[[ANDI_1:.*]] = arith.andi %[[CMPI_2]], %[[CMPI_3]] : i1
-// CHECK-NEXT:                       scf.if %[[ANDI_1]] {
+// CHECK-NEXT:                       %[[CMPI_1:.*]] = arith.cmpi ne, %[[VAL_6]], %[[SUBI_0]] : index
+// CHECK-NEXT:                       scf.if %[[CMPI_1]] {
 // CHECK-NEXT:                         ktdf_lowering.signal %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]]
 // CHECK-NEXT:                       }
 // CHECK-NEXT:                     }
@@ -187,19 +182,25 @@
 // CHECK-NEXT:   }
 
 
-// Test that backedge signals are inserted only for the scratchpad dependency.
-// The load stage (L1LU) has two transfers:
-//   - first transfer: reads from %11 (no loop-carried dependency, no backedge signal)
-//   - second transfer: reads %scratchpad[%arg0, %arg4, 0] — loop-carried RAW with
-//     the store stage, creating a backedge over two enclosing scf.for loops
-//     (%arg0, %arg4), both with trip count > 1.
-// The store stage (L1SU) writes back to the same %scratchpad[%arg0, %arg4, 0].
+// Test that backedge signal guards check conditions only on IVs of scf.for
+// loops that are ancestors of the inner pipeline up to (but not including)
+// the enclosing ktdf.parallel.
 //
-// Expected backedge guards (conjunction over both dependent loops):
+// The load stage (L1LU) has two transfers:
+//   - first transfer: reads from %11 (no loop-carried dependency, no backedge)
+//   - second transfer: reads %scratchpad[%arg0, %arg4, 0] — loop-carried RAW
+//     with the store stage.
+// The store stage (L1SU) writes back to %scratchpad[%arg0, %arg4, 0].
+//
+// The inner pipeline is nested inside:
+//   scf.for %arg0 -> scf.for %arg1 -> ktdf.parallel -> scf.for %arg4 -> pipeline
+// Only the IV of scf.for %arg4 is eligible for guard conditions.
+//
+// Expected backedge guards (condition on %arg4 IV only):
 //   recv guard at top of load_stage body:
-//     cmpi ne(%arg4, lb4) && cmpi ne(%arg0, lb0) => scf.if { signal }
+//     cmpi ne(%arg4, lb) => scf.if { signal }
 //   send guard at bottom of store_stage body:
-//     cmpi ne(%arg4, ub4-step4) && cmpi ne(%arg0, ub0-step0) => scf.if { signal }
+//     cmpi ne(%arg4, ub-step) => scf.if { signal }
 
 
 
