@@ -35,9 +35,22 @@
 //   %alloc = memref.alloc() : memref<CxDxf16, compute_kind>
 //   linalg.fill(%zero, %alloc)
 //   scf.for %r = 0 to R {
+//     %slice = ktdf.read_from_fifo %fifo -> memref<CxDxf16>
 //     linalg.generic ins(%slice) outs(%alloc)
 //     scf.if (%r == R-1): ktdf.write_to_fifo %alloc, %fifo_out
 //   }
+//
+// When the iter_arg initializer is a conditional (scf.if), the pass recurses
+// into each branch and handles the yielded value:
+//
+//   %alloc = memref.alloc() : memref<CxDxf16, compute_kind>
+//   scf.if %cond {                     // no result; was -> (tensor<...>)
+//     linalg.fill(%zero, %alloc)       // was: tensor.empty + yield
+//   } else {
+//     %r = ktdf.read_from_fifo ...     // memref form of read_from_fifo
+//     memref.copy %r, %alloc
+//   }
+//   scf.for %r = 0 to R { ... }       // iter_arg stripped
 //
 // The iter_arg / loop result / scf.yield operand are stripped, and any
 // write_to_fifo that consumed the loop result is patched to use %alloc.
@@ -55,6 +68,7 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -87,6 +101,101 @@ static bool hasReductionIterator(linalg::GenericOp generic_op) {
 }
 
 // ---------------------------------------------------------------------------
+// Transform the initializer `init_val` of a loop-carried accumulator in-place,
+// emitting linalg.fill (or memref.copy) into `alloc_val` wherever the original
+// tensor value was produced.  `alloc_val` is a memref.alloc already emitted at
+// the top of the stage.
+//
+// Three leaf cases are handled; scf.if recurses into both branches:
+//
+//   tensor.empty()
+//     → linalg.fill(%zero, %alloc) inserted just before the tensor.empty,
+//       then the tensor.empty is erased.
+//
+//   ktdf.read_from_fifo ... -> tensor<...>
+//     → emit memref-typed read_from_fifo + memref.copy into %alloc just
+//       before the original op, then erase it.
+//
+//   scf.if %cond -> (tensor<...>) { yield A } else { yield B }
+//     → recurse on A (then-branch yield operand 0) and B (else-branch yield
+//       operand 0), drop the yield operands so both yields become result-less,
+//       then rebuild the scf.if with no result types.
+// ---------------------------------------------------------------------------
+static LogicalResult lowerIterArgInitializer(Value init_val, Value alloc_val) {
+  Operation* defining_op = init_val.getDefiningOp();
+  assert(defining_op &&
+         "lowerIterArgInitializer: init_val must be an op result");
+
+  Type elem_type = cast<MemRefType>(alloc_val.getType()).getElementType();
+
+  // ── Case: tensor.empty ────────────────────────────────────────────────────
+  if (auto empty_op = dyn_cast<tensor::EmptyOp>(defining_op)) {
+    OpBuilder builder(empty_op);
+    Location loc = empty_op.getLoc();
+    Value zero = arith::ConstantOp::create(
+        builder, loc, builder.getFloatAttr(elem_type, 0.0));
+    linalg::FillOp::create(builder, loc, ValueRange{zero},
+                           ValueRange{alloc_val});
+    empty_op->erase();
+    return success();
+  }
+
+  // ── Case: ktdf.read_from_fifo returning a tensor ──────────────────────────
+  if (auto read_op = dyn_cast<ktdf::ReadFromFifoOp>(defining_op)) {
+    auto tensor_type = cast<RankedTensorType>(read_op.getResult().getType());
+    auto memref_type =
+        MemRefType::get(tensor_type.getShape(), tensor_type.getElementType());
+    OpBuilder builder(read_op);
+    Location loc = read_op.getLoc();
+    Value new_read = ktdf::ReadFromFifoOp::create(builder, loc, memref_type,
+                                                  read_op.getFifoSlot())
+                         .getResult();
+    memref::CopyOp::create(builder, loc, new_read, alloc_val);
+    read_op->erase();
+    return success();
+  }
+
+  // ── Case: scf.if returning a tensor — recurse into both branches ──────────
+  if (auto if_op = dyn_cast<scf::IfOp>(defining_op)) {
+    // Drop the yield operand *before* recursing so that when the recursive
+    // call erases the defining op (e.g. tensor.empty) no uses remain.
+    {
+      auto then_yield =
+          cast<scf::YieldOp>(if_op.getThenRegion().front().getTerminator());
+      Value then_init = then_yield.getOperand(0);
+      then_yield->setOperands({});
+      if (failed(lowerIterArgInitializer(then_init, alloc_val)))
+        return failure();
+    }
+
+    {
+      auto else_yield =
+          cast<scf::YieldOp>(if_op.getElseRegion().front().getTerminator());
+      Value else_init = else_yield.getOperand(0);
+      else_yield->setOperands({});
+      if (failed(lowerIterArgInitializer(else_init, alloc_val)))
+        return failure();
+    }
+
+    // Rebuild the scf.if without result types and transfer the rewritten
+    // regions.
+    OpBuilder builder(if_op);
+    auto new_if =
+        scf::IfOp::create(builder, if_op.getLoc(),
+                          /*resultTypes=*/TypeRange{}, if_op.getCondition(),
+                          /*withElseRegion=*/true);
+    new_if.getThenRegion().takeBody(if_op.getThenRegion());
+    new_if.getElseRegion().takeBody(if_op.getElseRegion());
+    if_op.erase();
+    return success();
+  }
+
+  return defining_op->emitError(
+      "lowerIterArgInitializer: unrecognised initializer form — expected "
+      "tensor.empty, ktdf.read_from_fifo, or scf.if");
+}
+
+// ---------------------------------------------------------------------------
 // Walk up the iter_arg chain rooted at `acc_iter_arg` (outs[0] of the
 // original linalg.generic, captured before erasure) and rebuild each
 // enclosing scf.for without that iter_arg slot, replacing every use of
@@ -94,8 +203,11 @@ static bool hasReductionIterator(linalg::GenericOp generic_op) {
 //
 // After the innermost loop is rebuilt the old loop result may itself be an
 // iter_arg of an outer scf.for — we keep climbing until the chain exits a
-// scf.for.  The tensor.empty that initialised the innermost iter_arg is
-// erased at the end if it is now unused.
+// scf.for.
+//
+// The initializer at the top of the chain has already been handled by
+// lowerIterArgInitializer before this function is called, so it is NOT
+// erased here.
 //
 // Cannot remove an iter_arg in-place: getInitArgsMutable().erase() only drops
 // the operand but leaves the region block argument and loop result intact,
@@ -103,9 +215,6 @@ static bool hasReductionIterator(linalg::GenericOp generic_op) {
 // ---------------------------------------------------------------------------
 static void removeUnusedIterArgChain(BlockArgument acc_iter_arg,
                                      Value alloc_val) {
-  // Remember the init of the outermost iter_arg (tensor.empty) to erase later.
-  Value iter_init;
-
   // `current` starts as the innermost iter_arg and advances to the init of
   // that iter_arg at each level.
   Value current = acc_iter_arg;
@@ -118,7 +227,7 @@ static void removeUnusedIterArgChain(BlockArgument acc_iter_arg,
     unsigned iter_idx = iter_arg.getArgNumber() - 1;
 
     // Capture the init before rebuilding — this is what we advance to next.
-    iter_init = for_op.getInits()[iter_idx];
+    Value iter_init = for_op.getInits()[iter_idx];
 
     // Replace all uses of the dropped iter_arg and its loop result.
     Value loop_result = for_op.getResult(iter_idx);
@@ -171,9 +280,6 @@ static void removeUnusedIterArgChain(BlockArgument acc_iter_arg,
     current = iter_init;
     for_op.erase();
   }
-
-  if (iter_init && iter_init.use_empty())
-    if (auto* op = iter_init.getDefiningOp()) op->erase();
 }
 
 // ---------------------------------------------------------------------------
@@ -211,37 +317,60 @@ static LogicalResult rewriteGeneric(
   auto stage = generic_op->getParentOfType<ktdf::StageOp>();
   assert(stage && "expected enclosing ktdf.stage");
 
-  // Step 1: decide which memory kind backs the accumulator,
-  // and allocate the accumulator memref at the top of the stage.
+  // Step 1: decide which memory kind backs the accumulator.
   Attribute mem_space = group_local_mem.getLocalMemoryKindForStage(stage);
   if (!mem_space) return failure();
 
   OpBuilder builder(generic_op);
   Location loc = generic_op.getLoc();
 
-  builder.setInsertionPointToStart(stage.getBody());
   auto out_tensor_type =
       cast<RankedTensorType>(generic_op.getDpsInitOperand(0)->get().getType());
-
   auto alloc_type = MemRefType::get(out_tensor_type.getShape(),
                                     out_tensor_type.getElementType(),
                                     MemRefLayoutAttrInterface{}, mem_space);
+
+  // Step 2: allocate the accumulator memref at the top of the stage.
+  builder.setInsertionPointToStart(stage.getBody());
   auto alloc = memref::AllocOp::create(builder, loc, alloc_type);
 
-  // Step 2: zero-fill the accumulator.
-  builder.setInsertionPointAfter(alloc);
-  Value zero = arith::ConstantOp::create(
-      builder, loc,
-      builder.getFloatAttr(out_tensor_type.getElementType(), 0.0));
-  linalg::FillOp::create(builder, loc, ValueRange{zero},
-                         ValueRange{alloc.getResult()});
+  // Step 3: capture the iter_arg and walk up to find the outermost initializer
+  // before anything is erased.
+  assert(generic_op.getOutputs().size() == 1 &&
+         "rewriteGeneric: expected exactly one output on linalg.generic");
+  auto acc_iter_arg = dyn_cast<BlockArgument>(generic_op.getOutputs()[0]);
+  assert(acc_iter_arg &&
+         isa<scf::ForOp>(acc_iter_arg.getOwner()->getParentOp()) &&
+         "rewriteGeneric: outs[0] must be an iter_arg of an scf.for");
 
-  // Step 3: emit a new ktdf.read_from_fifo with a memref result type so the
+  Value outermost_init;
+  {
+    Value cursor = acc_iter_arg;
+    while (auto ba = dyn_cast<BlockArgument>(cursor)) {
+      auto for_op = cast<scf::ForOp>(ba.getOwner()->getParentOp());
+      assert(for_op);
+      outermost_init = for_op.getInits()[ba.getArgNumber() - 1];
+      cursor = outermost_init;
+    }
+  }
+  assert(outermost_init && "could not find iter_arg initializer");
+
+  // Step 4: replace all uses of the outermost initializer (e.g. the scf.for
+  // init operand) with alloc_val *before* lowering it, so that when
+  // lowerIterArgInitializer erases the defining op no uses remain.
+  outermost_init.replaceAllUsesWith(alloc.getResult());
+
+  // Step 4b: lower the initializer — emit linalg.fill (and/or memref.copy) in
+  // the right place and clean up tensor ops.
+  if (failed(lowerIterArgInitializer(outermost_init, alloc.getResult())))
+    return failure();
+
+  // Step 5: emit a new ktdf.read_from_fifo with a memref result type so the
   // buffer-semantics linalg.generic below has a pure-buffer input.
   builder.setInsertionPoint(generic_op);
   Value new_read = convertInputToMemref(builder, generic_op);
 
-  // Step 4: pure-buffer linalg.generic — memref ins + memref outs, no result.
+  // Step 6: pure-buffer linalg.generic — memref ins + memref outs, no result.
   auto buf_generic = linalg::GenericOp::create(
       builder, loc,
       /*resultTensorTypes=*/TypeRange{},
@@ -256,15 +385,7 @@ static LogicalResult rewriteGeneric(
   Block& placeholder = buf_generic.getRegion().front();
   if (&placeholder != &buf_generic.getRegion().back()) placeholder.erase();
 
-  // Step 5: assert exactly one output and capture its iter_arg before erasing.
-  assert(generic_op.getOutputs().size() == 1 &&
-         "rewriteGeneric: expected exactly one output on linalg.generic");
-  auto acc_iter_arg = dyn_cast<BlockArgument>(generic_op.getOutputs()[0]);
-  assert(acc_iter_arg &&
-         isa<scf::ForOp>(acc_iter_arg.getOwner()->getParentOp()) &&
-         "rewriteGeneric: outs[0] must be an iter_arg of an scf.for");
-
-  // Step 6: replace generic result with alloc, patch write_to_fifo users,
+  // Step 7: replace generic result with alloc, patch write_to_fifo users,
   // then erase the generic and its now-dead tensor read_from_fifo input.
   Value generic_result = generic_op.getResult(0);
   for (Operation* user : generic_result.getUsers())
@@ -278,7 +399,8 @@ static LogicalResult rewriteGeneric(
     if (auto* orig_input_op = orig_input.getDefiningOp())
       orig_input_op->erase();
 
-  // Step 7: walk up the iter_arg chain and rebuild each scf.for without it.
+  // Step 8: walk up the iter_arg chain and rebuild each scf.for without it.
+  // The initializer has already been transformed; no erasure is needed here.
   removeUnusedIterArgChain(acc_iter_arg, alloc.getResult());
   return success();
 }
