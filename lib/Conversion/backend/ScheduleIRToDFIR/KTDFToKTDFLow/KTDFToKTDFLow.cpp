@@ -152,6 +152,26 @@ static llvm::SmallVector<mlir::scf::ForOp, 2> collectDependentLoops(
   for (mlir::ktdf::DataTransferOp xfer : store_transfers)
     for (mlir::Value idx : xfer.getDestIndices()) worklist.push_back(idx);
 
+  // Also seed with operands of every parent op up to the stage boundary for
+  // both load and store transfers.  This is a conservative approximation of
+  // control + data dependence: it covers the pattern where the scratchpad
+  // address is constant (e.g. always [%arg0, 0, 0]) so the chunk IV does not
+  // appear in any index, but does appear in an enclosing scf.if condition or
+  // scf.for bound — any of which may be a parent op on the path to the stage.
+  // Walking all parent operands (not just the first scf.if condition) handles
+  // multiple levels of nested conditions and for-loop bounds uniformly.
+  auto seedParentOperands = [&](mlir::ktdf::DataTransferOp xfer) {
+    for (mlir::Operation* p = xfer->getParentOp(); p; p = p->getParentOp()) {
+      // Stop at the stage boundary — don't escape into enclosing stages.
+      if (mlir::isa<mlir::ktdf::StageOp>(p)) break;
+      for (mlir::Value operand : p->getOperands()) worklist.push_back(operand);
+    }
+  };
+  for (mlir::ktdf::DataTransferOp xfer : load_transfers)
+    seedParentOperands(xfer);
+  for (mlir::ktdf::DataTransferOp xfer : store_transfers)
+    seedParentOperands(xfer);
+
   while (!worklist.empty()) {
     mlir::Value v = worklist.pop_back_val();
     if (!visited.insert(v).second) continue;
