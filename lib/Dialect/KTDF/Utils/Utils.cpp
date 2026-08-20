@@ -26,7 +26,7 @@
 #include <llvm/Support/Debug.h>
 #include <mlir/Support/LLVM.h>
 
-#include <optional>
+#include <utility>
 
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"

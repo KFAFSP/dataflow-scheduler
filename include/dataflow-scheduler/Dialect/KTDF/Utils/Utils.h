@@ -25,7 +25,7 @@
 
 #include <llvm/ADT/SmallVector.h>
 
-#include <optional>
+#include <utility>
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
