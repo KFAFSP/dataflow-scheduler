@@ -74,7 +74,31 @@ def KTDFLowToDFIRPass : Pass<"ktdflowering-to-dfir", "mlir::ModuleOp"> {
     "mlir::ktdf::KTDFDialect",
     "mlir::ktdf_lowering::KTDFLoweringDialect",
     "mlir::ktdp::KtdpDialect",
+    "mlir::symbol::SymbolDialect",
     "mlir::uniform::UniformDialect"
+  ];
+}
+
+def WrapProgramDFIRPass : Pass<"wrap-program-dfir", "mlir::ModuleOp"> {
+  let summary = "Give each program two levels: what it is, and what it is compiled from";
+  let description = [{
+    A program of the run becomes a function of its own name and signature holding
+    what it is -- which of the run's inputs it is about, and which symbol each of
+    them is -- and an inner module holding a function of no arguments holding what
+    it is compiled from.
+
+    The symbol declarations move out of the DataflowIR into the outer function, so
+    that what is handed to code generation needs nothing only a caller could
+    supply. A program whose DataflowIR reads an argument for anything other than
+    saying what a symbol is cannot be compiled at all, and is reported.
+
+    Programs that already have two levels are left alone.
+  }];
+  let constructor = "::scheduler::createWrapProgramDFIRPass()";
+  let dependentDialects = [
+    "mlir::dataflow::DataflowDialect",
+    "mlir::func::FuncDialect",
+    "mlir::symbol::SymbolDialect"
   ];
 }
 

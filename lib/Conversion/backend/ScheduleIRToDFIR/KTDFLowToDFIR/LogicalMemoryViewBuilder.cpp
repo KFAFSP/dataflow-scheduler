@@ -19,6 +19,8 @@
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/LogicalMemoryViewBuilder.h"
 
 #include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
+#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
+#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/UniformInfra.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/UnitMaterializer.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
@@ -132,10 +134,9 @@ mlir::LogicalResult buildResolvedUnits(
   llvm::SetVector<ResourceType> per_core;
   for (auto ms : needed_spaces) {
     if (memory_tree.isGlobalMemory(ms) || memory_tree.isBelowScratchPad(ms)) {
-      auto it = memory_unit_ssa.find({ms, -1});
-      if (it == memory_unit_ssa.end())
-        return pu.emitError("global memory unit SSA not found");
-      resolved_units[ms] = it->second;
+      mlir::Value unit = memory_unit_ssa.lookup({ms, -1});
+      if (!unit) return pu.emitError("global memory unit SSA not found");
+      resolved_units[ms] = unit;
     } else if (memory_tree.isPerCoreScratchPadMemory(ms)) {
       per_core.insert(ms);
     }
@@ -162,6 +163,55 @@ mlir::AffineMap buildLinearizationMap(mlir::MLIRContext* ctx,
   return mlir::AffineMap::get(rank, 0, sum, ctx);
 }
 
+/// The size in bytes of the word the units \p pu runs on address in, when they
+/// reach \p memory_space.
+///
+/// Addressing is in words: a unit whose word is 128 bytes reads word 1 to reach
+/// byte 128. The device says the size per memory space, under the load feature
+/// of a unit that loads and the store feature of one that stores, and a unit
+/// that says nothing addresses in bytes.
+///
+/// The units of one program unit are instances of one kind on different cores:
+/// the load units of a load stage, the store units of a store stage. So the
+/// kind of the first answers for all of them, and a set that disagreed would
+/// mean one address in two granularities, which is reported.
+mlir::FailureOr<int64_t> wordSizeOf(
+    mlir::dataflow::ProgramUnitOp pu, ResourceType memory_space,
+    const scheduler::arch_view::ResourceKinds& resource_kinds) {
+  std::optional<int64_t> word_size;
+  for (mlir::Value unit : pu.getUnits()) {
+    auto get_unit = unit.getDefiningOp<mlir::dataflow::GetUnitOp>();
+    if (!get_unit)
+      return pu.emitError("program_unit operand is not a dataflow.get_unit");
+    auto type = get_unit->getAttrOfType<mlir::StringAttr>("type");
+    if (!type)
+      return get_unit->emitError("dataflow.get_unit has no 'type' attribute");
+
+    // The kind as the device spells it, which is upper case; the unit ops carry
+    // it lower case.
+    auto kind = mlir::StringAttr::get(pu.getContext(), type.getValue().upper());
+
+    int64_t of_this_unit = 1;
+    if (auto load =
+            resource_kinds.getFeature<mlir::ktdf_arch::feature::Load>(kind)) {
+      of_this_unit = static_cast<int64_t>(load.getWordSize(memory_space));
+    } else if (auto store =
+                   resource_kinds.getFeature<mlir::ktdf_arch::feature::Store>(
+                       kind)) {
+      of_this_unit = static_cast<int64_t>(store.getWordSize(memory_space));
+    }
+
+    if (word_size && *word_size != of_this_unit) {
+      return pu.emitError()
+             << "the units of one program unit address " << memory_space
+             << " in different word sizes (" << *word_size << " and "
+             << of_this_unit << "), so one address would need two symbols";
+    }
+    word_size = of_this_unit;
+  }
+  return word_size.value_or(1);
+}
+
 /// Phase 3b: replace Source A chains with get_logical_memory_view.
 /// Emits the view op and RAUWs the chain tail inline; does not populate
 /// `replacements` (Source A handles its own erasure).
@@ -175,7 +225,9 @@ mlir::AffineMap buildLinearizationMap(mlir::MLIRContext* ctx,
 mlir::LogicalResult replaceSourceAChains(
     mlir::dataflow::ProgramUnitOp pu,
     const llvm::DenseMap<ResourceType, mlir::Value>& resolved_units,
+    const scheduler::arch_view::ResourceKinds& resource_kinds,
     llvm::DenseMap<mlir::Value, mlir::Value>& replacements,
+    SymbolAllocator& symbols, mlir::OpBuilder& definitions,
     mlir::OpBuilder& builder) {
   auto* ctx = pu.getContext();
 
@@ -234,11 +286,43 @@ mlir::LogicalResult replaceSourceAChains(
         cursor = view.getViewDest();
       }
 
-      // Compute start_address = base_addr + reinterpret_offset, where the
-      // reinterpret offset may be a static constant OR a dynamic SSA value
-      // (e.g. a per-compute-tile offset). getConstifiedMixedOffset() yields an
-      // IntegerAttr for a static offset or the SSA Value for a dynamic one.
-      mlir::Value start_address = cmv.getOffset();
+      // Emitting the view, once the start address is settled -- shared by the
+      // symbolic path and the constant one, which arrive at that address in
+      // quite different ways but say the same thing with it.
+      auto emitView = [&](mlir::Value start_address) -> mlir::LogicalResult {
+        auto ms = getMemorySpaceAttr(cursor.getType());
+        if (!ms)
+          return cmv.emitError(
+              "construct_memory_view: no memory space found in chain");
+        mlir::Value unit = resolved_units.lookup(*ms);
+        if (!unit) return cmv.emitError("no resolved unit for memory space");
+
+        // Emit get_logical_memory_view with plain result type (no memory space,
+        // no strided layout). The builder is already positioned after the last
+        // chain op (and after any offset arithmetic just emitted), so no
+        // setInsertionPoint needed here.
+        auto view_op = mlir::dataflow::GetLogicalMemoryViewOp::create(
+            builder, cmv.getLoc(), plain_type, unit, start_address,
+            mlir::AffineMapAttr::get(layout_map));
+
+        // cursor is the tail of the chain, replace all its users with the new
+        // view.
+        cursor.replaceAllUsesWith(view_op.getData());
+
+        // Erase the now-dead chain tail-to-head. msc, rc and any other
+        // intermediates are all in the vector; reverse order handles
+        // dependencies.
+        for (auto* op : llvm::reverse(intermediates)) op->erase();
+        return mlir::success();
+      };
+
+      // Whether this tensor's address is computed from one of the run's inputs
+      // rather than from constants the compiler picked. If it is, no value
+      // stands for it here and the address is a symbol: see
+      // SymbolicStartAddress.h.
+      mlir::FailureOr<std::optional<SymbolicAddress>> taken =
+          takeSymbolicAddressApart(cmv.getOffset(), pu, symbols);
+      if (mlir::failed(taken)) return mlir::failure();
 
       mlir::OpFoldResult reinterpret_offset;
       if (rc) {
@@ -250,6 +334,42 @@ mlir::LogicalResult replaceSourceAChains(
         reinterpret_offset = mlir::OpFoldResult(builder.getIndexAttr(0));
         builder.setInsertionPointAfter(cursor.getDefiningOp());
       }
+
+      // A symbolic address is emitted whole: one symbol where every grid
+      // element reads the same address, one per element gathered into a uniform
+      // map where they do not. A displacement is a term of what each symbol is
+      // computed from rather than arithmetic at the view, because what code
+      // generation writes over has to be the operand itself. It is a term per
+      // grid element where the access tile read out of the view is the grid
+      // element's own slab of it, which is the other way of saying an address
+      // that varies with the grid.
+      if (taken->has_value()) {
+        mlir::FailureOr<Displacement> displacement =
+            takeDisplacementApart(reinterpret_offset, pu);
+        if (mlir::failed(displacement)) return mlir::failure();
+
+        auto memory_space = getMemorySpaceAttr(cursor.getType());
+        if (!memory_space)
+          return cmv.emitError(
+              "construct_memory_view: no memory space found in chain");
+        mlir::FailureOr<int64_t> word_size =
+            wordSizeOf(pu, *memory_space, resource_kinds);
+        if (mlir::failed(word_size)) return mlir::failure();
+
+        mlir::FailureOr<mlir::Value> symbolic = emitSymbolicStartAddress(
+            **taken, *displacement, *word_size, pu, symbols, builder,
+            definitions, cmv.getLoc());
+        if (mlir::failed(symbolic)) return mlir::failure();
+
+        if (mlir::failed(emitView(*symbolic))) return mlir::failure();
+        continue;
+      }
+
+      // Compute start_address = base_addr + reinterpret_offset, where the
+      // reinterpret offset may be a static constant OR a dynamic SSA value
+      // (e.g. a per-compute-tile offset). getConstifiedMixedOffset() yields an
+      // IntegerAttr for a static offset or the SSA Value for a dynamic one.
+      mlir::Value start_address = cmv.getOffset();
 
       if (auto offset_attr =
               mlir::dyn_cast<mlir::Attribute>(reinterpret_offset)) {
@@ -272,32 +392,7 @@ mlir::LogicalResult replaceSourceAChains(
                                                     start_address, offset_val);
       }
 
-      // Get from_unit.
-      auto ms = getMemorySpaceAttr(cursor.getType());
-      if (!ms)
-        return cmv.emitError(
-            "construct_memory_view: no memory space found in chain");
-      auto it = resolved_units.find(*ms);
-      if (it == resolved_units.end())
-        return cmv.emitError("no resolved unit for memory space");
-      mlir::Value from_unit = it->second;
-
-      // Emit get_logical_memory_view with plain result type (no memory space,
-      // no strided layout). The builder is already positioned after the last
-      // chain op (and after any offset arithmetic just emitted), so no
-      // setInsertionPoint needed here.
-      auto view_op = mlir::dataflow::GetLogicalMemoryViewOp::create(
-          builder, cmv.getLoc(), plain_type, from_unit, start_address,
-          mlir::AffineMapAttr::get(layout_map));
-
-      // cursor is the tail of the chain, replace all its users with the new
-      // view.
-      cursor.replaceAllUsesWith(view_op.getData());
-
-      // Erase the now-dead chain tail-to-head. msc, rc and any other
-      // intermediates are all in the vector; reverse order handles
-      // dependencies.
-      for (auto* op : llvm::reverse(intermediates)) op->erase();
+      if (mlir::failed(emitView(start_address))) return mlir::failure();
     }
 
     // All chains sourced from this cmv have been replaced; erase it now.
@@ -348,10 +443,8 @@ mlir::LogicalResult replaceSourceBCasts(
     auto ms = getMemorySpaceAttr(result_type);
     if (!ms)
       return ucc.emitError("unrealized_conversion_cast: no ktdf memory space");
-    auto it = resolved_units.find(*ms);
-    if (it == resolved_units.end())
-      return ucc.emitError("no resolved unit for memory space");
-    mlir::Value from_unit = it->second;
+    mlir::Value from_unit = resolved_units.lookup(*ms);
+    if (!from_unit) return ucc.emitError("no resolved unit for memory space");
 
     mlir::Value addr = ucc.getInputs()[0];
     auto plain_type =
@@ -440,7 +533,8 @@ mlir::LogicalResult propagateTypes(
 mlir::LogicalResult scheduler::buildLogicalMemoryViews(
     mlir::func::FuncOp func,
     const scheduler::arch_view::MemoryTree& memory_tree,
-    const SchedulerExtContext& ext_ctx) {
+    const scheduler::arch_view::ResourceKinds& resource_kinds,
+    const SchedulerExtContext& ext_ctx, SymbolAllocator& symbols) {
   LDBG(1) << "buildLogicalMemoryViews on " << func.getName();
 
   // Phase 1: discover needed memory spaces and prune dealloc-only casts.
@@ -474,6 +568,20 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
           needed_spaces, grid_size, memory_tree, memory_unit_ssa, builder)))
     return mlir::failure();
 
+  // Where each symbol's definition is emitted: at function level, not inside a
+  // program unit. A unit's region is one grid element's program, while a symbol
+  // belongs to the run as a whole. Nothing reads the values emitted here; they
+  // exist so that whatever resolves the symbols can read each definition back
+  // out of the IR.
+  mlir::OpBuilder definitions(func.getContext());
+  definitions.setInsertionPoint(&entry, builder.getInsertionPoint());
+
+  // Which input each of this function's arguments is, declared here rather than
+  // when the symbols were numbered. Declaring it earlier would have put it in
+  // the work the program units were built from, and each unit would have got a
+  // copy of it.
+  symbols.declareInputsIn(func, definitions);
+
   // Phase 3: per-program_unit rewrites.
   llvm::SmallVector<mlir::dataflow::ProgramUnitOp> program_units;
   func.walk([&](mlir::dataflow::ProgramUnitOp pu) {
@@ -496,8 +604,9 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
     llvm::DenseMap<mlir::Value, mlir::Value> replacements;
 
     // Phase 3b: Source A chains.
-    if (mlir::failed(
-            replaceSourceAChains(pu, resolved_units, replacements, builder)))
+    if (mlir::failed(replaceSourceAChains(pu, resolved_units, resource_kinds,
+                                          replacements, symbols, definitions,
+                                          builder)))
       return mlir::failure();
 
     // Phase 3c: Source B casts.
