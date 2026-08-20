@@ -21,7 +21,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
+#include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
+#include "ktir/Dialect/SpyreOp/SpyreOpDialect.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -42,11 +44,21 @@ namespace scheduler {
 
 namespace {
 
-// A scalar op inside a linalg.generic body is legal iff it is one of the
-// add/mul/sub float arith ops the backend lowers, or the yield terminator.
-bool isLegalGenericBodyOp(mlir::Operation* op) {
-  return mlir::isa<mlir::arith::AddFOp, mlir::arith::MulFOp,
-                   mlir::arith::SubFOp, mlir::linalg::YieldOp>(op);
+/// Determines whether @p op is legal within the body of a 'linalg.generic'.
+[[nodiscard]] auto isLegalGenericBodyOp(mlir::Operation* op) -> bool {
+  // Accept supported arith operations and the 'linalg.yield' terminator.
+  if (mlir::isa<mlir::arith::AddFOp, mlir::arith::MulFOp, mlir::arith::SubFOp,
+                mlir::linalg::YieldOp>(op)) {
+    return true;
+  }
+
+  // Accept 'spyreop' intrinsics.
+  if (mlir::isa<mlir::spyreop::SpyreOpDialect>(op->getDialect())) {
+    return true;
+  }
+
+  // Reject everything else.
+  return false;
 }
 
 struct KTIRLegalityCheckPass
