@@ -133,19 +133,23 @@
 // CHECK-NEXT:                     %[[CREATE_TOKEN_3:.*]] = ktdf.create_token : !ktdf.token
 // CHECK-NEXT:                     ktdf_lowering.execute_on %[[QUERY_MAP_2]], %[[QUERY_MAP_3]] {
 // CHECK-NEXT:                       %[[CMPI_0:.*]] = arith.cmpi ne, %[[VAL_6]], %[[CONSTANT_19]] : index
-// CHECK-NEXT:                       scf.if %[[CMPI_0]] {
+// CHECK-NEXT:                       %[[CMPI_1:.*]] = arith.cmpi ne, %[[VAL_0]], %[[CONSTANT_19]] : index
+// CHECK-NEXT:                       %[[ANDI_0:.*]] = arith.andi %[[CMPI_0]], %[[CMPI_1]] : i1
+// CHECK-NEXT:                       scf.if %[[ANDI_0]] {
 // CHECK-NEXT:                         ktdf_lowering.signal %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]]
 // CHECK-NEXT:                       }
 // CHECK-NEXT:                       ktdf.data_transfer from %[[SELECT_MEMREF_0]]{{\[}}%[[VAL_4]], %[[VAL_6]], 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] to %[[FIFO_0]]#0 size [64] : memref<?x?x1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
-// CHECK-NEXT:                       ktdf.data_transfer from %[[UNREALIZED_CONVERSION_CAST_5]]{{\[}}%[[VAL_0]], %[[VAL_6]], %[[CONSTANT_19]]] size [1, 1, 64] to %[[FIFO_0]]#1 size [64] : memref<6x32x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+// CHECK-NEXT:                       scf.for %[[VAL_7:.*]] = %[[CONSTANT_19]] to %[[CONSTANT_21]] step %[[CONSTANT_20]] {
+// CHECK-NEXT:                         ktdf.data_transfer from %[[UNREALIZED_CONVERSION_CAST_5]]{{\[}}%[[VAL_0]], %[[VAL_6]], %[[VAL_7]]] size [1, 1, 64] to %[[FIFO_0]]#1 size [64] : memref<6x32x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+// CHECK-NEXT:                       }
 // CHECK-NEXT:                     }
 // CHECK-NEXT:                     ktdf_lowering.execute_on %[[QUERY_MAP_4]], %[[QUERY_MAP_5]] {
 // CHECK-NEXT:                       %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[FIFO_0]]#0 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x1x1x64xf16>
 // CHECK-NEXT:                       %[[READ_FROM_FIFO_1:.*]] = ktdf.read_from_fifo %[[FIFO_0]]#1 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x64xf16>
 // CHECK-NEXT:                       %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x1x1x1x64xf16>
 // CHECK-NEXT:                       %[[GENERIC_0:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_1]], #[[$ATTR_2]], #[[$ATTR_3]]], iterator_types = ["parallel", "parallel", "parallel", "parallel", "parallel"]} ins(%[[READ_FROM_FIFO_0]], %[[READ_FROM_FIFO_1]] : tensor<1x1x1x64xf16>, tensor<1x64xf16>) outs(%[[EMPTY_0]] : tensor<1x1x1x1x64xf16>) {
-// CHECK-NEXT:                       ^bb0(%[[VAL_7:.*]]: f16, %[[VAL_8:.*]]: f16, %[[VAL_9:.*]]: f16):
-// CHECK-NEXT:                         %[[ADDF_0:.*]] = arith.addf %[[VAL_7]], %[[VAL_8]] : f16
+// CHECK-NEXT:                       ^bb0(%[[VAL_8:.*]]: f16, %[[VAL_9:.*]]: f16, %[[VAL_10:.*]]: f16):
+// CHECK-NEXT:                         %[[ADDF_0:.*]] = arith.addf %[[VAL_8]], %[[VAL_9]] : f16
 // CHECK-NEXT:                         linalg.yield %[[ADDF_0]] : f16
 // CHECK-NEXT:                       } -> tensor<1x1x1x1x64xf16>
 // CHECK-NEXT:                       ktdf.write_to_fifo %[[GENERIC_0]], %[[FIFO_1]] : tensor<1x1x1x1x64xf16>, <"SFU" -> "L1SU", 64xf16>
@@ -154,8 +158,11 @@
 // CHECK-NEXT:                       ktdf.data_transfer from %[[FIFO_1]] size [64] to %[[SELECT_MEMREF_1]]{{\[}}%[[VAL_4]], %[[VAL_6]], 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] : !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<?x?x1x1x1x1x64xf16, "L1">
 // CHECK-NEXT:                       ktdf.data_transfer from %[[FIFO_1]] size [64] to %[[UNREALIZED_CONVERSION_CAST_5]]{{\[}}%[[VAL_0]], %[[VAL_6]], %[[CONSTANT_19]]] size [1, 1, 64] : !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<6x32x64xf16, "L1">
 // CHECK-NEXT:                       %[[SUBI_0:.*]] = arith.subi %[[TILING_1]], %[[CONSTANT_20]] : index
-// CHECK-NEXT:                       %[[CMPI_1:.*]] = arith.cmpi ne, %[[VAL_6]], %[[SUBI_0]] : index
-// CHECK-NEXT:                       scf.if %[[CMPI_1]] {
+// CHECK-NEXT:                       %[[CMPI_2:.*]] = arith.cmpi ne, %[[VAL_6]], %[[SUBI_0]] : index
+// CHECK-NEXT:                       %[[SUBI_1:.*]] = arith.subi %[[CONSTANT_17]], %[[CONSTANT_20]] : index
+// CHECK-NEXT:                       %[[CMPI_3:.*]] = arith.cmpi ne, %[[VAL_0]], %[[SUBI_1]] : index
+// CHECK-NEXT:                       %[[ANDI_1:.*]] = arith.andi %[[CMPI_2]], %[[CMPI_3]] : i1
+// CHECK-NEXT:                       scf.if %[[ANDI_1]] {
 // CHECK-NEXT:                         ktdf_lowering.signal %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]]
 // CHECK-NEXT:                       }
 // CHECK-NEXT:                     }
@@ -166,11 +173,11 @@
 // CHECK-NEXT:             }
 // CHECK-NEXT:             ktdf_lowering.signal %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_1]]
 // CHECK-NEXT:             ktdf_lowering.execute_on %[[QUERY_MAP_1]] {
-// CHECK-NEXT:               scf.for %[[VAL_10:.*]] = %[[CONSTANT_19]] to %[[TILING_0]] step %[[CONSTANT_20]] {
-// CHECK-NEXT:                 scf.for %[[VAL_11:.*]] = %[[CONSTANT_19]] to %[[TILING_1]] step %[[CONSTANT_20]] {
-// CHECK-NEXT:                   %[[APPLY_2:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_0]], %[[VAL_10]])
-// CHECK-NEXT:                   %[[APPLY_3:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_1]], %[[VAL_11]])
-// CHECK-NEXT:                   ktdf.data_transfer from %[[SELECT_MEMREF_1]]{{\[}}%[[VAL_10]], %[[VAL_11]], 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] to %[[CAST_2]]{{\[}}%[[VAL_0]] * 2 + %[[VAL_10]], 0, 0, %[[VAL_1]] * 2 + %[[VAL_11]], 0] size [1, 1, 1, 1, 64] : memref<?x?x1x1x1x1x64xf16, "L1">, memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
+// CHECK-NEXT:               scf.for %[[VAL_11:.*]] = %[[CONSTANT_19]] to %[[TILING_0]] step %[[CONSTANT_20]] {
+// CHECK-NEXT:                 scf.for %[[VAL_12:.*]] = %[[CONSTANT_19]] to %[[TILING_1]] step %[[CONSTANT_20]] {
+// CHECK-NEXT:                   %[[APPLY_2:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_0]], %[[VAL_11]])
+// CHECK-NEXT:                   %[[APPLY_3:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_1]], %[[VAL_12]])
+// CHECK-NEXT:                   ktdf.data_transfer from %[[SELECT_MEMREF_1]]{{\[}}%[[VAL_11]], %[[VAL_12]], 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] to %[[CAST_2]]{{\[}}%[[VAL_0]] * 2 + %[[VAL_11]], 0, 0, %[[VAL_1]] * 2 + %[[VAL_12]], 0] size [1, 1, 1, 1, 64] : memref<?x?x1x1x1x1x64xf16, "L1">, memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
 // CHECK-NEXT:                 }
 // CHECK-NEXT:               }
 // CHECK-NEXT:             }
@@ -183,24 +190,27 @@
 
 
 // Test that backedge signal guards check conditions only on IVs of scf.for
-// loops that are ancestors of the inner pipeline up to (but not including)
-// the enclosing ktdf.parallel.
+// loops that are ancestors of the pipeline.
 //
 // The load stage (L1LU) has two transfers:
 //   - first transfer: reads from %11 (no loop-carried dependency, no backedge)
-//   - second transfer: reads %scratchpad[%arg0, %arg4, 0] — loop-carried RAW
-//     with the store stage.
+//   - second transfer: wrapped in an inner scf.for %arg5 inside the stage body;
+//     reads %scratchpad[%arg0, %arg4, %arg5] — loop-carried RAW with the store
+//     stage.  %arg5 lives inside the load stage so has no dependency with the store
+//     stage and thus must NOT appear in the guard condition.
 // The store stage (L1SU) writes back to %scratchpad[%arg0, %arg4, 0].
 //
 // The inner pipeline is nested inside:
 //   scf.for %arg0 -> scf.for %arg1 -> ktdf.parallel -> scf.for %arg4 -> pipeline
-// Only the IV of scf.for %arg4 is eligible for guard conditions.
+// %arg0 and %arg4 are both ancestor loops, so both IVs are eligible for guard conditions.
+// %arg5 (inside the load stage,) is not an ancestor of the pipeline and
+// must be excluded from the guard.
 //
-// Expected backedge guards (condition on %arg4 IV only):
+// Expected backedge guards (condition on %arg4 AND %arg0 IVs):
 //   recv guard at top of load_stage body:
-//     cmpi ne(%arg4, lb) => scf.if { signal }
+//     cmpi ne(%arg4, lb) AND cmpi ne(%arg0, lb) => scf.if { signal }
 //   send guard at bottom of store_stage body:
-//     cmpi ne(%arg4, ub-step) => scf.if { signal }
+//     cmpi ne(%arg4, ub-step) AND cmpi ne(%arg0, ub-step) => scf.if { signal }
 
 
 
@@ -304,12 +314,16 @@ module {
                       ktdf.private_yield %15#0, %15#1, %16, %17, %18 : !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>, !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, !ktdf.token, !ktdf.token
                     }
                     // load_stage: first transfer from %11 has no loop-carried
-                    // dependency (no backedge signal); second transfer from
-                    // %scratchpad[%arg0, %arg4, 0] creates a two-loop backedge
-                    // (outer %arg0, inner %arg4).
+                    // dependency (no backedge signal); second transfer is
+                    // wrapped in an inner scf.for %arg5 and reads
+                    // %scratchpad[%arg0, %arg4, %arg5].  %arg5 is inside the
+                    // stage (not an ancestor of the pipeline) so it must not
+                    // appear in the backedge guard condition.
                     ktdf.stage depends_in(none) depends_out(%14#3) {
                       ktdf.data_transfer from %11[%arg2, %arg4, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] to %14#0 size [64] : memref<?x?x1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
-                      ktdf.data_transfer from %scratchpad[%arg0, %arg4, %c0] size [1, 1, 64] to %14#1 size [64] : memref<6x32x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+                      scf.for %arg5 = %c0 to %c64 step %c1 {
+                        ktdf.data_transfer from %scratchpad[%arg0, %arg4, %arg5] size [1, 1, 64] to %14#1 size [64] : memref<6x32x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+                      }
                     } {applicable_units = ["L1LU"]}
                     ktdf.stage depends_in(%14#3) depends_out(%14#4) {
                       %15 = ktdf.read_from_fifo %14#0 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x1x1x64xf16>

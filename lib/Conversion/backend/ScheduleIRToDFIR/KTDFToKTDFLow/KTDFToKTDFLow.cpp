@@ -105,25 +105,21 @@ static bool stageHasBackedgeDependency(
 }
 
 // ---------------------------------------------------------------------------
-// Collect the scf.for loops that are ancestors of `pipeline` up to (but not
-// including) the enclosing ktdf.parallel (or the function root if there is
-// none).
+// Collect all scf.for loops that are ancestors of `pipeline`.
 // ---------------------------------------------------------------------------
-static llvm::DenseSet<mlir::Operation*> collectAncestorLoopsInsideParallel(
+static llvm::DenseSet<mlir::Operation*> collectAncestorLoops(
     mlir::ktdf::PipelineOp pipeline) {
   llvm::DenseSet<mlir::Operation*> loops;
-  for (mlir::Operation* p = pipeline->getParentOp(); p; p = p->getParentOp()) {
-    if (mlir::isa<mlir::ktdf::ParallelOp>(p)) break;
+  for (mlir::Operation* p = pipeline->getParentOp(); p; p = p->getParentOp())
     if (mlir::isa<mlir::scf::ForOp>(p)) loops.insert(p);
-  }
   return loops;
 }
 
 // ---------------------------------------------------------------------------
 // Walk the def-use chains of each transfer's indices and collect the distinct
 // scf.for loops whose induction variables appear in those chains, restricted
-// to loops in `ancestor_loops` (ancestor loops of the enclosing pipeline up
-// to the nearest ktdf.parallel).
+// to loops in `ancestor_loops` (all ancestor scf.for loops of the enclosing
+// pipeline).
 //
 // Algorithm:
 //   - Maintain a worklist of Values, seeded with:
@@ -276,7 +272,7 @@ static void addScfForPipelineBackEdges(
         });
 
         llvm::DenseSet<mlir::Operation*> ancestor_loops =
-            collectAncestorLoopsInsideParallel(pipeline);
+            collectAncestorLoops(pipeline);
         llvm::SmallVector<mlir::scf::ForOp, 2> dependent_loops =
             collectDependentLoops(transfers_with_dependency, store_transfers,
                                   ancestor_loops);
