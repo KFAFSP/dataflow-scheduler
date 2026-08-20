@@ -44,8 +44,8 @@ void scheduler::buildKTIRFrontendPipeline(
   //   - The scheduler has not made any mapping / scheduling decisions yet.
   //  -> Apply patterns that subtitute front-end constructs that might make
   //     scheduler-illegal programs legal.
-  pm.addNestedPass<mlir::func::FuncOp>(
-      mlir::ktdf_arch::createApplyPatternsPass({"pre_mapping"}));
+  // pm.addNestedPass<mlir::func::FuncOp>(
+  //     mlir::ktdf_arch::createApplyPatternsPass({"pre_mapping"}));
 
   pm.addPass(createKTIRLegalityCheckPass());
   pm.addPass(createComputeGroupExtractionPass());
@@ -87,6 +87,16 @@ void scheduler::buildSchedulerOptimizationPipeline(
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(createAffineMinCanonicalizationPass());
   pm.addPass(mlir::ktdf::createSubsumeLinearizeIndexPass());
+
+  // Checkpoint 'post_scheduling':
+  //   - The input is 'ktdf' on memories and FIFOs, but memory is not yet
+  //     allocated and parallelization has not happened.
+  //   - The scheduler has decided on the final pipeline structure, tile sizes
+  //     and materialized concrete trip counts.
+  //  -> Apply patterns that add/remove allocations or coalesce FIFOs.
+  // pm.nest<mlir::ModuleOp>().addNestedPass<mlir::func::FuncOp>(
+  //     mlir::ktdf_arch::createApplyPatternsPass({"post_scheduling"}));
+
   pm.addPass(createAddressAssignmentPass(scheduler_ctx));
   // TODO: position of cross-instance parallelization is TBD
   // pm.addPass(createParallelizeLoopsAcrossInstancesPass(scheduler_ctx));
@@ -102,8 +112,8 @@ void scheduler::buildDFIRBackendPipeline(
   //     the execution unit program scopes.
   //   - The scheduler is down to using memory buffers, but still uses SSA.
   //  -> Apply patterns that produce custom DFIR.
-  pm.nest<mlir::ModuleOp>().addNestedPass<mlir::func::FuncOp>(
-      mlir::ktdf_arch::createApplyPatternsPass({"post_lowering"}));
+  // pm.nest<mlir::ModuleOp>().addNestedPass<mlir::func::FuncOp>(
+  //     mlir::ktdf_arch::createApplyPatternsPass({"post_lowering"}));
 
   pm.addPass(createKTDFLowToDFIRPass());
 }
