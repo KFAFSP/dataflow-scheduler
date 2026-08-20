@@ -22,12 +22,15 @@
 
 #include "dataflow-scheduler/Pipeline.h"
 
+#include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/IR/BuiltinOps.h>
 #include <mlir/Pass/PassManager.h>
 #include <mlir/Transforms/Passes.h>
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/Passes.h"
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Transforms/ApplyPatterns.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
@@ -36,6 +39,14 @@ using namespace scheduler;
 
 void scheduler::buildKTIRFrontendPipeline(
     mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
+  // Checkpoint 'pre_mapping':
+  //   - The input is legal KTIR, but not necessarily scheduler-legal.
+  //   - The scheduler has not made any mapping / scheduling decisions yet.
+  //  -> Apply patterns that subtitute front-end constructs that might make
+  //     scheduler-illegal programs legal.
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::ktdf_arch::createApplyPatternsPass({"pre_mapping"}));
+
   pm.addPass(createKTIRLegalityCheckPass());
   pm.addPass(createComputeGroupExtractionPass());
   pm.addPass(createConstructThreeStagePipelinePass(scheduler_ctx));
@@ -43,9 +54,16 @@ void scheduler::buildKTIRFrontendPipeline(
 
 void scheduler::buildSchedulerOptimizationPipeline(
     mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
-  // TODO: Check state / CLI arguments to determine which pattern groups to
-  //       enable. E.g., device variants, relaxed numerics, ...
-  pm.addPass(mlir::ktdf_arch::createApplyPatternsPass());
+  // Checkpoint 'pre_scheduling':
+  //   - The input is 'ktdf' with nested modules (!), but not necessarily
+  //     platform-legal.
+  //   - The scheduler has placed some (but most likely not all) mapping
+  //     constraints in the IR.
+  //  -> Apply patterns that introduce or rewrite mapping constraints or
+  //     interact with 'ktdf'.
+  pm.nest<mlir::ModuleOp>().addNestedPass<mlir::func::FuncOp>(
+      mlir::ktdf_arch::createApplyPatternsPass({"pre_scheduling"}));
+
   pm.addPass(createPathExpansionPass(scheduler_ctx));
   pm.addPass(createScalarBroadcastLegalizationPass());
   pm.addPass(createNormalizeSCFForLoopsPass());
@@ -78,6 +96,15 @@ void scheduler::buildSchedulerOptimizationPipeline(
 void scheduler::buildDFIRBackendPipeline(
     mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
   pm.addPass(createKTDFToKTDFLoweringPass(scheduler_ctx));
+
+  // Checkpoint 'post_lowering':
+  //   - The input is a mix of 'ktdf' and 'ktdf_lowering', but has materialized
+  //     the execution unit program scopes.
+  //   - The scheduler is down to using memory buffers, but still uses SSA.
+  //  -> Apply patterns that produce custom DFIR.
+  pm.nest<mlir::ModuleOp>().addNestedPass<mlir::func::FuncOp>(
+      mlir::ktdf_arch::createApplyPatternsPass({"post_lowering"}));
+
   pm.addPass(createKTDFLowToDFIRPass());
 }
 

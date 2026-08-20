@@ -17,11 +17,16 @@
 
 // CHECK:        builtin.module(
 // CHECK-NEXT:   ensure-device-declaration
+// CHECK-NEXT:   func.func(
+// CHECK-NEXT:   ktdfarch-apply-patterns{groups={pre_mapping}}
+// CHECK-NEXT:   )
 // CHECK-NEXT:   ktir-legality-check
 // CHECK-NEXT:   compute-group-extraction
 // CHECK-NEXT:   construct-three-stage-pipeline
+// CHECK-NEXT:   builtin.module(
 // CHECK-NEXT:   func.func(
-// CHECK-NEXT:   ktdfarch-apply-patterns
+// CHECK-NEXT:   ktdfarch-apply-patterns{groups={pre_scheduling}}
+// CHECK-NEXT:   )
 // CHECK-NEXT:   )
 // CHECK-NEXT:   path-expansion
 // CHECK-NEXT:   scalar-broadcast-legalization
@@ -43,6 +48,11 @@
 // CHECK-NEXT:   address-assignment
 // CHECK-NEXT:   normalize-grid-to-1d
 // CHECK-NEXT:   ktdf-to-ktdflowering
+// CHECK-NEXT:   builtin.module(
+// CHECK-NEXT:   func.func(
+// CHECK-NEXT:   ktdfarch-apply-patterns{groups={post_lowering}}
+// CHECK-NEXT:   )
+// CHECK-NEXT:   )
 // CHECK-NEXT:   ktdflowering-to-dfir
 // CHECK-NEXT:   emit-split-dfir
 
