@@ -20,8 +20,10 @@
 // CHECK-NEXT:   ktir-legality-check
 // CHECK-NEXT:   compute-group-extraction
 // CHECK-NEXT:   construct-three-stage-pipeline
+// CHECK-NEXT:   builtin.module(
 // CHECK-NEXT:   func.func(
-// CHECK-NEXT:   ktdfarch-apply-patterns
+// CHECK-NEXT:   ktdfarch-apply-patterns{groups={pre_scheduling}}
+// CHECK-NEXT:   )
 // CHECK-NEXT:   )
 // CHECK-NEXT:   path-expansion
 // CHECK-NEXT:   scalar-broadcast-legalization

@@ -55,6 +55,7 @@
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "ktir/Dialect/KTDP/KTDPDialect.h"
+#include "ktir/Dialect/SpyreOp/SpyreOpDialect.h"
 
 using namespace scheduler;
 
@@ -76,7 +77,7 @@ void scheduler::registerDialects(mlir::DialectRegistry& registry) {
   // clang-format off
 
   // Register the dialects required from KTIR.
-  registry.insert<mlir::ktdp::KtdpDialect>();
+  registry.insert<mlir::ktdp::KtdpDialect, mlir::spyreop::SpyreOpDialect>();
 
   // Register the dialects defined in the scheduler.
   registry.insert<mlir::agen::AgenDialect,

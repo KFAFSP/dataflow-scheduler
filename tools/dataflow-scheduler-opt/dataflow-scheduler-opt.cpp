@@ -49,6 +49,13 @@ void registerPassPipelinesForScheduler() {
       llvm::cl::value_desc("filename"), llvm::cl::init(""));
 
   mlir::PassPipelineRegistration<>(
+      "ktir-to-dfir", "Schedule and lower KTIR to DataflowIR",
+      [&](mlir::OpPassManager& pm) {
+        scheduler::buildKTDPToDFIRPipeline(
+            pm, scheduler::SchedulerExtContext::dummyContext());
+      });
+
+  mlir::PassPipelineRegistration<>(
       "kEmitDFIR", "Emit DataflowIR", [&](mlir::OpPassManager& pm) {
         scheduler::EnsureDeviceDeclarationPassOptions options;
         options.deviceFileName = schedulerDeviceFilename.getValue();
