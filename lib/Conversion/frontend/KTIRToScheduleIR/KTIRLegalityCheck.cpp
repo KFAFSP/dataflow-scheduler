@@ -35,6 +35,10 @@
 #define PASS_NAME "ktir-legality-check"
 #define DEBUG_TYPE PASS_NAME
 
+static llvm::cl::opt<bool> DisableThisPass(
+    "disable-" PASS_NAME, llvm::cl::desc("Disable KTIR Legality Check pass"),
+    llvm::cl::init(false));
+
 using namespace scheduler;
 
 namespace scheduler {
@@ -64,6 +68,7 @@ namespace {
 struct KTIRLegalityCheckPass
     : public impl::KTIRLegalityCheckPassBase<KTIRLegalityCheckPass> {
   void runOnOperation() final {
+    if (DisableThisPass) return;
     LDBG(1) << "========= " PASS_NAME " =========";
     mlir::ModuleOp module = getOperation();
     bool failed = false;

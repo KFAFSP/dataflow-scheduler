@@ -36,6 +36,14 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
+#define PASS_NAME "subsume-linearize-index"
+#define DEBUG_TYPE PASS_NAME
+
+static llvm::cl::opt<bool> DisableThisPass(
+    "disable-" PASS_NAME,
+    llvm::cl::desc("Disable Subsume Linearize Index pass"),
+    llvm::cl::init(false));
+
 using namespace mlir;
 
 namespace mlir::ktdf {
@@ -97,6 +105,7 @@ struct SubsumeLinearizeIndexPass
     : public ktdf::impl::SubsumeLinearizeIndexPassBase<
           SubsumeLinearizeIndexPass> {
   void runOnOperation() override {
+    if (DisableThisPass) return;
     IRRewriter rewriter(&getContext());
     llvm::SmallVector<ktdf::DataTransferOp> transfers;
     getOperation()->walk(

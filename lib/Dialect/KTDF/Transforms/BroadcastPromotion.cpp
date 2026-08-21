@@ -39,6 +39,10 @@
 #define PASS_NAME "broadcast-promotion"
 #define DEBUG_TYPE PASS_NAME
 
+static llvm::cl::opt<bool> DisableThisPass(
+    "disable-" PASS_NAME, llvm::cl::desc("Disable Broadcast Promotion pass"),
+    llvm::cl::init(false));
+
 using namespace mlir;
 
 namespace mlir::ktdf {
@@ -168,6 +172,7 @@ struct BroadcastPromotionPass
       BroadcastPromotionPass>::BroadcastPromotionPassBase;
 
   void runOnOperation() override {
+    if (DisableThisPass) return;
     LDBG(1) << "========= " PASS_NAME " =========";
     ModuleOp module = getOperation();
     bool changed = true;

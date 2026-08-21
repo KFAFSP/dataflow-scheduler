@@ -26,10 +26,18 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/FileUtilities.h"
 
+#define PASS_NAME "ensure-device-declaration"
+#define DEBUG_TYPE PASS_NAME
+
 namespace scheduler {
 #define GEN_PASS_DEF_ENSUREDEVICEDECLARATIONPASS
 #include "dataflow-scheduler/Transforms/Passes.h.inc"
 }  // namespace scheduler
+
+static llvm::cl::opt<bool> DisableThisPass(
+    "disable-" PASS_NAME,
+    llvm::cl::desc("Disable Ensure Device Declaration pass"),
+    llvm::cl::init(false));
 
 using namespace scheduler;
 
@@ -100,6 +108,7 @@ struct EnsureDeviceDeclarationPass
           EnsureDeviceDeclarationPass> {
   using EnsureDeviceDeclarationPassBase::EnsureDeviceDeclarationPassBase;
   void runOnOperation() override {
+    if (DisableThisPass) return;
     if (mlir::failed(
             injectDevice(getOperation(), deviceFileName, deviceName))) {
       signalPassFailure();

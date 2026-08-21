@@ -62,6 +62,10 @@
 #define PASS_NAME "stage-coarsening"
 #define DEBUG_TYPE PASS_NAME
 
+static llvm::cl::opt<bool> DisableThisPass(
+    "disable-" PASS_NAME, llvm::cl::desc("Disable Stage Coarsening pass"),
+    llvm::cl::init(false));
+
 using namespace mlir;
 
 namespace mlir::ktdf {
@@ -154,6 +158,7 @@ struct StageCoarseningPass
 //===----------------------------------------------------------------------===//
 
 void StageCoarseningPass::runOnOperation() {
+  if (DisableThisPass) return;
   LDBG(1) << "========= " PASS_NAME " =========";
   auto module_op = getOperation();
 

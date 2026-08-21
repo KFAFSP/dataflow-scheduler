@@ -52,12 +52,19 @@
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/Pass.h"
 
+#define PASS_NAME "split-dfir-output"
+#define DEBUG_TYPE PASS_NAME
+
 using namespace scheduler;
 
 namespace scheduler {
 #define GEN_PASS_DEF_SPLITDFIROUTPUTPASS
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/Passes.h.inc"
 }  // namespace scheduler
+
+static llvm::cl::opt<bool> DisableThisPass(
+    "disable-" PASS_NAME, llvm::cl::desc("Disable Split DFIR Output pass"),
+    llvm::cl::init(false));
 
 namespace {
 
@@ -67,6 +74,7 @@ struct SplitDFIROutputPass
   explicit SplitDFIROutputPass(llvm::StringRef dir) { outputDir = dir.str(); }
 
   void runOnOperation() override {
+    if (DisableThisPass) return;
     mlir::ModuleOp top_module = getOperation();
 
     // Validate: exactly two child modules required.

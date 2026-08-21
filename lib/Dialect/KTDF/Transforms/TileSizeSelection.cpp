@@ -41,6 +41,10 @@
 #define PASS_NAME "tile-size-selection"
 #define DEBUG_TYPE PASS_NAME
 
+static llvm::cl::opt<bool> DisableThisPass(
+    "disable-" PASS_NAME, llvm::cl::desc("Disable Tile Size Selection pass"),
+    llvm::cl::init(false));
+
 using namespace mlir;
 
 namespace mlir::ktdf {
@@ -178,6 +182,7 @@ std::optional<int64_t> chooseTileSize(
 struct TileSizeSelectionPass
     : public ktdf::impl::TileSizeSelectionPassBase<TileSizeSelectionPass> {
   void runOnOperation() override {
+    if (DisableThisPass) return;
     LDBG(1) << "========= " PASS_NAME " =========";
     ModuleOp module = getOperation();
 

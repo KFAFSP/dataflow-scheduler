@@ -25,6 +25,14 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
+#define PASS_NAME "normalize-scf-for-loops"
+#define DEBUG_TYPE PASS_NAME
+
+static llvm::cl::opt<bool> DisableThisPass(
+    "disable-" PASS_NAME,
+    llvm::cl::desc("Disable Normalize SCF For Loops pass"),
+    llvm::cl::init(false));
+
 using namespace scheduler;
 
 namespace scheduler {
@@ -81,6 +89,7 @@ struct NormalizeSCFForLoopsPass
       NormalizeSCFForLoopsPass>::NormalizeSCFForLoopsPassBase;
 
   void runOnOperation() override {
+    if (DisableThisPass) return;
     mlir::Operation* op = getOperation();
     mlir::IRRewriter rewriter(op->getContext());
 
