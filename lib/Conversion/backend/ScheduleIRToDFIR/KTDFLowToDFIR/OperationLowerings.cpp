@@ -603,10 +603,6 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
       "dataflow_scheduler.register_size";
   static constexpr llvm::StringLiteral kRegisterNamesAttrName =
       "dataflow_scheduler.register_names";
-  static constexpr llvm::StringLiteral kReadOnlyDictAttrName =
-      "read_only_register_dictionary";
-  static constexpr llvm::StringLiteral kReadWriteDictAttrName =
-      "read_write_register_dictionary";
 
   struct NoneAttr : mlir::TypeAttr {
     [[nodiscard]] static auto classof(Attribute attr) -> bool {
@@ -668,33 +664,49 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
                                          "unable to map registers");
     }
 
-    // Create a 'dataflow.opaque' op that inherits the discardable attributes.
-    //
-    // It requires all three dictionaries, and a 'ktdf.opaque' has no field for
-    // two of them, so those start empty here. Reading them back off the created
-    // operation instead gives a null attribute, which the merge below walks
-    // into.
+    // Extract the inherent attributes values from the discardable dict.
     mlir::NamedAttrList attributes(opaque->getRawDictionaryAttrs());
-    const auto empty = rewriter.getDictionaryAttr({});
-    if (!attributes.get(kReadOnlyDictAttrName)) {
-      attributes.set(kReadOnlyDictAttrName, empty);
+    mlir::OperationName op_name(mlir::dataflow::OpaqueOp::getOperationName(),
+                                rewriter.getContext());
+
+    // func_name
+    const auto func_name =
+        llvm::dyn_cast_if_present<mlir::StringAttr>(attributes.erase(
+            mlir::dataflow::OpaqueOp::getFuncNameAttrName(op_name)));
+    if (!func_name) {
+      return rewriter.notifyMatchFailure(opaque.getLoc(),
+                                         "missing 'func_name' attribute");
     }
-    if (!attributes.get(kReadWriteDictAttrName)) {
-      attributes.set(kReadWriteDictAttrName, empty);
+    // read_only_register_dictionary
+    if (const auto attr =
+            llvm::dyn_cast_if_present<mlir::DictionaryAttr>(attributes.erase(
+                mlir::dataflow::OpaqueOp::getReadOnlyRegisterDictionaryAttrName(
+                    op_name)))) {
+      read_only.append(attr);
+    }
+    // read_write_register_dictionary
+    if (const auto attr = llvm::dyn_cast_if_present<
+            mlir::DictionaryAttr>(attributes.erase(
+            mlir::dataflow::OpaqueOp::getReadWriteRegisterDictionaryAttrName(
+                op_name)))) {
+      read_write.append(attr);
+    }
+    // parameter_dictionary
+    mlir::NamedAttrList parameters;
+    if (const auto attr =
+            llvm::dyn_cast_if_present<mlir::DictionaryAttr>(attributes.erase(
+                mlir::dataflow::OpaqueOp::getParameterDictionaryAttrName(
+                    op_name)))) {
+      parameters.append(attr);
     }
 
-    auto df_opaque = mlir::dataflow::OpaqueOp::create(
-        rewriter, opaque.getLoc(), {}, {}, attributes.getAttrs());
-
-    // Map the register names to IDs and weakly inject them into the attributes.
-    read_only.append(df_opaque.getReadOnlyRegisterDictionary());
-    df_opaque.setReadOnlyRegisterDictionaryAttr(
-        read_only.getDictionary(getContext()));
-    read_write.append(df_opaque.getReadWriteRegisterDictionary());
-    df_opaque.setReadWriteRegisterDictionaryAttr(
-        read_write.getDictionary(getContext()));
-
-    rewriter.replaceOp(opaque, df_opaque);
+    auto df_opaque = rewriter.replaceOpWithNewOp<mlir::dataflow::OpaqueOp>(
+        opaque, mlir::StringAttr{}, func_name,
+        read_write.getDictionary(rewriter.getContext()),
+        read_only.getDictionary(rewriter.getContext()),
+        parameters.getDictionary(rewriter.getContext()));
+    // Apply all the remaining discardable attributes.
+    df_opaque->setDiscardableAttrs(attributes);
     return llvm::success();
   }
 
