@@ -458,11 +458,30 @@ mlir::LogicalResult replaceSourceBCasts(
     mlir::Value from_unit = resolved_units.lookup(*ms);
     if (!from_unit) return ucc.emitError("no resolved unit for memory space");
 
-    mlir::Value addr = ucc.getInputs()[0];
     auto plain_type =
         mlir::MemRefType::get(shape, result_type.getElementType());
 
     builder.setInsertionPoint(ucc);
+
+    // An address in Dataflow IR counts elements; what address assignment picked
+    // counts bytes. Convert, or every allocation but the one at zero is read at
+    // element_size times the address it was given -- which is why this only
+    // shows on a memory holding more than one of them.
+    mlir::Value addr = ucc.getInputs()[0];
+    const auto element_bytes =
+        getElementSizeBytes(result_type.getElementType());
+    if (element_bytes > 1) {
+      if (auto constant = addr.getDefiningOp<mlir::arith::ConstantIndexOp>()) {
+        addr = mlir::arith::ConstantIndexOp::create(
+            builder, ucc.getLoc(), constant.value() / element_bytes);
+      } else {
+        auto divisor = mlir::arith::ConstantIndexOp::create(
+            builder, ucc.getLoc(), element_bytes);
+        addr =
+            mlir::arith::DivSIOp::create(builder, ucc.getLoc(), addr, divisor);
+      }
+    }
+
     auto view_op = mlir::dataflow::GetLogicalMemoryViewOp::create(
         builder, ucc.getLoc(), plain_type, from_unit, addr,
         mlir::AffineMapAttr::get(layout_map));

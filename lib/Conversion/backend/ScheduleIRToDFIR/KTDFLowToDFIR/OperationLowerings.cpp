@@ -36,6 +36,7 @@
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
+#include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Conversion/Utils/Utils.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/BufferPhaseLowering.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/DataTransferLowering.h"
@@ -793,15 +794,33 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
         return llvm::failure();
       }
 
-      // Compute the index of the register addressed by the operand.
-      if (*address % register_size != 0) {
-        opaque.emitError("slot ")
-            << value << " address (" << llvm::toHex(*address)
-            << ") is not a multiple of the register size (" << register_size
-            << ")";
+      // An address counts elements, so the register is as many of them as its
+      // size holds rather than that size in bytes. The two agree only for an
+      // element a whole register wide, which is why a narrower one addressed in
+      // bytes lands element_size registers further along than it should.
+      const auto shaped = llvm::dyn_cast<mlir::ShapedType>(value.getType());
+      if (!shaped) {
+        opaque.emitError("slot ") << value << " is not a buffer";
         return llvm::failure();
       }
-      const auto index = *address / register_size;
+      const auto element_bytes = getElementSizeBytes(shaped.getElementType());
+      if (element_bytes <= 0 || register_size % element_bytes != 0) {
+        opaque.emitError("slot ")
+            << value << " element does not divide a register of "
+            << register_size << " bytes";
+        return llvm::failure();
+      }
+      const auto register_elements = register_size / element_bytes;
+
+      // Compute the index of the register addressed by the operand.
+      if (*address % register_elements != 0) {
+        opaque.emitError("slot ")
+            << value << " address (" << *address
+            << " elements) is not a multiple of the register size ("
+            << register_elements << " elements)";
+        return llvm::failure();
+      }
+      const auto index = *address / register_elements;
 
       // Create the register ID string and put it into the map.
       // FIXME: Is it OK to assume "Rn" as the naming scheme here?
