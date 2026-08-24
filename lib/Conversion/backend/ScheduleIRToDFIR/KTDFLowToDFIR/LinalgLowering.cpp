@@ -563,7 +563,6 @@ struct LowerLinalgFillPattern
       return rewriter.notifyMatchFailure(fill_op,
                                          "fill value must not exceed 64 bits");
     }
-    // FIXME: Is zero-extension always appropriate here, even for integers?
     fill_bits = fill_bits.zext(64U);
 
     // Derive output vector type from the output operand (memref or tensor).
