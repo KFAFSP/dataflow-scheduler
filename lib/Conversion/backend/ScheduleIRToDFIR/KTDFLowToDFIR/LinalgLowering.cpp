@@ -450,8 +450,8 @@ struct LowerLinalgGenericPattern
 /// Tensor semantics (tensor output): the shuffle result directly replaces
 /// the fill result (consumed by downstream vectorchain / FIFO ops).
 ///
-/// Only zero fill values are supported. N and T are derived from the output
-/// type shape and element type.
+/// N and T are derived from the output type shape and element type, and the
+/// bitstream carries the fill value as the bits a lane holds.
 struct LowerLinalgFillPattern
     : public mlir::OpRewritePattern<mlir::linalg::FillOp> {
   LowerLinalgFillPattern(mlir::MLIRContext* context,
@@ -482,15 +482,13 @@ struct LowerLinalgFillPattern
 
     rewriter.setInsertionPoint(fill_op);
 
-    // Only zero fills are supported.
+    // The bitstream carries the value as the bits the lane holds, so a float is
+    // taken apart rather than converted.
+    uint64_t fill_bits = 0;
     if (auto fa = mlir::dyn_cast<mlir::FloatAttr>(scalar_attr)) {
-      if (!fa.getValue().isZero())
-        return fill_op.emitError(
-            "linalg.fill lowering only supports zero fill values");
+      fill_bits = fa.getValue().bitcastToAPInt().getZExtValue();
     } else if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(scalar_attr)) {
-      if (!ia.getValue().isZero())
-        return fill_op.emitError(
-            "linalg.fill lowering only supports zero fill values");
+      fill_bits = ia.getValue().getZExtValue();
     } else {
       return fill_op.emitError(
           "linalg.fill constant value must be integer or float");
@@ -499,7 +497,7 @@ struct LowerLinalgFillPattern
     // Step 1: vectorchain.constant_bitstream {value = [0x0]} : vector<1xT>
     mlir::VectorType seed_type = mlir::VectorType::get({1}, elem_type);
     mlir::ArrayAttr value_attr = rewriter.getArrayAttr(
-        {mlir::IntegerAttr::get(rewriter.getI64Type(), 0)});
+        {mlir::IntegerAttr::get(rewriter.getI64Type(), fill_bits)});
     auto bitstream = mlir::vectorchain::ConstantBitstreamOp::create(
         rewriter, loc, seed_type, value_attr);
 
