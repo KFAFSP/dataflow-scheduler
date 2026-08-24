@@ -756,16 +756,6 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
         return constant.getValue().getZExtValue();
       }
 
-      if (auto iface = llvm::dyn_cast<mlir::ViewLikeOpInterface>(definition);
-          iface) {
-        if (iface.getViewDest() == value) {
-          value = iface.getViewSource();
-          continue;
-        }
-      }
-
-      // FIXME: dataflow.get_logical_memory_view should implement
-      // ViewLikeOpInterface
       if (auto view = llvm::dyn_cast<mlir::dataflow::GetLogicalMemoryViewOp>(
               definition);
           view) {
