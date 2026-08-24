@@ -49,6 +49,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchDialect.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLoweringDialect.h"
 #include "dataflow-scheduler/Dialect/Symbol/Symbol.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
@@ -66,7 +67,10 @@ using namespace scheduler;
 void scheduler::registerPasses() {
   // Register the passes required from KTIR.
 
-  // Register the passes defined in the scheduler.
+  // Register the passes defined in the scheduler, and the dialects' own -- the
+  // pipeline runs ktdfarch-apply-patterns, so naming it on the command line has
+  // to resolve.
+  mlir::ktdf_arch::registerKTDFArchPasses();
   registerKTIRToScheduleIRPasses();
   registerScheduleIRToDFIRPasses();
   mlir::ktdf::registerKTDFTransformsPasses();
