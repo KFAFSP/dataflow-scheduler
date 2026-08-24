@@ -453,7 +453,7 @@ struct LowerLinalgGenericPattern
       return mlir::failure();
     }
 
-    const auto access = getRegisterAccess(op.getMemRef(), rewriter);
+    const auto access = getRegisterAccess(op.getMemRef());
     if (!access) return mlir::failure();
 
     mlir::agen::VectorStoreOp::create(
@@ -471,7 +471,7 @@ struct LowerLinalgGenericPattern
         getFlattenedVectorType(op.getMemRef().getType(), resource_kinds_);
     if (!vector_type) return mlir::failure();
 
-    const auto access = getRegisterAccess(op.getMemRef(), rewriter);
+    const auto access = getRegisterAccess(op.getMemRef());
     if (!access) return mlir::failure();
 
     auto load = mlir::agen::VectorLoadOp::create(
@@ -489,12 +489,11 @@ struct LowerLinalgGenericPattern
     mlir::AffineMap order;
   };
 
-  std::optional<RegisterAccess> getRegisterAccess(
-      mlir::Value mem_ref, mlir::PatternRewriter& rewriter) const {
+  std::optional<RegisterAccess> getRegisterAccess(mlir::Value mem_ref) const {
     const auto type = mlir::dyn_cast<mlir::MemRefType>(mem_ref.getType());
     if (!type || !type.hasStaticShape()) return std::nullopt;
 
-    auto* const ctx = rewriter.getContext();
+    auto* const ctx = mem_ref.getContext();
     const auto rank = static_cast<unsigned>(type.getRank());
     return RegisterAccess{mlir::AffineMap::getMultiDimIdentityMap(rank, ctx),
                           buildIntegerSetFromSizes(ctx, type.getShape()),
