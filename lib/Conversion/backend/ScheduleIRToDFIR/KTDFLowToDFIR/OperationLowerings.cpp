@@ -743,7 +743,12 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
     return register_size.getValue().getZExtValue();
   }
 
-  [[nodiscard]] static auto getConstantAddress(mlir::Value value)
+  /// Gets the address \p value is viewed at, in elements, when it is constant.
+  ///
+  /// Taken off the view rather than from address assignment, so it is in the
+  /// granularity the view was built in: elements for a register file, and
+  /// nullopt for anything the walk cannot reduce to a constant.
+  [[nodiscard]] static auto getConstantElementAddress(mlir::Value value)
       -> std::optional<size_t> {
     while (auto* const definition = value.getDefiningOp()) {
       mlir::IntegerAttr constant;
@@ -798,17 +803,17 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
       }
 
       // The address passed in this slot must be a constant.
-      const auto address = getConstantAddress(value);
+      const auto address = getConstantElementAddress(value);
       if (!address) {
         opaque.emitError("slot ")
             << value << " does not have a constant address";
         return llvm::failure();
       }
 
-      // An address counts elements, so the register is as many of them as its
-      // size holds rather than that size in bytes. The two agree only for an
-      // element a whole register wide, which is why a narrower one addressed in
-      // bytes lands element_size registers further along than it should.
+      // An address counts elements, so the divisor is how many of them a
+      // register holds rather than its size in bytes. Dividing by the bytes
+      // instead lands a narrower element element_bytes registers too far
+      // along.
       const auto shaped = llvm::dyn_cast<mlir::ShapedType>(value.getType());
       if (!shaped) {
         opaque.emitError("slot ") << value << " is not a buffer";
