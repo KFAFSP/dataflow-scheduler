@@ -25,15 +25,18 @@
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
+#include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/IntegerSet.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -132,6 +135,20 @@ struct LowerLinalgGenericPattern
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
                     mlir::vectorchain::VectorChainBinaryOperator::abs_max);
+              })
+              .Case<mlir::dataflow::OpaqueOp>([&](mlir::dataflow::OpaqueOp op) {
+                // Already DFIR, and it reads and writes registers rather
+                // than the lanes the body deals in, so it only has to leave
+                // the body -- in place, among the vector ops going the same
+                // way.
+                rewriter.moveOpBefore(op, generic_op);
+                return mlir::success();
+              })
+              .Case<mlir::memref::StoreOp>([&](mlir::memref::StoreOp op) {
+                return lowerMemRefStore(op, rewriter);
+              })
+              .Case<mlir::memref::LoadOp>([&](mlir::memref::LoadOp op) {
+                return lowerMemRefLoad(op, rewriter);
               })
               .Default([](mlir::Operation* unknown_op) {
                 return unknown_op->emitError(
@@ -419,6 +436,65 @@ struct LowerLinalgGenericPattern
     return mlir::arith::ConstantOp::create(rewriter, const_op.getLoc(),
                                            vector_type, vec_attr)
         .getResult();
+  }
+
+  /// Lowers a store into a register to the vector store that writes it.
+  ///
+  /// A register is written whole, so the value has to be a vector by the time
+  /// this runs -- while it is still the body's scalar there is nothing to write
+  /// a lane of. Returns failure until then, so the driver comes back to it.
+  mlir::LogicalResult lowerMemRefStore(mlir::memref::StoreOp op,
+                                       mlir::PatternRewriter& rewriter) const {
+    if (!mlir::isa<mlir::VectorType>(op.getValueToStore().getType())) {
+      return mlir::failure();
+    }
+
+    const auto access = getRegisterAccess(op.getMemRef(), rewriter);
+    if (!access) return mlir::failure();
+
+    mlir::agen::VectorStoreOp::create(
+        rewriter, op.getLoc(), op.getValueToStore(), op.getMemRef(),
+        /*dbgName=*/nullptr, access->map, op.getIndices(), access->set,
+        access->order);
+    rewriter.eraseOp(op);
+    return mlir::success();
+  }
+
+  /// Lowers a load out of a register to the vector load that reads it.
+  mlir::LogicalResult lowerMemRefLoad(mlir::memref::LoadOp op,
+                                      mlir::PatternRewriter& rewriter) const {
+    const auto vector_type =
+        getFlattenedVectorType(op.getMemRef().getType(), resource_kinds_);
+    if (!vector_type) return mlir::failure();
+
+    const auto access = getRegisterAccess(op.getMemRef(), rewriter);
+    if (!access) return mlir::failure();
+
+    auto load = mlir::agen::VectorLoadOp::create(
+        rewriter, op.getLoc(), vector_type, op.getMemRef(),
+        /*dbgName=*/nullptr, access->map, op.getIndices(), access->set,
+        access->order, /*multicast_info=*/nullptr);
+    rewriter.replaceOp(op, load.getResult());
+    return mlir::success();
+  }
+
+  /// How a register is addressed: the whole of it, in lane order.
+  struct RegisterAccess {
+    mlir::AffineMap map;
+    mlir::IntegerSet set;
+    mlir::AffineMap order;
+  };
+
+  std::optional<RegisterAccess> getRegisterAccess(
+      mlir::Value mem_ref, mlir::PatternRewriter& rewriter) const {
+    const auto type = mlir::dyn_cast<mlir::MemRefType>(mem_ref.getType());
+    if (!type || !type.hasStaticShape()) return std::nullopt;
+
+    auto* const ctx = rewriter.getContext();
+    const auto rank = static_cast<unsigned>(type.getRank());
+    return RegisterAccess{mlir::AffineMap::getMultiDimIdentityMap(rank, ctx),
+                          buildIntegerSetFromSizes(ctx, type.getShape()),
+                          mlir::AffineMap::getMultiDimIdentityMap(rank, ctx)};
   }
 
   // Unified helper: lowers any two-operand arith float op to
