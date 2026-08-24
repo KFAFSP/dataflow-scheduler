@@ -22,6 +22,10 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/LinalgLowering.h"
 
+#include <llvm/ADT/APInt.h>
+#include <mlir/IR/Attributes.h>
+#include <mlir/IR/Matchers.h>
+
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
@@ -537,38 +541,47 @@ struct LowerLinalgFillPattern
   mlir::LogicalResult matchAndRewrite(
       mlir::linalg::FillOp fill_op,
       mlir::PatternRewriter& rewriter) const override {
-    // linalg.fill must have exactly one input (the fill scalar).
-    if (fill_op.getInputs().size() != 1) return mlir::failure();
-    mlir::Value fill_val = fill_op.getInputs()[0];
-    auto const_op = mlir::dyn_cast_or_null<mlir::arith::ConstantOp>(
-        fill_val.getDefiningOp());
-    if (!const_op) return mlir::failure();
-    auto scalar_attr = mlir::dyn_cast<mlir::TypedAttr>(const_op.getValue());
-    if (!scalar_attr) return mlir::failure();
+    // Match constant fill value input.
+    if (fill_op.getInputs().size() != 1) {
+      return rewriter.notifyMatchFailure(fill_op,
+                                         "must have exactly one operand");
+    }
+    auto* const fill_def = fill_op.getInputs()[0].getDefiningOp();
+    mlir::Attribute value;
+    if (!fill_def || !mlir::m_Constant(&value).match(fill_def)) {
+      return rewriter.notifyMatchFailure(fill_op,
+                                         "fill value must be a constant");
+    }
+    llvm::APInt fill_bits;
+    if (const auto attr = mlir::dyn_cast<mlir::FloatAttr>(value)) {
+      fill_bits = attr.getValue().bitcastToAPInt();
+    } else if (const auto attr = mlir::dyn_cast<mlir::IntegerAttr>(value)) {
+      fill_bits = attr.getValue();
+    } else {
+      return rewriter.notifyMatchFailure(fill_op,
+                                         "fill value must be int or float");
+    }
+    if (fill_bits.getBitWidth() > 64) {
+      return rewriter.notifyMatchFailure(fill_op,
+                                         "fill value must not exceed 64 bits");
+    }
+    // FIXME: Is zero-extension always appropriate here, even for integers?
+    fill_bits = fill_bits.zext(64U);
 
     // Derive output vector type from the output operand (memref or tensor).
     mlir::Value out_operand = fill_op.getOutputs()[0];
     mlir::VectorType out_vec_type =
         getFlattenedVectorType(out_operand.getType(), resource_kinds_);
-    if (!out_vec_type) return mlir::failure();
+    if (!out_vec_type) {
+      return rewriter.notifyMatchFailure(
+          fill_op, "output must convert to a flattened vector type");
+    }
 
     mlir::Location loc = fill_op.getLoc();
     int64_t total_elements = out_vec_type.getNumElements();
     mlir::Type elem_type = out_vec_type.getElementType();
 
     rewriter.setInsertionPoint(fill_op);
-
-    // The bitstream carries the value as the bits the lane holds, so a float is
-    // taken apart rather than converted.
-    uint64_t fill_bits = 0;
-    if (auto fa = mlir::dyn_cast<mlir::FloatAttr>(scalar_attr)) {
-      fill_bits = fa.getValue().bitcastToAPInt().getZExtValue();
-    } else if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(scalar_attr)) {
-      fill_bits = ia.getValue().getZExtValue();
-    } else {
-      return fill_op.emitError(
-          "linalg.fill constant value must be integer or float");
-    }
 
     // Step 1: vectorchain.constant_bitstream {value = [0x0]} : vector<1xT>
     mlir::VectorType seed_type = mlir::VectorType::get({1}, elem_type);
