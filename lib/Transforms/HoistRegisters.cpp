@@ -30,7 +30,7 @@
 #include <mlir/Pass/Pass.h>
 
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
-#include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"  // IWYU pragma: keep
+#include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchInterfaces.h"
@@ -163,6 +163,14 @@ auto hoistAllocation(memref::AllocOp alloc, linalg::GenericOp generic,
   if (type.getRank() != 0) {
     rewriter.moveOpBefore(alloc, generic);
     return success();
+  }
+
+  for (auto* const user : alloc->getUsers()) {
+    if (!llvm::isa<memref::StoreOp, memref::LoadOp, ktdf::OpaqueOp>(user)) {
+      return alloc.emitError("unable to hoist allocation")
+                 .attachNote(user->getLoc())
+             << "user can't be vectorized";
+    }
   }
 
   const auto element = type.getElementType();
