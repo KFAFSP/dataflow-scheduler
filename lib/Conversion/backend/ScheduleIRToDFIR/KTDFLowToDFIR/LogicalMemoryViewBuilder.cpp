@@ -176,6 +176,36 @@ mlir::AffineMap buildLinearizationMap(mlir::MLIRContext* ctx,
 /// the load units of a load stage, the store units of a store stage. So the
 /// kind of the first answers for all of them, and a set that disagreed would
 /// mean one address in two granularities, which is reported.
+/// Determines whether a unit of \p pu addresses \p memory_space.
+///
+/// A memory a load or store unit reaches is one the schedule moves data to, and
+/// its addresses are in the bytes those transfers are laid out in. One no unit
+/// reaches is a register file: nothing routes to it, and what reads it is the
+/// compute unit itself, which addresses it in elements.
+bool isUnitAddressed(
+    mlir::dataflow::ProgramUnitOp pu, ResourceType memory_space,
+    const scheduler::arch_view::ResourceKinds& resource_kinds) {
+  for (mlir::Value unit : pu.getUnits()) {
+    auto get_unit = unit.getDefiningOp<mlir::dataflow::GetUnitOp>();
+    if (!get_unit) continue;
+    auto type = get_unit->getAttrOfType<mlir::StringAttr>("type");
+    if (!type) continue;
+
+    // The kind as the device spells it, which is upper case; the unit ops carry
+    // it lower case.
+    auto kind = mlir::StringAttr::get(pu.getContext(), type.getValue().upper());
+    if (auto load =
+            resource_kinds.getFeature<mlir::ktdf_arch::feature::Load>(kind)) {
+      if (load.getWordSize(memory_space) != 0) return true;
+    }
+    if (auto store =
+            resource_kinds.getFeature<mlir::ktdf_arch::feature::Store>(kind)) {
+      if (store.getWordSize(memory_space) != 0) return true;
+    }
+  }
+  return false;
+}
+
 mlir::FailureOr<int64_t> wordSizeOf(
     mlir::dataflow::ProgramUnitOp pu, ResourceType memory_space,
     const scheduler::arch_view::ResourceKinds& resource_kinds) {
@@ -419,6 +449,7 @@ mlir::LogicalResult replaceSourceBCasts(
     mlir::dataflow::ProgramUnitOp pu,
     const llvm::DenseMap<ResourceType, mlir::Value>& resolved_units,
     llvm::DenseMap<mlir::Value, mlir::Value>& replacements,
+    const scheduler::arch_view::ResourceKinds& resource_kinds,
     mlir::OpBuilder& builder) {
   auto* ctx = pu.getContext();
 
@@ -463,14 +494,17 @@ mlir::LogicalResult replaceSourceBCasts(
 
     builder.setInsertionPoint(ucc);
 
-    // An address in Dataflow IR counts elements; what address assignment picked
-    // counts bytes. Convert, or every allocation but the one at zero is read at
-    // element_size times the address it was given -- which is why this only
-    // shows on a memory holding more than one of them.
+    // A register file is addressed in elements by what reads it, and what
+    // address assignment picked is in bytes, so convert -- but only there. A
+    // memory a unit addresses keeps the bytes its transfers are laid out in.
+    //
+    // Unconverted, every register but the one at zero is read element_size
+    // registers further along than it should be, which is why this shows only
+    // on a file holding more than one of them.
     mlir::Value addr = ucc.getInputs()[0];
     const auto element_bytes =
         getElementSizeBytes(result_type.getElementType());
-    if (element_bytes > 1) {
+    if (element_bytes > 1 && !isUnitAddressed(pu, *ms, resource_kinds)) {
       if (auto constant = addr.getDefiningOp<mlir::arith::ConstantIndexOp>()) {
         addr = mlir::arith::ConstantIndexOp::create(
             builder, ucc.getLoc(), constant.value() / element_bytes);
@@ -641,8 +675,8 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
       return mlir::failure();
 
     // Phase 3c: Source B casts.
-    if (mlir::failed(
-            replaceSourceBCasts(pu, resolved_units, replacements, builder)))
+    if (mlir::failed(replaceSourceBCasts(pu, resolved_units, replacements,
+                                         resource_kinds, builder)))
       return mlir::failure();
 
     // Phase 3d: RAUW + type propagation.
