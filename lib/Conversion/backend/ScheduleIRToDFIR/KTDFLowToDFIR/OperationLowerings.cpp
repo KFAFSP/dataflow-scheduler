@@ -652,7 +652,7 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
     if (!opaque.hasPureBufferSemantics()) {
       // We can only lower operations that only use buffers, since there is
       // no way to materialize the values into memories at this point.
-      return rewriter.notifyMatchFailure(opaque.getLoc(),
+      return rewriter.notifyMatchFailure(opaque,
                                          "operation has pure semantics");
     }
 
@@ -660,8 +660,7 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
     mlir::NamedAttrList read_only;
     mlir::NamedAttrList read_write;
     if (failed(mapRegisters(opaque, read_only, read_write))) {
-      return rewriter.notifyMatchFailure(opaque.getLoc(),
-                                         "unable to map registers");
+      return rewriter.notifyMatchFailure(opaque, "unable to map registers");
     }
 
     // Extract the inherent attributes values from the discardable dict.
@@ -674,7 +673,7 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
         llvm::dyn_cast_if_present<mlir::StringAttr>(attributes.erase(
             mlir::dataflow::OpaqueOp::getFuncNameAttrName(op_name)));
     if (!func_name) {
-      return rewriter.notifyMatchFailure(opaque.getLoc(),
+      return rewriter.notifyMatchFailure(opaque,
                                          "missing 'func_name' attribute");
     }
     // read_only_register_dictionary
