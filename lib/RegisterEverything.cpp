@@ -67,9 +67,7 @@ using namespace scheduler;
 void scheduler::registerPasses() {
   // Register the passes required from KTIR.
 
-  // Register the passes defined in the scheduler, and the dialects' own -- the
-  // pipeline runs ktdfarch-apply-patterns, so naming it on the command line has
-  // to resolve.
+  // Register the passes defined in the scheduler.
   mlir::ktdf_arch::registerKTDFArchPasses();
   registerKTIRToScheduleIRPasses();
   registerScheduleIRToDFIRPasses();
