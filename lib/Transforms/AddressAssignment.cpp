@@ -219,8 +219,7 @@ std::optional<AllocationResult> processAllocation(
   mlir::Attribute memory_space_attr = memref_type.getMemorySpace();
   assert(memory_space_attr);
 
-  const size_t alignment =
-      1;  // TODO: revisit in case we need to compute alignment
+  const size_t alignment = alloc.getAlignment().value_or(1);
   auto address_result =
       tracker.allocate(memory_space_attr, static_cast<size_t>(size), alignment);
 
