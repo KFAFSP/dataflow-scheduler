@@ -602,6 +602,10 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
       "dataflow_scheduler.register_size";
   static constexpr llvm::StringLiteral kRegisterNamesAttrName =
       "dataflow_scheduler.register_names";
+  static constexpr llvm::StringLiteral kReadOnlyDictAttrName =
+      "read_only_register_dictionary";
+  static constexpr llvm::StringLiteral kReadWriteDictAttrName =
+      "read_write_register_dictionary";
 
   struct NoneAttr : mlir::TypeAttr {
     [[nodiscard]] static auto classof(Attribute attr) -> bool {
@@ -664,9 +668,22 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
     }
 
     // Create a 'dataflow.opaque' op that inherits the discardable attributes.
+    //
+    // It requires all three dictionaries, and a 'ktdf.opaque' has no field for
+    // two of them, so those start empty here. Reading them back off the created
+    // operation instead gives a null attribute, which the merge below walks
+    // into.
+    mlir::NamedAttrList attributes(opaque->getRawDictionaryAttrs());
+    const auto empty = rewriter.getDictionaryAttr({});
+    if (!attributes.get(kReadOnlyDictAttrName)) {
+      attributes.set(kReadOnlyDictAttrName, empty);
+    }
+    if (!attributes.get(kReadWriteDictAttrName)) {
+      attributes.set(kReadWriteDictAttrName, empty);
+    }
+
     auto df_opaque = mlir::dataflow::OpaqueOp::create(
-        rewriter, opaque.getLoc(), {}, {},
-        opaque->getRawDictionaryAttrs().getValue());
+        rewriter, opaque.getLoc(), {}, {}, attributes.getAttrs());
 
     // Map the register names to IDs and weakly inject them into the attributes.
     read_only.append(df_opaque.getReadOnlyRegisterDictionary());
