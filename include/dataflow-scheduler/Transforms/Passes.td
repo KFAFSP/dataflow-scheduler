@@ -341,4 +341,50 @@ def EnsureDeviceDeclarationPass
   ];
 }
 
+def HoistRegistersPass : Pass<"hoist-registers", "mlir::ModuleOp"> {
+  let summary = "Move the registers a generic body uses in front of it";
+  let description = [{
+    Visits every nested `linalg.generic` and attempts to hoist out registers
+    (in the form of materialized `memref.alloc` and non-materialized 
+    `arith.constant` with `ktdf_arch.maps_to` attributes).
+    
+    Hoisting requires the cardinality of the `linalg.generic` iteration domain
+    to be statically known, and all consumers of the registers to be either
+    `memref.load`, `memref.store` or `ktdf.opaque`. Hoisted register sizes are
+    increased to match the iteration domain, but scalar users remain fixed to
+    the first element of the allocated segment.
+
+    Example:
+    ```mlir
+    linalg.generic ins(%in: tensor<1x64xf16>) ... {
+    ^bb0(%arg0: f16);
+      %cst = arith.constant {ktdf_arch.maps_to = "SFU_REG"} 1.0 : f16
+      %reg = memref.alloc() : memref<f16>
+      memref.store %value, %reg[] : ...
+      %ktdf.opaque ins(%arg0, %cst: ...) outs(%reg: ...)
+    }
+    ```
+    
+    Is transformed into:
+    ```mlir
+    %cst0 = arith.constant 0 : index
+    %cst = arith.constant {ktdf_arch.maps_to = "SFU_REG"} 1.0 : f16
+    %cst_reg = memref.alloc() : memref<64xf16, "SFU_REG">
+    linalg.fill ins(%cst: ...) outs(%cst_reg) ...
+    %reg = memref.alloc() : memref<64xf16>
+    linalg.generic ins(%in: tensor<1x64xf16>) ... {
+    ^bb0(%arg0: f16);
+      memref.store %value, %reg[%cst0] : ...
+      %ktdf.opaque ins(%arg0, %cst_reg: ...) outs(%reg: ...)
+    }
+    ```
+  }];
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::ktdf::KTDFDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::memref::MemRefDialect"
+  ];
+}
+
 #endif // DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD

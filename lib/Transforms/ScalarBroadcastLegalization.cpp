@@ -32,6 +32,7 @@
 #include <memory>
 
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
+#include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/NodeLinks.h"
@@ -215,27 +216,6 @@ auto getHops(const arch_view::ResourceKinds& resource_kinds, mlir::Value value,
   }
 
   return llvm::success();
-}
-
-[[nodiscard]]
-auto tryGetSizeInBits(mlir::Type type) -> std::optional<unsigned> {
-  return llvm::TypeSwitch<mlir::Type, std::optional<unsigned>>(type)
-      .Case([](mlir::IntegerType type) -> unsigned { return type.getWidth(); })
-      .Case([](mlir::FloatType type) -> unsigned { return type.getWidth(); })
-      .Case([](mlir::VectorType type) -> std::optional<unsigned> {
-        if (!type.hasStaticShape()) {
-          return std::nullopt;
-        }
-
-        return type.getNumElements() * type.getElementTypeBitWidth();
-      })
-      .Default(std::nullopt);
-}
-
-[[nodiscard]]
-auto tryGetSizeInBytes(mlir::Type type) -> std::optional<unsigned> {
-  const auto maybe_bits = tryGetSizeInBits(type);
-  return maybe_bits ? std::optional{(*maybe_bits + 7) / 8} : std::nullopt;
 }
 
 [[nodiscard]]

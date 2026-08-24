@@ -25,6 +25,7 @@
 // CHECK-NEXT:   ktdfarch-apply-patterns{groups={pre_scheduling}}
 // CHECK-NEXT:   )
 // CHECK-NEXT:   )
+// CHECK-NEXT:   hoist-registers
 // CHECK-NEXT:   path-expansion
 // CHECK-NEXT:   scalar-broadcast-legalization
 // CHECK-NEXT:   normalize-scf-for-loops

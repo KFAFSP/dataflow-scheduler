@@ -8,6 +8,7 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     AffineMinCanonicalization.cpp
     DoubleBuffering.cpp
     EnsureDeviceDeclaration.cpp
+    HoistRegisters.cpp
     NormalizeGridTo1D.cpp
     NormalizeSCFForLoops.cpp
     ParallelizeLoopsAcrossInstances.cpp

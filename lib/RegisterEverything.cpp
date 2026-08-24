@@ -49,6 +49,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchDialect.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLoweringDialect.h"
 #include "dataflow-scheduler/Dialect/Symbol/Symbol.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
@@ -67,6 +68,7 @@ void scheduler::registerPasses() {
   // Register the passes required from KTIR.
 
   // Register the passes defined in the scheduler.
+  mlir::ktdf_arch::registerKTDFArchPasses();
   registerKTIRToScheduleIRPasses();
   registerScheduleIRToDFIRPasses();
   mlir::ktdf::registerKTDFTransformsPasses();

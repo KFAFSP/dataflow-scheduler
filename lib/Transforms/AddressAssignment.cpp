@@ -120,8 +120,7 @@ int64_t computeAllocationSize(mlir::memref::AllocOp alloc) {
     return -1;
   }
 
-  int64_t element_size_bytes =
-      getElementSizeBytes(memref_type.getElementType());
+  int64_t element_size_bytes = *tryGetSizeInBytes(memref_type.getElementType());
   int64_t total_bytes = total_elements * element_size_bytes;
 
   LDBG(1) << "  Total size: " << total_bytes << " bytes (" << total_elements
@@ -219,8 +218,7 @@ std::optional<AllocationResult> processAllocation(
   mlir::Attribute memory_space_attr = memref_type.getMemorySpace();
   assert(memory_space_attr);
 
-  const size_t alignment =
-      1;  // TODO: revisit in case we need to compute alignment
+  const size_t alignment = alloc.getAlignment().value_or(1);
   auto address_result =
       tracker.allocate(memory_space_attr, static_cast<size_t>(size), alignment);
 

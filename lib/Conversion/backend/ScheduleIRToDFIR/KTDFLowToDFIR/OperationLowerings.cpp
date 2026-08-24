@@ -23,7 +23,20 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/OperationLowerings.h"
 
+#include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/StringExtras.h>
+#include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/MemRef/IR/MemRef.h>
+#include <mlir/Dialect/SCF/IR/SCF.h>
+#include <mlir/IR/BuiltinAttributes.h>
+#include <mlir/IR/Matchers.h>
+#include <mlir/IR/OperationSupport.h>
+#include <mlir/IR/PatternMatch.h>
+#include <mlir/Interfaces/ViewLikeInterface.h>
+#include <mlir/Transforms/GreedyPatternRewriteDriver.h>
+
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
+#include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Conversion/Utils/Utils.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/BufferPhaseLowering.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/DataTransferLowering.h"
@@ -31,21 +44,16 @@
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/ParallelLowering.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/UniformInfra.h"
-#include "dataflow-scheduler/Dialect/Agen/Agen.h"
-#include "dataflow-scheduler/Dialect/Agen/Utils.h"
+#include "dataflow-scheduler/Dialect/Agen/Agen.h"   // IWYU pragma: keep
+#include "dataflow-scheduler/Dialect/Agen/Utils.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
+#include "dataflow-scheduler/Dialect/Dataflow/DataflowDialect.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/Dataflow/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
-#include "llvm/ADT/SmallVector.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/PatternMatch.h"
-#include "mlir/Support/LogicalResult.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #define DEBUG_TYPE "ktdflowering-to-dfir"
 
@@ -590,6 +598,244 @@ struct LowerMemRefCopyFromFifoPattern
   }
 };
 
+struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
+  static constexpr llvm::StringLiteral kRegisterNamesAttrName =
+      "dataflow_scheduler.register_names";
+
+  struct NoneAttr : mlir::TypeAttr {
+    [[nodiscard]] static auto classof(Attribute attr) -> bool {
+      const auto typed = llvm::dyn_cast<TypeAttr>(attr);
+      return classof(typed);
+    }
+    [[nodiscard]] static auto classof(TypeAttr attr) -> bool {
+      return llvm::isa<mlir::NoneType>(attr.getValue());
+    }
+
+    using TypeAttr::TypeAttr;
+  };
+
+  struct RegisterNameAttr : mlir::Attribute {
+    [[nodiscard]] static auto classof(Attribute attr) -> bool {
+      return llvm::isa<mlir::StringAttr, NoneAttr>(attr);
+    }
+    [[nodiscard]] static auto classof(mlir::StringAttr /*attr*/) -> bool {
+      return true;
+    }
+    [[nodiscard]] static auto classof(NoneAttr /*attr*/) -> bool {
+      return true;
+    }
+
+    using Attribute::Attribute;
+
+    using ValueType = mlir::StringAttr;
+
+    [[nodiscard]] auto getValue() const -> mlir::StringAttr {
+      return llvm::dyn_cast<mlir::StringAttr>(*this);
+    }
+  };
+
+  using RegisterNamesAttr = mlir::ktdf_arch::TypedArrayAttr<RegisterNameAttr>;
+
+  explicit LowerOpaquePattern(mlir::MLIRContext* context)
+      : OpRewritePattern(context) {
+    register_names_attr_name_ =
+        mlir::StringAttr::get(context, kRegisterNamesAttrName);
+  }
+
+  auto matchAndRewrite(mlir::ktdf::OpaqueOp opaque,
+                       mlir::PatternRewriter& rewriter) const
+      -> mlir::LogicalResult override {
+    if (!opaque.hasPureBufferSemantics()) {
+      // We can only lower operations that only use buffers, since there is
+      // no way to materialize the values into memories at this point.
+      return rewriter.notifyMatchFailure(opaque,
+                                         "operation has pure semantics");
+    }
+
+    // Map the register names to IDs.
+    mlir::NamedAttrList read_only;
+    mlir::NamedAttrList read_write;
+    if (failed(mapRegisters(opaque, read_only, read_write))) {
+      return rewriter.notifyMatchFailure(opaque, "unable to map registers");
+    }
+
+    // Extract the inherent attributes values from the discardable dict.
+    mlir::NamedAttrList attributes(opaque->getRawDictionaryAttrs());
+    mlir::OperationName op_name(mlir::dataflow::OpaqueOp::getOperationName(),
+                                rewriter.getContext());
+
+    // func_name
+    const auto func_name =
+        llvm::dyn_cast_if_present<mlir::StringAttr>(attributes.erase(
+            mlir::dataflow::OpaqueOp::getFuncNameAttrName(op_name)));
+    if (!func_name) {
+      return rewriter.notifyMatchFailure(opaque,
+                                         "missing 'func_name' attribute");
+    }
+    // read_only_register_dictionary
+    if (const auto attr =
+            llvm::dyn_cast_if_present<mlir::DictionaryAttr>(attributes.erase(
+                mlir::dataflow::OpaqueOp::getReadOnlyRegisterDictionaryAttrName(
+                    op_name)))) {
+      read_only.append(attr);
+    }
+    // read_write_register_dictionary
+    if (const auto attr = llvm::dyn_cast_if_present<
+            mlir::DictionaryAttr>(attributes.erase(
+            mlir::dataflow::OpaqueOp::getReadWriteRegisterDictionaryAttrName(
+                op_name)))) {
+      read_write.append(attr);
+    }
+    // parameter_dictionary
+    mlir::NamedAttrList parameters;
+    if (const auto attr =
+            llvm::dyn_cast_if_present<mlir::DictionaryAttr>(attributes.erase(
+                mlir::dataflow::OpaqueOp::getParameterDictionaryAttrName(
+                    op_name)))) {
+      parameters.append(attr);
+    }
+
+    auto df_opaque = rewriter.replaceOpWithNewOp<mlir::dataflow::OpaqueOp>(
+        opaque, mlir::StringAttr{}, func_name,
+        read_write.getDictionary(rewriter.getContext()),
+        read_only.getDictionary(rewriter.getContext()),
+        parameters.getDictionary(rewriter.getContext()));
+    // Apply all the remaining discardable attributes.
+    df_opaque->setDiscardableAttrs(attributes);
+    return llvm::success();
+  }
+
+ private:
+  [[nodiscard]] auto getRegisterNames(mlir::ktdf::OpaqueOp opaque) const
+      -> RegisterNamesAttr {
+    const auto register_names = llvm::dyn_cast_if_present<RegisterNamesAttr>(
+        opaque->getDiscardableAttr(register_names_attr_name_));
+    if (!register_names) {
+      return nullptr;
+    }
+
+    // [inputs, ..., outputs, ...]
+    const auto num_expected =
+        opaque.getInputs().size() + opaque.getOutputs().size();
+    if (register_names.size() != num_expected) {
+      opaque->emitError("number of register names (")
+          << register_names.size()
+          << ") does not match number of operands and results (" << num_expected
+          << ")";
+      return nullptr;
+    }
+
+    return register_names;
+  }
+
+  /// Gets the address \p value is viewed at, in elements, when it is constant.
+  ///
+  /// Taken off the view rather than from address assignment, so it is in the
+  /// granularity the view was built in: elements for a register file, and
+  /// nullopt for anything the walk cannot reduce to a constant.
+  [[nodiscard]] static auto getConstantElementAddress(mlir::Value value)
+      -> std::optional<size_t> {
+    while (auto* const definition = value.getDefiningOp()) {
+      mlir::IntegerAttr constant;
+      if (mlir::m_Constant(&constant).match(definition)) {
+        return constant.getValue().getZExtValue();
+      }
+
+      if (auto view = llvm::dyn_cast<mlir::dataflow::GetLogicalMemoryViewOp>(
+              definition);
+          view) {
+        value = view.getStartAddress();
+        continue;
+      }
+
+      // Unknown source.
+      break;
+    }
+
+    return std::nullopt;
+  }
+
+  [[nodiscard]] auto mapRegisters(mlir::ktdf::OpaqueOp opaque,
+                                  mlir::NamedAttrList& read_only,
+                                  mlir::NamedAttrList& read_write) const
+      -> mlir::LogicalResult {
+    const auto register_names = getRegisterNames(opaque);
+    if (!register_names) {
+      return llvm::failure();
+    }
+
+    llvm::SmallString<4> register_id_buffer;
+
+    // [inputs, ..., outputs, ...]
+    const auto values =
+        llvm::concat<mlir::Value>(opaque.getInputs(), opaque.getOutputs());
+    for (auto [maybe_name, value] :
+         llvm::zip_equal(register_names.getAsValueRange(), values)) {
+      if (!maybe_name) {
+        continue;
+      }
+
+      // The address passed in this slot must be a constant.
+      const auto address = getConstantElementAddress(value);
+      if (!address) {
+        opaque.emitError("slot ")
+            << value << " does not have a constant address";
+        return llvm::failure();
+      }
+
+      // FIXME: Query this from the arch graph (per memory space).
+      const auto register_size = 128;
+
+      // An address counts elements, so the divisor is how many of them a
+      // register holds rather than its size in bytes. Dividing by the bytes
+      // instead lands a narrower element element_bytes registers too far
+      // along.
+      const auto shaped = llvm::dyn_cast<mlir::ShapedType>(value.getType());
+      if (!shaped) {
+        opaque.emitError("slot ") << value << " is not a buffer";
+        return llvm::failure();
+      }
+      const auto maybe_size = tryGetSizeInBytes(shaped.getElementType());
+      if (!maybe_size || register_size % *maybe_size != 0) {
+        opaque.emitError("slot ")
+            << value << " element does not divide a register of "
+            << register_size << " bytes";
+        return llvm::failure();
+      }
+      const auto register_elements = register_size / *maybe_size;
+
+      // Compute the index of the register addressed by the operand.
+      if (*address % register_elements != 0) {
+        opaque.emitError("slot ")
+            << value << " address (" << *address
+            << " elements) is not a multiple of the register size ("
+            << register_elements << " elements)";
+        return llvm::failure();
+      }
+      const auto index = *address / register_elements;
+
+      // Create the register ID string and put it into the map.
+      // FIXME: Is it OK to assume "Rn" as the naming scheme here?
+      register_id_buffer.clear();
+      const auto register_id = mlir::StringAttr::get(
+          getContext(), llvm::Twine("R")
+                            .concat(llvm::Twine(index))
+                            .toStringRef(register_id_buffer));
+
+      // Add the register ID to the correct map.
+      if (llvm::is_contained(opaque.getOutputs(), value)) {
+        read_write.set(maybe_name, register_id);
+      } else {
+        read_only.set(maybe_name, register_id);
+      }
+    }
+
+    return llvm::success();
+  }
+
+  mlir::StringAttr register_names_attr_name_;
+};
+
 }  // namespace
 
 mlir::LogicalResult scheduler::runOperationLowerings(
@@ -611,6 +857,7 @@ mlir::LogicalResult scheduler::runOperationLowerings(
                                    components);
   patterns.add<LowerGetTileSizePattern>(func.getContext(), scheduler_ctx,
                                         components);
+  patterns.add<LowerOpaquePattern>(patterns.getContext());
   if (mlir::failed(mlir::applyPatternsGreedily(func, std::move(patterns)))) {
     return mlir::failure();
   }
