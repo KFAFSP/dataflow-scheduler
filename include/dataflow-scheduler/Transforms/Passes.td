@@ -344,24 +344,40 @@ def EnsureDeviceDeclarationPass
 def HoistRegistersPass : Pass<"hoist-registers", "mlir::ModuleOp"> {
   let summary = "Move the registers a generic body uses in front of it";
   let description = [{
-    A device's substitution patterns rewrite an op inside a `linalg.generic`'s
-    body, and a pattern can only insert where it matched, so the registers a
-    template needs land in the body. The constants among them carry the mapping
-    naming the memory they belong to.
+    Visits every nested `linalg.generic` and attempts to hoist out registers
+    (in the form of materialized `memref.alloc` and non-materialized 
+    `arith.constant` with `ktdf_arch.maps_to` attributes).
+    
+    Hoisting requires the cardinality of the `linalg.generic` iteration domain
+    to be statically known, and all consumers of the registers to be either
+    `memref.load`, `memref.store` or `ktdf.opaque`. Hoisted register sizes are
+    increased to match the iteration domain, but scalar users remain fixed to
+    the first element of the allocated segment.
 
-    Each moves out in front of the generic, a mapped constant leaving an
-    allocation filled with its value repeated across as many lanes as the device
-    gives that element -- a template reads a whole vector out of a register. The
-    body goes on reading them where they stand, which a body not isolated from
-    above may do; handing them in as operands is not open, since a generic takes
-    either tensors or buffers throughout and the data is tensors.
-
-    A pattern allocates the rest -- the input, the output, the scratch -- as a
-    single element, saying only which type and which memory. The count comes
-    from here: the tile the generic covers, since that is what the template
-    computes on, and the scalar store and load the body did become lane zero of
-    it. A tile that is not a whole number of the device's lanes is reported,
-    rather than leaving a register the template reads but nothing wrote.
+    Example:
+    ```mlir
+    linalg.generic ins(%in: tensor<1x64xf16>) ... {
+    ^bb0(%arg0: f16);
+      %cst = arith.constant {ktdf_arch.maps_to = "SFU_REG"} 1.0 : f16
+      %reg = memref.alloc() : memref<f16>
+      memref.store %value, %reg[] : ...
+      %ktdf.opaque ins(%arg0, %cst: ...) outs(%reg: ...)
+    }
+    ```
+    
+    Is transformed into:
+    ```mlir
+    %cst0 = arith.constant 0 : index
+    %cst = arith.constant {ktdf_arch.maps_to = "SFU_REG"} 1.0 : f16
+    %cst_reg = memref.alloc() : memref<64xf16, "SFU_REG">
+    linalg.fill ins(%cst: ...) outs(%cst_reg) ...
+    %reg = memref.alloc() : memref<64xf16>
+    linalg.generic ins(%in: tensor<1x64xf16>) ... {
+    ^bb0(%arg0: f16);
+      memref.store %value, %reg[%cst0] : ...
+      %ktdf.opaque ins(%arg0, %cst_reg: ...) outs(%reg: ...)
+    }
+    ```
   }];
   let dependentDialects = [
     "mlir::arith::ArithDialect",
