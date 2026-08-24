@@ -599,8 +599,6 @@ struct LowerMemRefCopyFromFifoPattern
 };
 
 struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
-  static constexpr llvm::StringLiteral kRegisterSizeAttrName =
-      "dataflow_scheduler.register_size";
   static constexpr llvm::StringLiteral kRegisterNamesAttrName =
       "dataflow_scheduler.register_names";
 
@@ -640,8 +638,6 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
 
   explicit LowerOpaquePattern(mlir::MLIRContext* context)
       : OpRewritePattern(context) {
-    register_size_attr_name_ =
-        mlir::StringAttr::get(context, kRegisterSizeAttrName);
     register_names_attr_name_ =
         mlir::StringAttr::get(context, kRegisterNamesAttrName);
   }
@@ -732,17 +728,6 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
     return register_names;
   }
 
-  [[nodiscard]] auto getRegisterSize(mlir::ktdf::OpaqueOp opaque) const
-      -> std::optional<size_t> {
-    const auto register_size = llvm::dyn_cast_if_present<mlir::IntegerAttr>(
-        opaque->getDiscardableAttr(register_size_attr_name_));
-    if (!register_size) {
-      return std::nullopt;
-    }
-
-    return register_size.getValue().getZExtValue();
-  }
-
   /// Gets the address \p value is viewed at, in elements, when it is constant.
   ///
   /// Taken off the view rather than from address assignment, so it is in the
@@ -778,8 +763,6 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
     if (!register_names) {
       return llvm::failure();
     }
-    // FIXME: Is it OK to assume 128 by default here?
-    const auto register_size = getRegisterSize(opaque).value_or(128);
 
     llvm::SmallString<4> register_id_buffer;
 
@@ -799,6 +782,9 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
             << value << " does not have a constant address";
         return llvm::failure();
       }
+
+      // FIXME: Query this from the arch graph (per memory space).
+      const auto register_size = 128;
 
       // An address counts elements, so the divisor is how many of them a
       // register holds rather than its size in bytes. Dividing by the bytes
@@ -847,7 +833,6 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
     return llvm::success();
   }
 
-  mlir::StringAttr register_size_attr_name_;
   mlir::StringAttr register_names_attr_name_;
 };
 
