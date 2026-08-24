@@ -18,6 +18,8 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/LogicalMemoryViewBuilder.h"
 
+#include <mlir/IR/Matchers.h>
+
 #include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Analysis/Utils.h"
@@ -505,14 +507,18 @@ mlir::LogicalResult replaceSourceBCasts(
     const auto element_bytes =
         getElementSizeBytes(result_type.getElementType());
     if (element_bytes > 1 && !isUnitAddressed(pu, *ms, resource_kinds)) {
-      if (auto constant = addr.getDefiningOp<mlir::arith::ConstantIndexOp>()) {
+      mlir::IntegerAttr addr_bits;
+      if (auto* const addr_def = addr.getDefiningOp();
+          addr_def && mlir::m_Constant(&addr_bits).match(addr_def) &&
+          addr_bits.getType().isIndex()) {
         addr = mlir::arith::ConstantIndexOp::create(
-            builder, ucc.getLoc(), constant.value() / element_bytes);
+            builder, ucc.getLoc(),
+            addr_bits.getValue().getZExtValue() / element_bytes);
       } else {
         auto divisor = mlir::arith::ConstantIndexOp::create(
             builder, ucc.getLoc(), element_bytes);
         addr =
-            mlir::arith::DivSIOp::create(builder, ucc.getLoc(), addr, divisor);
+            mlir::arith::DivUIOp::create(builder, ucc.getLoc(), addr, divisor);
       }
     }
 
