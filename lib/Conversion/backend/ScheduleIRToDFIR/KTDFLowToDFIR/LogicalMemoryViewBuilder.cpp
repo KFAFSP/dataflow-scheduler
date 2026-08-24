@@ -166,34 +166,6 @@ mlir::AffineMap buildLinearizationMap(mlir::MLIRContext* ctx,
   return mlir::AffineMap::get(rank, 0, sum, ctx);
 }
 
-/// Determines whether a load or store unit of \p pu reaches \p memory_space.
-///
-/// Such a memory is one the schedule moves data to, so its addresses are in
-/// the bytes those transfers are laid out in. A register file is reached by no
-/// unit: the compute unit reads it directly, and addresses it in elements.
-bool isUnitAddressed(
-    mlir::dataflow::ProgramUnitOp pu, ResourceType memory_space,
-    const scheduler::arch_view::ResourceKinds& resource_kinds) {
-  for (mlir::Value unit : pu.getUnits()) {
-    auto get_unit = unit.getDefiningOp<mlir::dataflow::GetUnitOp>();
-    if (!get_unit) continue;
-    auto type = get_unit->getAttrOfType<mlir::StringAttr>("type");
-    if (!type) continue;
-
-    // The device names a kind in upper case; the unit ops carry it lower case.
-    auto kind = mlir::StringAttr::get(pu.getContext(), type.getValue().upper());
-    if (auto load =
-            resource_kinds.getFeature<mlir::ktdf_arch::feature::Load>(kind)) {
-      if (load.getWordSize(memory_space) != 0) return true;
-    }
-    if (auto store =
-            resource_kinds.getFeature<mlir::ktdf_arch::feature::Store>(kind)) {
-      if (store.getWordSize(memory_space) != 0) return true;
-    }
-  }
-  return false;
-}
-
 /// The size in bytes of the word the units \p pu runs on address in, when they
 /// reach \p memory_space.
 ///
@@ -449,7 +421,7 @@ mlir::LogicalResult replaceSourceBCasts(
     mlir::dataflow::ProgramUnitOp pu,
     const llvm::DenseMap<ResourceType, mlir::Value>& resolved_units,
     llvm::DenseMap<mlir::Value, mlir::Value>& replacements,
-    const scheduler::arch_view::ResourceKinds& resource_kinds,
+    const scheduler::arch_view::MemoryTree& memory_tree,
     mlir::OpBuilder& builder) {
   auto* ctx = pu.getContext();
 
@@ -496,12 +468,12 @@ mlir::LogicalResult replaceSourceBCasts(
 
     // Address assignment works in bytes, while a register file is addressed in
     // elements by the compute unit that reads it. Left in bytes, a register
-    // lands element_bytes registers further along than it should; a memory a
-    // unit addresses keeps its bytes.
+    // lands element_bytes registers further along than it should; a memory
+    // transfers reach keeps its bytes.
     mlir::Value addr = ucc.getInputs()[0];
     const auto element_bytes =
         getElementSizeBytes(result_type.getElementType());
-    if (element_bytes > 1 && !isUnitAddressed(pu, *ms, resource_kinds)) {
+    if (element_bytes > 1 && memory_tree.isBelowScratchPad(*ms)) {
       mlir::IntegerAttr addr_bits;
       if (auto* const addr_def = addr.getDefiningOp();
           addr_def && mlir::m_Constant(&addr_bits).match(addr_def) &&
@@ -677,7 +649,7 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
 
     // Phase 3c: Source B casts.
     if (mlir::failed(replaceSourceBCasts(pu, resolved_units, replacements,
-                                         resource_kinds, builder)))
+                                         memory_tree, builder)))
       return mlir::failure();
 
     // Phase 3d: RAUW + type propagation.
