@@ -44,18 +44,16 @@ using namespace mlir;
 namespace scheduler {
 namespace {
 
-/// Gets the mapped constants \p generic 's body reads, in the order it reads
-/// them.
+/// Gets the mapped constants the body of \p generic reads, in reading order.
 ///
-/// Found by use rather than by where they are defined: a pattern inserts them
-/// in the body, but folding materializes a constant in the entry block of the
-/// region it is in, so by now most are already outside. The mapping is what
-/// says one belongs in a register rather than being an operand of the
-/// arithmetic.
+/// Found by use rather than by where they stand: folding materializes a
+/// constant in the entry block of its region, so by now most are outside the
+/// body a pattern put them in. The mapping marks one as belonging in a register
+/// rather than being an operand of the arithmetic.
 auto getMappedConstants(linalg::GenericOp generic)
     -> SmallVector<arith::ConstantOp> {
-  // Ordered, because the order they are found in is the order the operands are
-  // in, which is what names each of them a register.
+  // Ordered, because the order they are found in is the operand order that
+  // names each of them a register.
   SetVector<Operation*> seen;
   generic.getBody()->walk([&](Operation* op) {
     for (const auto operand : op->getOperands()) {
@@ -71,13 +69,11 @@ auto getMappedConstants(linalg::GenericOp generic)
   return result;
 }
 
-/// Gets how many lanes of \p element a compute unit of \p op 's device holds.
+/// Gets how many lanes of \p element a compute unit of the device of \p op has.
 ///
-/// The unit's SIMD feature says so, per element type, which is the same number
-/// a register of it holds -- so a device with wider registers or another
-/// element needs nothing here. Zero when the device does not say, which the
-/// caller reports rather than guessing a width the template was not written
-/// for.
+/// The unit's SIMD feature gives it per element type, and that is also how many
+/// a register holds. Zero when the device gives none, which the caller reports
+/// rather than guessing a width the template was not written for.
 auto getLaneCount(Operation* op, Type element, AnalysisManager analyses)
     -> int64_t {
   const auto declaration = ktdf_arch::findDeviceDeclarationFor(op);
@@ -98,10 +94,9 @@ auto getLaneCount(Operation* op, Type element, AnalysisManager analyses)
 
 /// Turns \p constant into a register in front of \p generic.
 ///
-/// The register is a whole one, filled with the value repeated: what a template
-/// reads out of it is a vector, not one element. Said as a fill, which is what
-/// the lowering below turns into the bitstream and the store that write it.
-/// Returns the register, which the body then reads instead of the constant.
+/// A template reads a whole vector out of a register, so the register is filled
+/// with the value repeated across its lanes. Returns it, for the body to read
+/// instead of the constant.
 auto materializeRegister(arith::ConstantOp constant, linalg::GenericOp generic,
                          AnalysisManager analyses, RewriterBase& rewriter)
     -> Value {
@@ -124,12 +119,11 @@ auto materializeRegister(arith::ConstantOp constant, linalg::GenericOp generic,
   return reg;
 }
 
-/// Gets the registers \p generic 's body allocates for itself, in body order.
+/// Gets the registers the body of \p generic allocates for itself, in order.
 ///
 /// A pattern allocates the scratch a template computes in where it matched, so
-/// these are in the body as well. Only ones sized entirely by their type are
-/// taken: an allocation the body computes a size for could not be moved out of
-/// it anyway.
+/// that lands in the body too. Only allocations sized entirely by their type
+/// are taken; one the body computes a size for could not move out of it.
 auto getBodyAllocations(linalg::GenericOp generic)
     -> SmallVector<memref::AllocOp> {
   SmallVector<memref::AllocOp> result;
@@ -146,25 +140,24 @@ auto hoistRegisterConstants(linalg::GenericOp generic, AnalysisManager analyses,
   const auto constants = getMappedConstants(generic);
 
   for (auto constant : constants) {
-    // Only one still inside has to move, and only then: moving one that is
-    // already out could put it after something else that reads it.
+    // Only one still inside has to move. Moving one that is already out could
+    // put it after something else that reads it.
     if (generic->isProperAncestor(constant)) {
       rewriter.moveOpBefore(constant, generic);
     }
     const auto reg = materializeRegister(constant, generic, analyses, rewriter);
     if (!reg) return failure();
 
-    // Whatever read the constant in the body reads the register now. The body
-    // is not isolated from above, so it refers to it where it stands.
+    // Whatever read the constant reads the register now, where it stands: the
+    // body is not isolated from above.
     rewriter.replaceUsesWithIf(constant.getResult(), reg, [&](OpOperand& use) {
       return generic->isProperAncestor(use.getOwner());
     });
   }
 
-  // The scratch moves out as it stands. What reads it is inside the body and
-  // goes on reading it there, which it may: the body is not isolated from
-  // above. It cannot be handed in as an operand instead -- a generic takes
-  // either tensors or buffers throughout, and the data here is tensors.
+  // The scratch moves out as it stands and the body goes on reading it there.
+  // Handing it in as an operand is not open: a generic takes either tensors or
+  // buffers throughout, and the data here is tensors.
   for (auto alloc : getBodyAllocations(generic)) {
     rewriter.moveOpBefore(alloc, generic);
   }

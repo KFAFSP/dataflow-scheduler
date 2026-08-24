@@ -141,10 +141,9 @@ struct LowerLinalgGenericPattern
                     mlir::vectorchain::VectorChainBinaryOperator::abs_max);
               })
               .Case<mlir::dataflow::OpaqueOp>([&](mlir::dataflow::OpaqueOp op) {
-                // Already DFIR, and it reads and writes registers rather
-                // than the lanes the body deals in, so it only has to leave
-                // the body -- in place, among the vector ops going the same
-                // way.
+                // Already DFIR, and it reads and writes registers rather than
+                // the lanes the body deals in, so it only has to leave the
+                // body.
                 rewriter.moveOpBefore(op, generic_op);
                 return mlir::success();
               })
@@ -445,8 +444,8 @@ struct LowerLinalgGenericPattern
   /// Lowers a store into a register to the vector store that writes it.
   ///
   /// A register is written whole, so the value has to be a vector by the time
-  /// this runs -- while it is still the body's scalar there is nothing to write
-  /// a lane of. Returns failure until then, so the driver comes back to it.
+  /// this runs. Returns failure while it is still the body's scalar, so the
+  /// driver comes back to it.
   mlir::LogicalResult lowerMemRefStore(mlir::memref::StoreOp op,
                                        mlir::PatternRewriter& rewriter) const {
     if (!mlir::isa<mlir::VectorType>(op.getValueToStore().getType())) {
@@ -482,7 +481,7 @@ struct LowerLinalgGenericPattern
     return mlir::success();
   }
 
-  /// How a register is addressed: the whole of it, in lane order.
+  /// Holds the maps that address a register: the whole of it, in lane order.
   struct RegisterAccess {
     mlir::AffineMap map;
     mlir::IntegerSet set;

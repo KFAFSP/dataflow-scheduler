@@ -166,12 +166,11 @@ mlir::AffineMap buildLinearizationMap(mlir::MLIRContext* ctx,
   return mlir::AffineMap::get(rank, 0, sum, ctx);
 }
 
-/// Determines whether a unit of \p pu addresses \p memory_space.
+/// Determines whether a load or store unit of \p pu reaches \p memory_space.
 ///
-/// A memory a load or store unit reaches is one the schedule moves data to, and
-/// its addresses are in the bytes those transfers are laid out in. One no unit
-/// reaches is a register file: nothing routes to it, and what reads it is the
-/// compute unit itself, which addresses it in elements.
+/// Such a memory is one the schedule moves data to, so its addresses are in
+/// the bytes those transfers are laid out in. A register file is reached by no
+/// unit: the compute unit reads it directly, and addresses it in elements.
 bool isUnitAddressed(
     mlir::dataflow::ProgramUnitOp pu, ResourceType memory_space,
     const scheduler::arch_view::ResourceKinds& resource_kinds) {
@@ -181,8 +180,7 @@ bool isUnitAddressed(
     auto type = get_unit->getAttrOfType<mlir::StringAttr>("type");
     if (!type) continue;
 
-    // The kind as the device spells it, which is upper case; the unit ops carry
-    // it lower case.
+    // The device names a kind in upper case; the unit ops carry it lower case.
     auto kind = mlir::StringAttr::get(pu.getContext(), type.getValue().upper());
     if (auto load =
             resource_kinds.getFeature<mlir::ktdf_arch::feature::Load>(kind)) {
@@ -496,13 +494,10 @@ mlir::LogicalResult replaceSourceBCasts(
 
     builder.setInsertionPoint(ucc);
 
-    // A register file is addressed in elements by what reads it, and what
-    // address assignment picked is in bytes, so convert -- but only there. A
-    // memory a unit addresses keeps the bytes its transfers are laid out in.
-    //
-    // Unconverted, every register but the one at zero is read element_size
-    // registers further along than it should be, which is why this shows only
-    // on a file holding more than one of them.
+    // Address assignment works in bytes, while a register file is addressed in
+    // elements by the compute unit that reads it. Left in bytes, a register
+    // lands element_bytes registers further along than it should; a memory a
+    // unit addresses keeps its bytes.
     mlir::Value addr = ucc.getInputs()[0];
     const auto element_bytes =
         getElementSizeBytes(result_type.getElementType());
