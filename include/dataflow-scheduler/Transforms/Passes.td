@@ -367,8 +367,7 @@ def HoistRegistersPass : Pass<"hoist-registers", "mlir::ModuleOp"> {
     "mlir::arith::ArithDialect",
     "mlir::ktdf::KTDFDialect",
     "mlir::linalg::LinalgDialect",
-    "mlir::memref::MemRefDialect",
-    "mlir::ktdf::KTDFDialect"
+    "mlir::memref::MemRefDialect"
   ];
 }
 
