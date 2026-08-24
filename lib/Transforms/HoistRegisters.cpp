@@ -28,10 +28,11 @@
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
 
+#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchInterfaces.h"
-#include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Transforms/Passes.h"  // IWYU pragma: keep
 
 namespace scheduler {
 #define GEN_PASS_DEF_HOISTREGISTERSPASS
@@ -80,25 +81,19 @@ auto getMappedConstants(linalg::GenericOp generic)
 auto getLaneCount(Operation* op, Type element, AnalysisManager analyses)
     -> int64_t {
   const auto declaration = ktdf_arch::findDeviceDeclarationFor(op);
-  if (!declaration) return 0;
+  if (!declaration) {
+    return 0;
+  }
 
-  // Through a reference, because the declaration a program carries is an import
-  // of the description rather than the description itself -- walking the
-  // declaration alone finds an empty body.
   ktdf_arch::DeviceRef device(declaration, analyses);
+  const auto& resource_kinds =
+      device.getDeviceManager().getOrCreateView<arch_view::ResourceKinds>(
+          device);
 
-  int64_t result = 0;
-  device->getBodyRegion().walk(
-      [&](ktdf_arch::ExecutionUnitOp unit) -> WalkResult {
-        const auto simd = ktdf_arch::getFeature<ktdf_arch::feature::SIMD>(
-            unit.getOperation());
-        if (!simd) return WalkResult::advance();
-        const auto lanes = simd.getLanes(element);
-        if (lanes == 0) return WalkResult::advance();
-        result = lanes;
-        return WalkResult::interrupt();
-      });
-  return result;
+  // FIXME: Discover compute_kind from op.
+  const auto simd = resource_kinds.getFeature<ktdf_arch::feature::SIMD>(
+      resource_kinds.getComputeKind());
+  return simd.getLanes(element);
 }
 
 /// Turns \p constant into a register in front of \p generic.
@@ -112,7 +107,7 @@ auto materializeRegister(arith::ConstantOp constant, linalg::GenericOp generic,
     -> Value {
   const auto maps_to = ktdf_arch::getProperty<ktdf_arch::MapsToAttr>(constant);
   const auto element = constant.getType();
-  const auto lanes = getLaneCount(constant, element, analyses);
+  const auto lanes = getLaneCount(generic, element, analyses);
   if (lanes == 0) {
     constant.emitError("the device says no lane count for ") << element;
     return nullptr;
@@ -183,17 +178,17 @@ struct HoistRegistersPass
 
   void runOnOperation() override {
     IRRewriter rewriter(&getContext());
-    auto result = success();
-    getOperation()->walk([&](linalg::GenericOp generic) {
+    const auto result = getOperation()->walk([&](linalg::GenericOp generic) {
       if (failed(hoistRegisterConstants(generic, getAnalysisManager(),
                                         rewriter))) {
-        result = failure();
         return WalkResult::interrupt();
       }
       return WalkResult::skip();
     });
 
-    if (failed(result)) signalPassFailure();
+    if (result.wasInterrupted()) {
+      signalPassFailure();
+    }
   }
 };
 
