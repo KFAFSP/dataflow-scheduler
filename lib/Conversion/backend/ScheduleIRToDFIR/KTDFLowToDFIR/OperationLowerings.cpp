@@ -809,14 +809,14 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
         opaque.emitError("slot ") << value << " is not a buffer";
         return llvm::failure();
       }
-      const auto element_bytes = getElementSizeBytes(shaped.getElementType());
-      if (element_bytes <= 0 || register_size % element_bytes != 0) {
+      const auto maybe_size = tryGetSizeInBytes(shaped.getElementType());
+      if (!maybe_size || register_size % *maybe_size != 0) {
         opaque.emitError("slot ")
             << value << " element does not divide a register of "
             << register_size << " bytes";
         return llvm::failure();
       }
-      const auto register_elements = register_size / element_bytes;
+      const auto register_elements = register_size / *maybe_size;
 
       // Compute the index of the register addressed by the operand.
       if (*address % register_elements != 0) {

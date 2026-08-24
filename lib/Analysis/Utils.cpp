@@ -22,6 +22,8 @@
 
 #include "dataflow-scheduler/Analysis/Utils.h"
 
+#include <llvm/ADT/TypeSwitch.h>
+#include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/Location.h>
 #include <mlir/IR/Operation.h>
 
@@ -40,7 +42,21 @@ void scheduler::printLocation(llvm::raw_ostream& OS, mlir::Operation* op) {
   }
 }
 
-auto scheduler::getElementSizeBytes(mlir::Type element_type) -> int64_t {
-  unsigned element_size_bits = element_type.getIntOrFloatBitWidth();
-  return (element_size_bits + 7) / 8;
+auto scheduler::tryGetSizeInBits(mlir::Type type) -> std::optional<unsigned> {
+  return llvm::TypeSwitch<mlir::Type, std::optional<unsigned>>(type)
+      .Case([](mlir::IntegerType type) -> unsigned { return type.getWidth(); })
+      .Case([](mlir::FloatType type) -> unsigned { return type.getWidth(); })
+      .Case([](mlir::VectorType type) -> std::optional<unsigned> {
+        if (!type.hasStaticShape()) {
+          return std::nullopt;
+        }
+
+        return type.getNumElements() * type.getElementTypeBitWidth();
+      })
+      .Default(std::nullopt);
+}
+
+auto scheduler::tryGetSizeInBytes(mlir::Type type) -> std::optional<unsigned> {
+  const auto maybe_bits = tryGetSizeInBits(type);
+  return maybe_bits ? std::optional{(*maybe_bits + 7U) / 8U} : std::nullopt;
 }

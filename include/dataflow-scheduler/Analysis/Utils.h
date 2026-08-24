@@ -34,8 +34,18 @@ namespace scheduler {
 /// Otherwise, prints "@operation_pointer".
 void printLocation(llvm::raw_ostream& os, mlir::Operation* op);
 
-/// Get element size in bytes for an int or float memref element type.
-auto getElementSizeBytes(mlir::Type element_type) -> int64_t;
+/// Tries to obtain the size of @p type in bits.
+///
+/// @retval nullptr   @p type does not have a fixed size.
+/// @retval unsigned  Size in bits.
+[[nodiscard]]
+auto tryGetSizeInBits(mlir::Type type) -> std::optional<unsigned>;
+/// Tries to obtain the size of @p type in bytes.
+///
+/// @retval nullptr   @p type does not have a fixed size.
+/// @retval unsigned  Size in bytes, rounded up.
+[[nodiscard]]
+auto tryGetSizeInBytes(mlir::Type type) -> std::optional<unsigned>;
 
 }  // namespace scheduler
 

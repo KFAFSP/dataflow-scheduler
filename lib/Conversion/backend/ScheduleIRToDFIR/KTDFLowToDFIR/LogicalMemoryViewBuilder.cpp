@@ -360,7 +360,7 @@ mlir::LogicalResult replaceSourceAChains(
         // Only on this path: the constant-address path below adds the same
         // offset to an address the compiler picked, which is itself in
         // elements, so the two agree there and must not be converted.
-        displacement->scaleBy(getElementSizeBytes(src_type.getElementType()));
+        displacement->scaleBy(*tryGetSizeInBytes(src_type.getElementType()));
 
         auto memory_space = getMemorySpaceAttr(cursor.getType());
         if (!memory_space)
@@ -471,8 +471,7 @@ mlir::LogicalResult replaceSourceBCasts(
     // lands element_bytes registers further along than it should; a memory
     // transfers reach keeps its bytes.
     mlir::Value addr = ucc.getInputs()[0];
-    const auto element_bytes =
-        getElementSizeBytes(result_type.getElementType());
+    const auto element_bytes = *tryGetSizeInBytes(result_type.getElementType());
     if (element_bytes > 1 && memory_tree.isBelowScratchPad(*ms)) {
       mlir::IntegerAttr addr_bits;
       if (auto* const addr_def = addr.getDefiningOp();

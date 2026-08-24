@@ -120,8 +120,7 @@ int64_t computeAllocationSize(mlir::memref::AllocOp alloc) {
     return -1;
   }
 
-  int64_t element_size_bytes =
-      getElementSizeBytes(memref_type.getElementType());
+  int64_t element_size_bytes = *tryGetSizeInBytes(memref_type.getElementType());
   int64_t total_bytes = total_elements * element_size_bytes;
 
   LDBG(1) << "  Total size: " << total_bytes << " bytes (" << total_elements
