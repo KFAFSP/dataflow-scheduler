@@ -19,6 +19,7 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SetVector.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Support/MathExtras.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
@@ -134,6 +135,82 @@ auto getBodyAllocations(linalg::GenericOp generic)
   return result;
 }
 
+/// Gets how many elements of its tile \p generic covers, zero if it is not
+/// static.
+auto getTileSize(linalg::GenericOp generic) -> int64_t {
+  int64_t result = 1;
+  for (const auto range : generic.getStaticLoopRanges()) {
+    if (ShapedType::isDynamic(range)) return 0;
+    if (llvm::MulOverflow<int64_t>(result, range, result)) return 0;
+  }
+  return result;
+}
+
+/// Sizes \p alloc to the tile \p generic covers and moves it in front of it.
+///
+/// A pattern says the element a register holds and leaves the count to here,
+/// where the tile says it: what the template computes on is the tile, whether
+/// that is one register or several. An allocation that already carries a shape
+/// is taken at its word and only moved.
+///
+/// \p zero is the index of the lane the body's own accesses land on, made here
+/// on the first allocation that needs one.
+auto hoistAllocation(memref::AllocOp alloc, linalg::GenericOp generic,
+                     AnalysisManager analyses, Value& zero,
+                     RewriterBase& rewriter) -> LogicalResult {
+  const auto type = alloc.getType();
+  if (type.getRank() != 0) {
+    rewriter.moveOpBefore(alloc, generic);
+    return success();
+  }
+
+  const auto element = type.getElementType();
+  const auto tile = getTileSize(generic);
+  if (tile == 0) {
+    return generic.emitError("the tile is not a static number of elements");
+  }
+
+  // A register holds whole lanes of the element, so a tile that is not a whole
+  // number of them would leave the template reading one it never wrote.
+  const auto lanes = getLaneCount(generic, element, analyses);
+  if (lanes != 0 && tile % lanes != 0) {
+    return alloc.emitError("a tile of ")
+           << tile << " does not divide into registers of " << lanes << " "
+           << element;
+  }
+
+  const auto register_type = MemRefType::get(
+      {tile}, element, MemRefLayoutAttrInterface{}, type.getMemorySpace());
+
+  rewriter.setInsertionPoint(generic);
+  auto reg = memref::AllocOp::create(rewriter, alloc.getLoc(), register_type);
+  if (!zero) {
+    zero = arith::ConstantIndexOp::create(rewriter, alloc.getLoc(), 0);
+  }
+
+  // What the body writes and reads is one element, and it becomes lane zero of
+  // the register. The lowering below turns either into the whole of it.
+  for (auto* user : llvm::to_vector(alloc->getUsers())) {
+    rewriter.setInsertionPoint(user);
+    if (auto store = dyn_cast<memref::StoreOp>(user)) {
+      memref::StoreOp::create(rewriter, store.getLoc(), store.getValueToStore(),
+                              reg, ValueRange{zero});
+      rewriter.eraseOp(store);
+      continue;
+    }
+    if (auto load = dyn_cast<memref::LoadOp>(user)) {
+      auto value = memref::LoadOp::create(rewriter, load.getLoc(), reg,
+                                          ValueRange{zero});
+      rewriter.replaceOp(load, value.getResult());
+    }
+  }
+
+  // Whoever is left takes the register as it stands -- the opaque, which reads
+  // and writes the whole of it.
+  rewriter.replaceOp(alloc, reg.getResult());
+  return success();
+}
+
 /// Hoists the registers of \p generic out of its body.
 auto hoistRegisterConstants(linalg::GenericOp generic, AnalysisManager analyses,
                             RewriterBase& rewriter) -> LogicalResult {
@@ -155,11 +232,14 @@ auto hoistRegisterConstants(linalg::GenericOp generic, AnalysisManager analyses,
     });
   }
 
-  // The scratch moves out as it stands and the body goes on reading it there.
-  // Handing it in as an operand is not open: a generic takes either tensors or
-  // buffers throughout, and the data here is tensors.
+  // The scratch moves out sized to the tile, and the body goes on reading it
+  // there. Handing it in as an operand is not open: a generic takes either
+  // tensors or buffers throughout, and the data here is tensors.
+  Value zero;
   for (auto alloc : getBodyAllocations(generic)) {
-    rewriter.moveOpBefore(alloc, generic);
+    if (failed(hoistAllocation(alloc, generic, analyses, zero, rewriter))) {
+      return failure();
+    }
   }
 
   return success();

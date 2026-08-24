@@ -356,9 +356,12 @@ def HoistRegistersPass : Pass<"hoist-registers", "mlir::ModuleOp"> {
     above may do; handing them in as operands is not open, since a generic takes
     either tensors or buffers throughout and the data is tensors.
 
-    Only constants carrying a mapping move, and only allocations sized by their
-    type. An element the device gives no lane count for is reported rather than
-    guessed at.
+    A pattern allocates the rest -- the input, the output, the scratch -- as a
+    single element, saying only which type and which memory. The count comes
+    from here: the tile the generic covers, since that is what the template
+    computes on, and the scalar store and load the body did become lane zero of
+    it. A tile that is not a whole number of the device's lanes is reported,
+    rather than leaving a register the template reads but nothing wrote.
   }];
   let dependentDialects = [
     "mlir::arith::ArithDialect",
