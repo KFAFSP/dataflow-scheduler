@@ -341,4 +341,38 @@ def EnsureDeviceDeclarationPass
   ];
 }
 
+def HoistRegistersPass : Pass<"hoist-registers", "mlir::ModuleOp"> {
+  let summary = "Move the registers a generic body uses in front of it";
+  let description = [{
+    A device's substitution patterns rewrite an op inside a `linalg.generic`'s
+    body, and what they build there needs constants the template wants in
+    registers. A pattern can only insert where it matched, so those land in the
+    body, carrying the mapping that says which memory they belong to.
+
+    This moves each of them out in front of the generic and leaves a register
+    there instead: an allocation in the mapped memory, filled with the value
+    repeated across as many lanes as the device says a unit holds of that
+    element. What a template reads out of a register is a whole
+    vector, so a single element written at one index would not do. The body then
+    refers to the register where it stands, which it may -- a generic's body is
+    not isolated from above.
+
+    The scratch a template computes in is allocated in the body by the same
+    pattern, and moves out as it stands. Either way what reads a register is
+    inside the body and goes on reading it there, which it may -- a body is not
+    isolated from above. Handing them in as operands instead is not open: a
+    generic takes either tensors or buffers throughout, and the data is tensors.
+
+    Only constants carrying a mapping move, and only allocations sized by their
+    type. An element the device gives no lane count for is reported rather than
+    guessed at, since a register of a width the template was not written for is
+    not one it can read.
+  }];
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::memref::MemRefDialect"
+  ];
+}
+
 #endif // DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD

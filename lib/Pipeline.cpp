@@ -64,6 +64,10 @@ void scheduler::buildSchedulerOptimizationPipeline(
   pm.nest<mlir::ModuleOp>().addNestedPass<mlir::func::FuncOp>(
       mlir::ktdf_arch::createApplyPatternsPass({"pre_scheduling"}));
 
+  // Those patterns rewrite inside a generic's body, where they can only insert
+  // where they matched, so the constants they need for registers land there.
+  pm.addPass(createHoistRegistersPass());
+
   pm.addPass(createPathExpansionPass(scheduler_ctx));
   pm.addPass(createScalarBroadcastLegalizationPass());
   pm.addPass(createNormalizeSCFForLoopsPass());
