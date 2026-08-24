@@ -30,6 +30,7 @@
 #include <mlir/Pass/Pass.h>
 
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchInterfaces.h"

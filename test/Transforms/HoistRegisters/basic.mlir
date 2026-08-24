@@ -8,12 +8,14 @@
 // sized to the tile it covers, and the scalar store and load the body did
 // become lane zero of the register they were on.
 //
-// The opaque prints generically because nothing in the input loads its dialect.
+// Substituting on its own leaves the opaque printed generically: the device is
+// what asks for it, and nothing in that run loads its dialect. This pass names
+// it among its own, so the second run prints it as itself.
 
 // RUN: dataflow-scheduler-opt %s -allow-unregistered-dialect \
 // RUN:   -ktdfarch-apply-patterns=groups=pre_scheduling \
 // RUN:   | FileCheck %s --check-prefix=SUBST
-// RUN: dataflow-scheduler-opt %s -allow-unregistered-dialect \
+// RUN: dataflow-scheduler-opt %s \
 // RUN:   -ktdfarch-apply-patterns=groups=pre_scheduling -hoist-registers \
 // RUN:   | FileCheck %s
 
@@ -44,7 +46,9 @@
 // CHECK:      linalg.generic
 // CHECK-NEXT: ^bb0(%[[X:.*]]: f16, %{{.*}}: f16):
 // CHECK-NEXT:   memref.store %[[X]], %[[IN]][%[[ZERO]]] : memref<64xf16, "SFU_REG">
-// CHECK-NEXT:   "ktdf.opaque"(%[[C0_REG]], %[[IN]], %[[OUT]], %[[T0]])
+// CHECK-NEXT:   ktdf.opaque "fake_exp" {dataflow_scheduler.register_names = ["c0", "in0", "out0", "t0_0"], func_name = "fake_exp"}
+// CHECK-NEXT:     ins(%[[C0_REG]], %[[IN]]: memref<64xf16, "SFU_REG">, memref<64xf16, "SFU_REG">)
+// CHECK-NEXT:     outs(%[[OUT]], %[[T0]]: memref<64xf16, "SFU_REG">, memref<64xf16, "SFU_REG">)
 // CHECK:        %[[E:.*]] = memref.load %[[OUT]][%[[ZERO]]] : memref<64xf16, "SFU_REG">
 // CHECK-NEXT:   linalg.yield %[[E]] : f16
 

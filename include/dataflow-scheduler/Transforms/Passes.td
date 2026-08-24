@@ -365,6 +365,7 @@ def HoistRegistersPass : Pass<"hoist-registers", "mlir::ModuleOp"> {
   }];
   let dependentDialects = [
     "mlir::arith::ArithDialect",
+    "mlir::ktdf::KTDFDialect",
     "mlir::linalg::LinalgDialect",
     "mlir::memref::MemRefDialect"
   ];
