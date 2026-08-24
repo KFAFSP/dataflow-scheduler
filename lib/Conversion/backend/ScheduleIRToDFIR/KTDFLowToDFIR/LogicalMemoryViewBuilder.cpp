@@ -166,18 +166,6 @@ mlir::AffineMap buildLinearizationMap(mlir::MLIRContext* ctx,
   return mlir::AffineMap::get(rank, 0, sum, ctx);
 }
 
-/// The size in bytes of the word the units \p pu runs on address in, when they
-/// reach \p memory_space.
-///
-/// Addressing is in words: a unit whose word is 128 bytes reads word 1 to reach
-/// byte 128. The device says the size per memory space, under the load feature
-/// of a unit that loads and the store feature of one that stores, and a unit
-/// that says nothing addresses in bytes.
-///
-/// The units of one program unit are instances of one kind on different cores:
-/// the load units of a load stage, the store units of a store stage. So the
-/// kind of the first answers for all of them, and a set that disagreed would
-/// mean one address in two granularities, which is reported.
 /// Determines whether a unit of \p pu addresses \p memory_space.
 ///
 /// A memory a load or store unit reaches is one the schedule moves data to, and
@@ -208,6 +196,18 @@ bool isUnitAddressed(
   return false;
 }
 
+/// The size in bytes of the word the units \p pu runs on address in, when they
+/// reach \p memory_space.
+///
+/// Addressing is in words: a unit whose word is 128 bytes reads word 1 to reach
+/// byte 128. The device says the size per memory space, under the load feature
+/// of a unit that loads and the store feature of one that stores, and a unit
+/// that says nothing addresses in bytes.
+///
+/// The units of one program unit are instances of one kind on different cores:
+/// the load units of a load stage, the store units of a store stage. So the
+/// kind of the first answers for all of them, and a set that disagreed would
+/// mean one address in two granularities, which is reported.
 mlir::FailureOr<int64_t> wordSizeOf(
     mlir::dataflow::ProgramUnitOp pu, ResourceType memory_space,
     const scheduler::arch_view::ResourceKinds& resource_kinds) {
