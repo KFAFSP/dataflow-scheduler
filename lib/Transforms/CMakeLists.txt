@@ -45,4 +45,6 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     MLIRMathDialect
     MLIRPass
     MLIRTransformUtils
+MLIRValueBoundsOpInterface
+    MLIRAlignmentAttrInterface
 )
