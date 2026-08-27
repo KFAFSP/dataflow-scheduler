@@ -418,4 +418,22 @@ def ApplyDevicePatternsPass : Pass<"apply-device-patterns", "mlir::func::FuncOp"
   ];
 }
 
+def HoistInvariantsPass : Pass<"hoist-invariants", "mlir::func::FuncOp"> {
+  let summary = "Hoist invariants out of pipelines and loops";
+  let description = [{
+
+  }];
+
+  let dependentDialects = [
+    "mlir::ktdf::KTDFDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::scf::SCFDialect"
+  ];
+
+  let statistics = [
+    Statistic<"num_hoisted", "num-hoisted", "Number of hoisted operations">,
+    Statistic<"invariant_writes", "invariant-writes", "Number of hoisted invariant writes">
+  ];
+}
+
 #endif // DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD

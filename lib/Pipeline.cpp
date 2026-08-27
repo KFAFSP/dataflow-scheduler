@@ -66,7 +66,8 @@ void scheduler::buildSchedulerOptimizationPipeline(
   // The patterns above rewrite inside a generic's body and can only insert
   // where they matched, so the registers they need land there.
   pm.addPass(createHoistRegistersPass());
-
+  pm.nest<mlir::ModuleOp>().addNestedPass<mlir::func::FuncOp>(
+      createHoistInvariantsPass());
   pm.addPass(createPathExpansionPass(scheduler_ctx));
   pm.addPass(createScalarBroadcastLegalizationPass());
   pm.addPass(createNormalizeSCFForLoopsPass());

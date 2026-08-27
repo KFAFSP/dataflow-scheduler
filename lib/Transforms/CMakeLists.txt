@@ -9,6 +9,7 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     ApplyDevicePatterns.cpp
     DoubleBuffering.cpp
     EnsureDeviceDeclaration.cpp
+    HoistInvariants.cpp
     HoistRegisters.cpp
     NormalizeGridTo1D.cpp
     NormalizeSCFForLoops.cpp
@@ -45,6 +46,6 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     MLIRMathDialect
     MLIRPass
     MLIRTransformUtils
-MLIRValueBoundsOpInterface
+    MLIRValueBoundsOpInterface
     MLIRAlignmentAttrInterface
 )
