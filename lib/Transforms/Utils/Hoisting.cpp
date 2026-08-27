@@ -20,6 +20,7 @@
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Support/DebugLog.h>
+#include <llvm/Support/LogicalResult.h>
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/IR/Operation.h>
 #include <mlir/IR/Visitors.h>
@@ -139,6 +140,48 @@ auto scheduler::findHoistingTarget(
   return result;
 }
 
+namespace {
+
+template <class... Effects>
+auto visitRestrictedUsersIn(
+    mlir::Value restricted, mlir::Region* region,
+    llvm::function_ref<llvm::LogicalResult(
+        mlir::Operation*, llvm::ArrayRef<mlir::MemoryEffects::EffectInstance>)>
+        visitor) -> llvm::LogicalResult {
+  // Process just the users, since the location is restricted.
+  for (auto* const user : restricted.getUsers()) {
+    if (user->getParentRegion()->isProperAncestor(region)) {
+      // User is outside the region.
+      continue;
+    }
+
+    auto effects = mlir::getEffectsRecursively(user);
+    if (!effects) {
+      // We can't judge the effects of this operation.
+      LDBG() << "giving up on " << restricted;
+      LDBG() << "  unknown user " << mlir::OpWithFlags(user, kSkipRegions);
+      return llvm::failure();
+    }
+
+    llvm::erase_if(
+        *effects,
+        [&](const mlir::MemoryEffects::EffectInstance& effect) -> bool {
+          return !llvm::isa<Effects...>(effect.getEffect()) ||
+                 effect.getValue() != restricted;
+        });
+    if (effects->empty()) {
+      continue;
+    }
+    if (failed(visitor(user, *effects))) {
+      return llvm::failure();
+    }
+  }
+
+  return llvm::success();
+}
+
+}  // namespace
+
 auto scheduler::findDominatingWritesIn(mlir::Value restricted,
                                        mlir::Region* region,
                                        mlir::DominanceInfo& dominance)
@@ -179,57 +222,53 @@ auto scheduler::findDominatingWritesIn(mlir::Value restricted,
                      candidates.end());
   };
 
-  // Process just the users, since the location is restricted.
-  for (auto* const user : restricted.getUsers()) {
-    if (user->getParentRegion()->isProperAncestor(region)) {
-      // User is outside the region.
-      continue;
-    }
-
-    const auto effects = mlir::getEffectsRecursively(user);
-    if (!effects) {
-      // We can't judge the effects of this operation.
-      LDBG() << "giving up on " << restricted;
-      LDBG() << "  unknown user " << mlir::OpWithFlags(user, kSkipRegions);
-      return std::nullopt;
-    }
-    if (!llvm::any_of(
-            *effects,
-            [&](const mlir::MemoryEffects::EffectInstance& effect) -> bool {
-              return llvm::isa<mlir::MemoryEffects::Write>(
-                         effect.getEffect()) &&
-                     effect.getValue() == restricted;
-            })) {
-      // The operation does not write to the value.
-      continue;
-    }
-
+  // Visit all users with write effects.
+  const auto visit_effects =
+      [&](mlir::Operation* user,
+          mlir::ArrayRef<mlir::MemoryEffects::EffectInstance> /*effects*/)
+      -> llvm::LogicalResult {
     add_candidate(user);
+    return llvm::success();
+  };
+  if (failed(visitRestrictedUsersIn<mlir::MemoryEffects::Write>(
+          restricted, region, visit_effects))) {
+    return std::nullopt;
   }
 
   return candidates;
 }
 
-auto scheduler::findInvariantWriteIn(mlir::Value restricted,
-                                     mlir::Region* region,
-                                     mlir::DominanceInfo& dominance)
+auto scheduler::findSingleWriteIn(mlir::Value restricted, mlir::Region* region)
     -> mlir::Operation* {
-  // Find the single dominating write to restricted in the region.
-  const auto maybe_writes =
-      findDominatingWritesIn(restricted, region, dominance);
-  if (!maybe_writes) {
-    LDBG() << "giving up on " << restricted;
-    LDBG() << "  no dominating writes";
-    return nullptr;
-  }
-  if (maybe_writes->size() != 1) {
-    LDBG() << "giving up on " << restricted;
-    for (auto* write : *maybe_writes) {
-      LDBG() << "  written by " << mlir::OpWithFlags(write, kSkipRegions);
+  mlir::Operation* result = nullptr;
+  const auto visit_effects =
+      [&](mlir::Operation* user,
+          mlir::ArrayRef<mlir::MemoryEffects::EffectInstance> /*effects*/)
+      -> llvm::LogicalResult {
+    if (result) {
+      LDBG() << "giving up on " << restricted;
+      LDBG() << "  written by " << mlir::OpWithFlags(result, kSkipRegions);
+      LDBG() << "  written by " << mlir::OpWithFlags(user, kSkipRegions);
+      LDBG() << "  and potentially more";
+      return llvm::failure();
     }
+    result = user;
+    return llvm::success();
+  };
+  if (llvm::failed(visitRestrictedUsersIn<mlir::MemoryEffects::Write>(
+          restricted, region, visit_effects))) {
     return nullptr;
   }
-  auto* const result = maybe_writes->front();
+
+  return result;
+}
+
+auto scheduler::findInvariantWriteIn(mlir::Value restricted,
+                                     mlir::Region* region) -> mlir::Operation* {
+  auto* const result = findSingleWriteIn(restricted, region);
+  if (!result) {
+    return nullptr;
+  }
 
   // Ensure that the write is invariant. We use a simple algorithm that
   // checks whether the operands to the write are defined outside of the

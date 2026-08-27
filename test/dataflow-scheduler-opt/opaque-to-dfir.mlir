@@ -3,53 +3,45 @@
 // CHECK-LABEL: module @local_schedule_0 {
 // CHECK-LABEL: func.func @local_schedule_0(
 
-// TODO: Match this
-// CHECK-DAG:   %[[C0:.+]] = arith.constant 0
-// CHECK-DAG:   %[[C64:.+]] = arith.constant 64
-// CHECK-DAG:   %[[C128:.+]] = arith.constant 128
-// %0 = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-mnilu", type = "mnilu"} : index
-// %1 = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-mnilu", type = "mnilu"} : index
-// %2 = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-mnisu", type = "mnisu"} : index
-// %3 = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-mnisu", type = "mnisu"} : index
-// %4 = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-l1lu-CL0", type = "l1lu"} : index
-// %5 = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-l1lu-CL0", type = "l1lu"} : index
-// %6 = dataflow.get_unit {core = 0 : i32, corelet = 1 : i32, name = "C0-l1lu-CL1", type = "l1lu"} : index
-// %7 = dataflow.get_unit {core = 1 : i32, corelet = 1 : i32, name = "C1-l1lu-CL1", type = "l1lu"} : index
-// %8 = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-sfu-CL0", type = "sfu"} : index
-// %9 = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-sfu-CL0", type = "sfu"} : index
-// %10 = dataflow.get_unit {core = 0 : i32, corelet = 1 : i32, name = "C0-sfu-CL1", type = "sfu"} : index
-// %11 = dataflow.get_unit {core = 1 : i32, corelet = 1 : i32, name = "C1-sfu-CL1", type = "sfu"} : index
+// CHECK-DAG:   %[[C0:.+]] = arith.constant 0 : index
+// CHECK-DAG:   %[[C1:.+]] = arith.constant 1 : index
+// CHECK-DAG:   %[[C2:.+]] = arith.constant 2 : index
+// CHECK-DAG:   %[[C3:.+]] = arith.constant 3 : index
+// CHECK-DAG:   %[[C32:.+]] = arith.constant 32 : index
+// CHECK-DAG:   %[[C64:.+]] = arith.constant 64 : index
+// CHECK-DAG:   %[[C128:.+]] = arith.constant 128 : index
+// CHECK-DAG:   %[[C0LLU0:.+]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-l1lu-CL0", type = "l1lu"} : index
+// CHECK-DAG:   %[[C1LLU0:.+]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-l1lu-CL0", type = "l1lu"} : index
+// CHECK-DAG:   %[[C0LLU1:.+]] = dataflow.get_unit {core = 0 : i32, corelet = 1 : i32, name = "C0-l1lu-CL1", type = "l1lu"} : index
+// CHECK-DAG:   %[[C1LLU1:.+]] = dataflow.get_unit {core = 1 : i32, corelet = 1 : i32, name = "C1-l1lu-CL1", type = "l1lu"} : index
 // CHECK-DAG:   %[[C0SFU0:.+]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-sfu-CL0", type = "sfu"} : index
 // CHECK-DAG:   %[[C1SFU0:.+]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-sfu-CL0", type = "sfu"} : index
 // CHECK-DAG:   %[[C0SFU1:.+]] = dataflow.get_unit {core = 0 : i32, corelet = 1 : i32, name = "C0-sfu-CL1", type = "sfu"} : index
 // CHECK-DAG:   %[[C1SFU1:.+]] = dataflow.get_unit {core = 1 : i32, corelet = 1 : i32, name = "C1-sfu-CL1", type = "sfu"} : index
-// %16 = dataflow.get_unit {name = "sfu_reg", type = "sfu_reg"} : index
-// %17 = dataflow.get_unit {name = "ddr", type = "ddr"} : index
-// %18 = dataflow.get_unit {core = 0 : i32, name = "C0-l1", type = "l1"} : index
-// %19 = dataflow.get_unit {core = 1 : i32, name = "C1-l1", type = "l1"} : index
-// dataflow.program_unit iter_arg : %arg0 -> (%8, %9, %10, %11) : {
-//   %20 = dataflow.get_logical_memory_view %16, %c0 {layout_map = #map} : index, index, memref<64xf16>
-//   %21 = vectorchain.constant_bitstream {value = [0x3c00]} : vector<1xf16>
-//   %22 = vectorchain.shuffle input(%21) {indices = [0 : i32], repetition = 64 : i32} : vector<1xf16>, vector<64xf16>
-//   agen.vector_store %22, %20[%c0] {store_order = #map, store_set = #set} : memref<64xf16>, vector<64xf16>
-//   scf.for %arg1 = %c0 to %c3 step %c1 {
-//     scf.for %arg2 = %c0 to %c32 step %c1 {
-//       scf.for %arg3 = %c0 to %c2 step %c1 {
-//         %23 = uniform.def_immutable_mapping([%8 -> %4], [%9 -> %5], [%10 -> %6], [%11 -> %7]):index
-//         %24 = uniform.query_map(map:%23, key:%arg0) : index
-//         %25 = dataflow.receive %24 : vector<64xf16>
-//         %26 = dataflow.get_logical_memory_view %16, %c64 {layout_map = #map} : index, index, memref<64xf16>
-//         %27 = dataflow.get_logical_memory_view %16, %c128 {layout_map = #map} : index, index, memref<64xf16>
-//         agen.vector_store %25, %26[%c0] {store_order = #map, store_set = #set} : memref<64xf16>, vector<64xf16>
-//         dataflow.opaque {dataflow_scheduler.register_names = ["c0", "in0", "out0", "t0_0"], func_name = "fake_exp", parameter_dictionary = {}, read_only_register_dictionary = {c0 = "R0", in0 = "R1"}, read_write_register_dictionary = {out0 = "R2", t0_0 = "R3"}}
-//         %28 = agen.vector_load %27[%c0] {load_order = #map, load_set = #set} : memref<64xf16>, vector<64xf16>
-//         %29 = uniform.def_immutable_mapping([%8 -> %12], [%9 -> %13], [%10 -> %14], [%11 -> %15]):index
-//         %30 = uniform.query_map(map:%29, key:%arg0) : index
-//         dataflow.send %30, %28 : vector<64xf16>
-//       }
-//     }
-//   }
-// }
+// CHECK-DAG:   %[[C0LSU0:.+]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-l1su-CL0", type = "l1su"} : index
+// CHECK-DAG:   %[[C1LSU0:.+]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-l1su-CL0", type = "l1su"} : index
+// CHECK-DAG:   %[[C0LSU1:.+]] = dataflow.get_unit {core = 0 : i32, corelet = 1 : i32, name = "C0-l1su-CL1", type = "l1su"} : index
+// CHECK-DAG:   %[[C1LSU1:.+]] = dataflow.get_unit {core = 1 : i32, corelet = 1 : i32, name = "C1-l1su-CL1", type = "l1su"} : index
+// CHECK-DAG:   %[[SFUREG:.+]] = dataflow.get_unit {name = "sfu_reg", type = "sfu_reg"} : index
+// CHECK:       dataflow.program_unit iter_arg : %[[ARG0:.+]] -> (%[[C0SFU0]], %[[C1SFU0]], %[[C0SFU1]], %[[C1SFU1]]) : {
+// CHECK-DAG:   %[[REG:.+]] = dataflow.get_logical_memory_view %[[SFUREG]], %[[C0]] {layout_map = #map} : index, index, memref<64xf16>
+// CHECK-DAG:   %[[IMM:.+]] = vectorchain.constant_bitstream {value = [0x3c00]} : vector<1xf16>
+// CHECK-DAG:   %[[SPLAT:.+]] = vectorchain.shuffle input(%[[IMM]]) {indices = [0 : i32], repetition = 64 : i32} : vector<1xf16>, vector<64xf16>
+// CHECK:       agen.vector_store %[[SPLAT]], %[[REG]][%[[C0]]] {store_order = #map, store_set = #set} : memref<64xf16>, vector<64xf16>
+// CHECK:       scf.for %[[IV0:.+]] = %[[C0]] to %[[C3]] step %[[C1]] {
+// CHECK-NEXT:  scf.for %[[IV1:.+]] = %[[C0]] to %[[C32]] step %[[C1]] {
+// CHECK-NEXT:  scf.for %[[IV2:.+]] = %[[C0]] to %[[C2]] step %[[C1]] {
+// CHECK-DAG:   %[[MAP0:.+]] = uniform.def_immutable_mapping([%[[C0SFU0]] -> %[[C0LLU0]]], [%[[C1SFU0]] -> %[[C1LLU0]]], [%[[C0SFU1]] -> %[[C0LLU1]]], [%[[C1SFU1]] -> %[[C1LLU1]]]):index
+// CHECK-DAG:   %[[FROM:.+]] = uniform.query_map(map:%[[MAP0]], key:%[[ARG0]]) : index
+// CHECK-DAG:   %[[RECV:.+]] = dataflow.receive %[[FROM]] : vector<64xf16>
+// CHECK-DAG:   %[[R0:.+]] = dataflow.get_logical_memory_view %[[SFUREG]], %[[C64]] {layout_map = #map} : index, index, memref<64xf16>
+// CHECK-DAG:   %[[R1:.+]] = dataflow.get_logical_memory_view %[[SFUREG]], %[[C128]] {layout_map = #map} : index, index, memref<64xf16>
+// CHECK:       agen.vector_store %[[RECV]], %[[R0]][%[[C0]]] {store_order = #map, store_set = #set} : memref<64xf16>, vector<64xf16>
+// CHECK:       dataflow.opaque {dataflow_scheduler.register_names = ["c0", "in0", "out0", "t0_0"], func_name = "fake_exp", parameter_dictionary = {}, read_only_register_dictionary = {c0 = "R0", in0 = "R1"}, read_write_register_dictionary = {out0 = "R2", t0_0 = "R3"}}
+// CHECK-DAG:   %[[LOAD:.+]] = agen.vector_load %[[R1]][%[[C0]]] {load_order = #map, load_set = #set} : memref<64xf16>, vector<64xf16>
+// CHECK-DAG:   %[[MAP1:.+]] = uniform.def_immutable_mapping([%[[C0SFU0]] -> %[[C0LSU0]]], [%[[C1SFU0]] -> %[[C1LSU0]]], [%[[C0SFU1]] -> %[[C0LSU1]]], [%[[C1SFU1]] -> %[[C1LSU1]]]):index
+// CHECK-DAG:   %[[TO:.+]] = uniform.query_map(map:%[[MAP1]], key:%[[ARG0]]) : index
+// CHECK:       dataflow.send %[[TO]], %[[LOAD]] : vector<64xf16>
 
 #map = affine_map<(d0, d1, d2) -> (d0, d1, d2)>
 #map1 = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>

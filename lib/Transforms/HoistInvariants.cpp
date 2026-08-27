@@ -118,7 +118,6 @@ struct HoistInvariantsPass
   void hoistConstants(mlir::ktdf::PipelineOp pipeline) {
     mlir::OpBuilder builder(pipeline);
 
-    mlir::DominanceInfo dominance;
     llvm::DenseSet<mlir::Operation*> invariant_writes;
     const auto hoist = [&](mlir::Operation* op) {
       // Find the target scope to hoist to.
@@ -158,8 +157,8 @@ struct HoistInvariantsPass
           }
 
           if (auto alloc = llvm::dyn_cast<mlir::memref::AllocaOp>(op); alloc) {
-            auto* const write = findInvariantWriteIn(
-                alloc.getResult(), &pipeline.getBodyRegion(), dominance);
+            auto* const write = findInvariantWriteIn(alloc.getResult(),
+                                                     &pipeline.getBodyRegion());
             if (write) {
               LDBG() << "found invariant write "
                      << mlir::OpWithFlags(write, kSkipRegions);

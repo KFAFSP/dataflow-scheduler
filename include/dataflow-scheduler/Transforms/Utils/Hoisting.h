@@ -49,14 +49,21 @@ auto findDominatingWritesIn(mlir::Value restricted, mlir::Region* region,
                             mlir::DominanceInfo& dominance)
     -> std::optional<llvm::SmallVector<mlir::Operation*>>;
 
+/// Finds the single write to @p restricted in @p region .
+///
+/// The location @p restricted is assumed to not be aliased by any other value.
+[[nodiscard]]
+auto findSingleWriteIn(mlir::Value restricted, mlir::Region* region)
+    -> mlir::Operation*;
+
 /// Finds the single dominating invariant write to @p restricted in @p region .
 ///
 /// The location @p restricted is assumed to not be aliased by any other value.
 /// The write is considered invariant when neither it nor its children depend
 /// on any values defined within the region, and don't have side effects.
 [[nodiscard]]
-auto findInvariantWriteIn(mlir::Value restricted, mlir::Region* region,
-                          mlir::DominanceInfo& dominance) -> mlir::Operation*;
+auto findInvariantWriteIn(mlir::Value restricted, mlir::Region* region)
+    -> mlir::Operation*;
 
 }  // namespace scheduler
 
