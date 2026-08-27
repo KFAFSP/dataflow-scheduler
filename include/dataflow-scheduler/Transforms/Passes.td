@@ -295,11 +295,17 @@ def AddressAssignmentPass : Pass<"address-assignment", "mlir::ModuleOp"> {
     them by memory space (L1, DDR), analyses their sizes and assigns addresses.
 
   }];
+
   let constructor = "::scheduler::createAddressAssignmentPass()";
   let dependentDialects = [
       "mlir::ktdf::KTDFDialect",
       "mlir::memref::MemRefDialect",
       "mlir::affine::AffineDialect"];
+
+  let statistics = [
+    Statistic<"num_processed", "num-processed", "Number of processed allocations">,
+    Statistic<"num_failed", "num-failed", "Number of failed allocations">
+  ];
 }
 
 def ScalarBroadcastLegalizationPass
@@ -409,6 +415,24 @@ def ApplyDevicePatternsPass : Pass<"apply-device-patterns", "mlir::func::FuncOp"
     "mlir::pdl::PDLDialect",
     "mlir::pdl_interp::PDLInterpDialect",
     "mlir::vectorchain::VectorChainDialect"
+  ];
+}
+
+def HoistInvariantsPass : Pass<"hoist-invariants", "mlir::func::FuncOp"> {
+  let summary = "Hoist invariants out of pipelines and loops";
+  let description = [{
+
+  }];
+
+  let dependentDialects = [
+    "mlir::ktdf::KTDFDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::scf::SCFDialect"
+  ];
+
+  let statistics = [
+    Statistic<"num_hoisted", "num-hoisted", "Number of hoisted operations">,
+    Statistic<"invariant_writes", "invariant-writes", "Number of hoisted invariant writes">
   ];
 }
 

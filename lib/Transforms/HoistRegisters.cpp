@@ -127,9 +127,9 @@ auto materializeRegister(arith::ConstantOp constant, linalg::GenericOp generic,
 /// that lands in the body too. Only allocations sized entirely by their type
 /// are taken; one the body computes a size for could not move out of it.
 auto getBodyAllocations(linalg::GenericOp generic)
-    -> SmallVector<memref::AllocOp> {
-  SmallVector<memref::AllocOp> result;
-  generic.getBody()->walk([&](memref::AllocOp alloc) {
+    -> SmallVector<memref::AllocaOp> {
+  SmallVector<memref::AllocaOp> result;
+  generic.getBody()->walk([&](memref::AllocaOp alloc) {
     if (alloc->getNumOperands() != 0) return;
     result.push_back(alloc);
   });
@@ -156,7 +156,7 @@ auto getTileSize(linalg::GenericOp generic) -> int64_t {
 ///
 /// \p zero is the index of the lane the body's own accesses land on, made here
 /// on the first allocation that needs one.
-auto hoistAllocation(memref::AllocOp alloc, linalg::GenericOp generic,
+auto hoistAllocation(memref::AllocaOp alloc, linalg::GenericOp generic,
                      AnalysisManager analyses, Value& zero,
                      RewriterBase& rewriter) -> LogicalResult {
   const auto type = alloc.getType();
@@ -192,7 +192,7 @@ auto hoistAllocation(memref::AllocOp alloc, linalg::GenericOp generic,
       {tile}, element, MemRefLayoutAttrInterface{}, type.getMemorySpace());
 
   rewriter.setInsertionPoint(generic);
-  auto reg = memref::AllocOp::create(rewriter, alloc.getLoc(), register_type);
+  auto reg = memref::AllocaOp::create(rewriter, alloc.getLoc(), register_type);
   if (!zero) {
     zero = arith::ConstantIndexOp::create(rewriter, alloc.getLoc(), 0);
   }

@@ -25,10 +25,10 @@
 // SUBST:      %[[C0:.*]] = arith.constant {ktdf_arch.maps_to = "SFU_REG"} 1.000000e+00 : f16
 // SUBST:      linalg.generic
 // SUBST-NEXT: ^bb0(%[[X:.*]]: f16, %{{.*}}: f16):
-// SUBST-NEXT:   %[[IN:.*]] = memref.alloc() : memref<f16, "SFU_REG">
+// SUBST-NEXT:   %[[IN:.*]] = memref.alloca() : memref<f16, "SFU_REG">
 // SUBST-NEXT:   memref.store %[[X]], %[[IN]][] : memref<f16, "SFU_REG">
-// SUBST-NEXT:   %[[OUT:.*]] = memref.alloc() : memref<f16, "SFU_REG">
-// SUBST-NEXT:   %[[T0:.*]] = memref.alloc() : memref<f16, "SFU_REG">
+// SUBST-NEXT:   %[[OUT:.*]] = memref.alloca() : memref<f16, "SFU_REG">
+// SUBST-NEXT:   %[[T0:.*]] = memref.alloca() : memref<f16, "SFU_REG">
 // SUBST-NEXT:   "ktdf.opaque"(%[[C0]], %[[IN]], %[[OUT]], %[[T0]])
 // SUBST:        %[[E:.*]] = memref.load %[[OUT]][] : memref<f16, "SFU_REG">
 // SUBST-NEXT:   linalg.yield %[[E]] : f16
@@ -39,10 +39,10 @@
 // CHECK:      %[[C0:.*]] = arith.constant {ktdf_arch.maps_to = "SFU_REG"} 1.000000e+00 : f16
 // CHECK:      %[[C0_REG:.*]] = memref.alloc() : memref<64xf16, "SFU_REG">
 // CHECK-NEXT: linalg.fill ins(%[[C0]] : f16) outs(%[[C0_REG]] : memref<64xf16, "SFU_REG">)
-// CHECK-NEXT: %[[IN:.*]] = memref.alloc() : memref<64xf16, "SFU_REG">
+// CHECK-NEXT: %[[IN:.*]] = memref.alloca() : memref<64xf16, "SFU_REG">
 // CHECK-NEXT: %[[ZERO:.*]] = arith.constant 0 : index
-// CHECK-NEXT: %[[OUT:.*]] = memref.alloc() : memref<64xf16, "SFU_REG">
-// CHECK-NEXT: %[[T0:.*]] = memref.alloc() : memref<64xf16, "SFU_REG">
+// CHECK-NEXT: %[[OUT:.*]] = memref.alloca() : memref<64xf16, "SFU_REG">
+// CHECK-NEXT: %[[T0:.*]] = memref.alloca() : memref<64xf16, "SFU_REG">
 // CHECK:      linalg.generic
 // CHECK-NEXT: ^bb0(%[[X:.*]]: f16, %{{.*}}: f16):
 // CHECK-NEXT:   memref.store %[[X]], %[[IN]][%[[ZERO]]] : memref<64xf16, "SFU_REG">
