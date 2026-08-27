@@ -22,7 +22,7 @@
 // CHECK-NEXT:   construct-three-stage-pipeline
 // CHECK-NEXT:   builtin.module(
 // CHECK-NEXT:   func.func(
-// CHECK-NEXT:   ktdfarch-apply-patterns{groups={pre_scheduling}}
+// CHECK-NEXT:   apply-device-patterns{groups={pre_scheduling}}
 // CHECK-NEXT:   )
 // CHECK-NEXT:   )
 // CHECK-NEXT:   hoist-registers
@@ -49,7 +49,7 @@
 // CHECK-NEXT:   ktdf-to-ktdflowering
 // CHECK-NEXT:   builtin.module(
 // CHECK-NEXT:   func.func(
-// CHECK-NEXT:   ktdfarch-apply-patterns{groups={post_lowering}}
+// CHECK-NEXT:   apply-device-patterns{groups={post_lowering}}
 // CHECK-NEXT:   )
 // CHECK-NEXT:   )
 // CHECK-NEXT:   ktdflowering-to-dfir

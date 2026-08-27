@@ -387,4 +387,29 @@ def HoistRegistersPass : Pass<"hoist-registers", "mlir::ModuleOp"> {
   ];
 }
 
+def ApplyDevicePatternsPass : Pass<"apply-device-patterns", "mlir::func::FuncOp"> {
+  let summary = "Applies patterns defined in the `ktdf_arch.device`";
+  let description = [{
+    Given a root operation that is mapped to a `ktdf_arch.device`, this pass
+    applies all the (enabled groups of) patterns defined within the device to
+    the IR nested below the root operation.
+  }];
+
+  let options = [
+    ListOption<"enabled_groups", "groups", "std::string", 
+      "List of pattern groups to enable, or empty for ungrouped patterns only">
+  ];
+
+  let dependentDialects = [
+    "mlir::agen::AgenDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect",
+    "mlir::ktdf_arch::KTDFArchDialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::pdl::PDLDialect",
+    "mlir::pdl_interp::PDLInterpDialect",
+    "mlir::vectorchain::VectorChainDialect"
+  ];
+}
+
 #endif // DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD
