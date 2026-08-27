@@ -121,11 +121,8 @@ struct HoistInvariantsPass
     llvm::DenseSet<mlir::Operation*> invariant_writes;
     const auto hoist = [&](mlir::Operation* op) {
       // Find the target scope to hoist to.
-      auto* const target =
-          findHoistingTarget(op, [](mlir::Region* region) -> bool {
-            return !region->getParentOp()
-                        ->mightHaveTrait<mlir::OpTrait::HasParallelRegion>();
-          });
+      auto* const target = findHoistingTarget(
+          op, [](mlir::Region* /*region*/) -> bool { return true; });
       assert(target->isProperAncestor(op));
 
       if (!invariant_writes.contains(op)) {
@@ -156,7 +153,7 @@ struct HoistInvariantsPass
             return mlir::ktdf::PipelineAnchor::Parent;
           }
 
-          if (auto alloc = llvm::dyn_cast<mlir::memref::AllocaOp>(op); alloc) {
+          if (auto alloc = llvm::dyn_cast<mlir::memref::AllocOp>(op); alloc) {
             auto* const write = findInvariantWriteIn(alloc.getResult(),
                                                      &pipeline.getBodyRegion());
             if (write) {

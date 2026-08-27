@@ -37,7 +37,7 @@
 // f16: the tile the generic covers, and what the device gives that element. The
 // constant is filled across the whole of its own.
 // CHECK:      %[[C0:.*]] = arith.constant {ktdf_arch.maps_to = "SFU_REG"} 1.000000e+00 : f16
-// CHECK:      %[[C0_REG:.*]] = memref.alloca() : memref<64xf16, "SFU_REG">
+// CHECK:      %[[C0_REG:.*]] = memref.alloc() : memref<64xf16, "SFU_REG">
 // CHECK-NEXT: linalg.fill ins(%[[C0]] : f16) outs(%[[C0_REG]] : memref<64xf16, "SFU_REG">)
 // CHECK-NEXT: %[[IN:.*]] = memref.alloca() : memref<64xf16, "SFU_REG">
 // CHECK-NEXT: %[[ZERO:.*]] = arith.constant 0 : index

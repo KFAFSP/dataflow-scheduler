@@ -115,7 +115,7 @@ auto materializeRegister(arith::ConstantOp constant, linalg::GenericOp generic,
 
   rewriter.setInsertionPoint(generic);
   auto reg =
-      memref::AllocaOp::create(rewriter, constant.getLoc(), register_type);
+      memref::AllocOp::create(rewriter, constant.getLoc(), register_type);
   linalg::FillOp::create(rewriter, constant.getLoc(),
                          ValueRange{constant.getResult()}, ValueRange{reg});
   return reg;
