@@ -24,4 +24,5 @@ add_dataflow_scheduler_library(DataflowSchedulerTransformUtils
     MLIRSCFDialect
     MLIRSCFUtils
     MLIRSideEffectInterfaces
+    MLIRViewLikeInterface
 )
