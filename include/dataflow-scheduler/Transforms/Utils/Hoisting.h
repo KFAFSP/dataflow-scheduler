@@ -31,6 +31,13 @@ auto findHoistingTarget(
     llvm::function_ref<bool(mlir::Region*)> should_hoist_out_of)
     -> mlir::Operation*;
 
+/// Hoists pure operations out of @p source .
+///
+/// Allows hoisting from loops, 'ktdf.pipeline' and 'linalg.generic' operations.
+///
+/// @return Number of hoisted operations.
+auto hoistInvariants(mlir::Operation* source) -> size_t;
+
 /// Finds the single write to @p restricted in @p region .
 ///
 /// The location @p restricted is assumed to not be aliased by any other value.

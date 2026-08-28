@@ -21,12 +21,18 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Support/DebugLog.h>
 #include <llvm/Support/LogicalResult.h>
+#include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/IR/Operation.h>
 #include <mlir/IR/Visitors.h>
+#include <mlir/Interfaces/LoopLikeInterface.h>
 #include <mlir/Interfaces/SideEffectInterfaces.h>
 #include <mlir/Interfaces/ViewLikeInterface.h>
 #include <mlir/Support/WalkResult.h>
+#include <mlir/Transforms/LoopInvariantCodeMotionUtils.h>
+
+#include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/CodeMotion.h"
 
 #define DEBUG_TYPE "dataflow-scheduler-hoisting"
 
@@ -115,6 +121,44 @@ auto scheduler::findHoistingTarget(
   }
 
   return result;
+}
+
+auto scheduler::hoistInvariants(mlir::Operation* source) -> size_t {
+  if (auto iface = mlir::dyn_cast<mlir::LoopLikeOpInterface>(source); iface) {
+    // Hoist all pure operations without inter-iteration dependencies directly
+    // in front of the loop.
+    return mlir::moveLoopInvariantCode(iface);
+  }
+
+  if (auto generic = mlir::dyn_cast<mlir::linalg::GenericOp>(source); generic) {
+    // Hoist all pure operations without inter-iteration dependencies directly
+    // in front of the 'linalg.generic' operation.
+    return mlir::moveLoopInvariantCode(
+        {&generic.getBodyRegion()},
+        [&](mlir::Value value, mlir::Region* /*region*/) -> bool {
+          return value.getParentRegion()->isProperAncestor(
+              &generic.getBodyRegion());
+        },
+        [&](mlir::Operation* op, mlir::Region* /*region*/) -> bool {
+          return mlir::isPure(op);
+        },
+        [&](mlir::Operation* op, mlir::Region* /*region*/) {
+          op->moveBefore(generic);
+        });
+  }
+
+  if (auto pipeline = mlir::dyn_cast<mlir::ktdf::PipelineOp>(source);
+      pipeline) {
+    // Hoist all pure operations without dependencies directly in front of the
+    // 'ktdf.pipeline' operation.
+    return mlir::ktdf::hoistPipelineContents(
+        pipeline, [&](mlir::Operation* op) -> mlir::ktdf::PipelineAnchor {
+          return mlir::isPure(op) ? mlir::ktdf::PipelineAnchor::Parent
+                                  : mlir::ktdf::PipelineAnchor::Stage;
+        });
+  }
+
+  return 0;
 }
 
 namespace {
