@@ -38,33 +38,15 @@
 
 namespace scheduler {
 
-/// Check if a value is a constant with a specific target value.
-/// Returns true if the value is defined by an arith.constant operation
-/// with an integer value equal to target.
-bool isTargetConstant(int target, mlir::Value val);
-
-/// Returns the constant index value carried by `value` iff it is defined by
-/// arith.constant index.
-std::optional<int64_t> getConstantIndexValue(mlir::Value value);
-
 /// Returns the static trip count of `loop` iff lb, ub, step are all
 /// arith.constant index ops. step must be positive.
 std::optional<int64_t> getStaticTripCount(mlir::scf::ForOp loop);
 
-/// Rebuild a ktdf.private op with only the results that are used and the
-/// operations needed to produce the corresponding yield operands.
-mlir::LogicalResult cleanupPrivateOp(mlir::ktdf::PrivateOp private_op);
-
-/// Apply cleanupPrivateOp to all immediate private ops in the given pipeline.
-mlir::LogicalResult cleanupPrivateOpsInPipeline(
-    mlir::ktdf::PipelineOp pipeline_op);
-
-/// Extract and validate grid size from function attributes
+/// Extracts and validate grid size from function attributes
 /// Grid is a 1D array attribute containing a single integer
 mlir::LogicalResult extractGridSize(mlir::func::FuncOp func, int& grid_size);
 
-/// Get component name from enum value for debugging
-/// Clone an scf.for operation and add additional iter args (and corresponding
+/// Clones an scf.for operation and add additional iter args (and corresponding
 /// return values). The initial values of the new loop-carried arguments are
 /// dummy constants (index 0). The return values are simply the loop-carried
 /// arguments passed through. The reason for cloning is that MLIR infrastructure

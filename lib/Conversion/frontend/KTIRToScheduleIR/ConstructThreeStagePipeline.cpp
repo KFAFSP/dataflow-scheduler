@@ -31,14 +31,15 @@
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/Support/LogicalResult.h>
+#include <mlir/Dialect/Utils/StaticValueUtils.h>
 #include <mlir/Support/LLVM.h>
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/NodeLinks.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Transforms/Utils/CustomLinalgTiling.h"
@@ -193,7 +194,7 @@ struct ConstructThreeStagePipelinePass
   // Member variables
   const SchedulerExtContext& scheduler_ctx_;
 
-  arch_view::ResourceKinds* resource_kinds_;
+  mlir::ktdf_arch::ResourceKinds* resource_kinds_;
 
   // Collected ktdp.load and ktdp.store operations
   llvm::SmallVector<mlir::ktdp::LoadOp> load_ops_;
@@ -393,15 +394,17 @@ llvm::SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
   assert(llvm::all_equal(linalg_op->getResultTypes()) &&
          "the results of a linalg op are expected to be the same shape");
 
+  // FIXME: Discover compute from op.
+  auto compute = resource_kinds_->getDefaultCompute();
+  assert(compute && "no default compute resource");
+
   mlir::ShapedType shaped_type =
       mlir::dyn_cast<mlir::ShapedType>(linalg_op->getResult(0).getType());
   assert(shaped_type && shaped_type.hasRank());
 
   mlir::Type elem_type = shaped_type.getElementType();
 
-  auto simd_feature =
-      resource_kinds_->getFeature<mlir::ktdf_arch::feature::SIMD>(
-          resource_kinds_->getComputeKind());
+  auto simd_feature = compute.getFeature<mlir::ktdf_arch::feature::SIMD>();
   const auto vector_length =
       std::max(simd_feature.getLanes(elem_type), int64_t(1));
 
@@ -721,8 +724,10 @@ void ConstructThreeStagePipelinePass::createPipeline(
   // Create ktdf.pipeline operation at the start of the loop body.
   mlir::OpBuilder builder(innermost_loop.getBodyRegion());
 
-  auto compute = resource_kinds_->getResource<mlir::ktdf_arch::Node>(
-      resource_kinds_->getComputeKind());
+  // FIXME: Discover compute from op.
+  auto compute = resource_kinds_->getDefaultCompute();
+  assert(compute && "no default compute resource");
+
   auto incoming = mlir::ktdf_arch::getLink(
       mlir::ktdf_arch::LinkDirection::Incoming, compute);
   auto outgoing = mlir::ktdf_arch::getLink(
@@ -769,8 +774,7 @@ void ConstructThreeStagePipelinePass::createPipeline(
               // stage 2
               createComputeOps(builder, loc, private_op);
             })
-            .setApplicableUnitsAttr(
-                builder.getArrayAttr(resource_kinds_->getComputeKind()));
+            .setApplicableUnitsAttr(builder.getArrayAttr(compute.getKind()));
 
         mlir::ktdf::StageOp::create(
             builder, loc,
@@ -933,16 +937,15 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
   // Get the appropriate operation list
   size_t op_count = is_load ? load_ops_.size() : store_ops_.size();
 
-  const auto compute_kind = resource_kinds_->getComputeKind();
-  if (!compute_kind) {
+  // FIXME: Discover compute from op.
+  auto compute = resource_kinds_->getDefaultCompute();
+  if (!compute) {
     getOperation()->emitError(
         "ConstructThreeStagePipeline: no compute resource kind found in device "
         "description");
     signalPassFailure();
     return;
   }
-  auto compute =
-      resource_kinds_->getResource<mlir::ktdf_arch::Node>(compute_kind);
   auto incoming = mlir::ktdf_arch::getLink(
       mlir::ktdf_arch::LinkDirection::Incoming, compute);
   auto outgoing = mlir::ktdf_arch::getLink(
@@ -1234,7 +1237,7 @@ mlir::Value ConstructThreeStagePipelinePass::computeReinterpretCastOffset(
   // - Skip addition if index is constant 0
   llvm::SmallVector<mlir::Value> terms;
   for (size_t i = 0; i < num_indices; ++i) {
-    if (isTargetConstant(0, indices[i])) {
+    if (mlir::isZeroInteger(indices[i])) {
       continue;
     }
 
@@ -1315,10 +1318,11 @@ ConstructThreeStagePipelinePass::getFifoAttributesForLoad(
   // Map the memory space to device namespace
   mlir::Attribute mapped_memory_space = mapMemorySpace(memory_space);
 
-  // Get the compute unit
-  mlir::Attribute compute_unit = resource_kinds_->getComputeKind();
+  // FIXME: Discover compute from op.
+  auto compute = resource_kinds_->getDefaultCompute();
+  assert(compute && "no default compute resource");
 
-  return {mapped_memory_space, compute_unit};
+  return {mapped_memory_space, compute.getKind()};
 }
 
 std::pair<mlir::Attribute, mlir::Attribute>
@@ -1342,10 +1346,11 @@ ConstructThreeStagePipelinePass::getFifoAttributesForStore(
   // Map the memory space to device namespace
   mlir::Attribute mapped_memory_space = mapMemorySpace(memory_space);
 
-  // Get the compute unit
-  mlir::Attribute compute_unit = resource_kinds_->getComputeKind();
+  // FIXME: Discover compute from op.
+  auto compute = resource_kinds_->getDefaultCompute();
+  assert(compute && "no default compute resource");
 
-  return {compute_unit, mapped_memory_space};
+  return {compute.getKind(), mapped_memory_space};
 }
 
 void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
@@ -1598,10 +1603,10 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
     return;
   }
   resource_kinds_ =
-      &device_manager.getOrCreateView<arch_view::ResourceKinds>(*device);
+      &device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
 
-  auto compute_kind = resource_kinds_->getComputeKind();
-  if (!compute_kind) {
+  // FIXME: Remove this when it is no longer an invariant needed by this pass.
+  if (!resource_kinds_->getDefaultCompute()) {
     module_op->emitError(
         "ConstructThreeStagePipeline: no compute resource kind found in device "
         "description");
