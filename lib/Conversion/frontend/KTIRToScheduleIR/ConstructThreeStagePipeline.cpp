@@ -30,14 +30,18 @@
 //===----------------------------------------------------------------------===//
 
 #include <llvm/ADT/ArrayRef.h>
+#include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/LogicalResult.h>
 #include <mlir/Dialect/Utils/StaticValueUtils.h>
+#include <mlir/IR/Attributes.h>
+#include <mlir/IR/Value.h>
 #include <mlir/Support/LLVM.h>
 
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/NodeLinks.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
@@ -47,6 +51,7 @@
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 #include "ktir/Dialect/KTDP/KTDPAttrs.h"
+#include "ktir/Dialect/KTDP/KTDPTypes.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Affine/Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -98,6 +103,41 @@ auto maxOrDefault(llvm::ArrayRef<T> items) -> T {
   return result;
 }
 
+[[nodiscard]] auto getMemorySpace(mlir::TypedValue<mlir::MemRefType> memref)
+    -> mlir::Attribute {
+  if (const auto space = memref.getType().getMemorySpace(); space) {
+    return space;
+  }
+
+  if (auto source = memref.getDefiningOp<mlir::ktdp::ConstructMemoryViewOp>()) {
+    LDBG(2) << memref << " has erased memory space";
+    return source.getMemorySpace();
+  }
+
+  LDBG(2) << "missing memory space on " << memref;
+
+  return nullptr;
+}
+
+[[nodiscard]] auto getMemorySpace(
+    mlir::TypedValue<mlir::ktdp::AccessTileType> access_tile)
+    -> mlir::Attribute {
+  auto source = access_tile.getDefiningOp<mlir::ktdp::ConstructAccessTilesOp>();
+  if (!source) {
+    LDBG(2) << "missing memory space on " << access_tile;
+    return nullptr;
+  }
+
+  auto base =
+      llvm::dyn_cast<mlir::TypedValue<mlir::MemRefType>>(source.getBase());
+  if (!base) {
+    LDBG(2) << access_tile << " is not derived from a buffer";
+    return nullptr;
+  }
+
+  return getMemorySpace(base);
+}
+
 }  // namespace
 
 namespace {
@@ -136,11 +176,13 @@ struct ConstructThreeStagePipelinePass
       mlir::linalg::LinalgOp linalgOp);
 
   // Create loops from linalg operations by tiling
-  void createLoopsFromLinalg(llvm::ArrayRef<mlir::linalg::LinalgOp> linalg_ops);
+  void createLoopsFromLinalg(
+      llvm::SmallVectorImpl<mlir::linalg::LinalgOp>& linalg_ops);
 
   // Create a 3-stage pipeline inside innermost_loop, with one stage for loads,
   // computes, stores.
-  void createPipeline(mlir::scf::ForOp innermost_loop);
+  void createPipeline(mlir::scf::ForOp innermost_loop,
+                      mlir::ktdf_arch::ExecutionUnitOp compute);
 
   // Create linalg compute operations in stage 2
   void createComputeOps(mlir::OpBuilder& builder, mlir::Location loc,
@@ -154,12 +196,14 @@ struct ConstructThreeStagePipelinePass
   void createDataTransfers(mlir::OpBuilder& builder, mlir::Location loc,
                            mlir::ktdf::PrivateOp private_op,
                            llvm::ArrayRef<int64_t> tile_sizes, bool is_load,
-                           size_t private_result_offset);
+                           size_t private_result_offset,
+                           mlir::ktdf_arch::ExecutionUnitOp compute);
 
   // Create ktdf.private operation with FIFO slots and tokens
   // Returns the created private operation
-  mlir::ktdf::PrivateOp createPrivateOp(mlir::OpBuilder& builder,
-                                        mlir::Location loc);
+  mlir::ktdf::PrivateOp createPrivateOp(
+      mlir::OpBuilder& builder, mlir::Location loc,
+      mlir::ktdf_arch::ExecutionUnitOp compute);
 
   // Annotate loops with loop_type attributes based on linalg iterator types
   void annotateLoopsWithIteratorTypes(llvm::ArrayRef<mlir::Operation*> loops,
@@ -171,16 +215,13 @@ struct ConstructThreeStagePipelinePass
   // Replace construct_access_tile with memref.reinterpret_cast
   void replaceAccessTilesWithReinterpretCast(mlir::func::FuncOp func_op);
 
-  // Map ktdp memory space attribute to device namespace using mem_space_mapping
-  mlir::Attribute mapMemorySpace(mlir::Attribute ktdp_memory_space);
-
-  // Get FIFO attributes for a load operation (memory -> compute unit)
-  std::pair<mlir::Attribute, mlir::Attribute> getFifoAttributesForLoad(
-      mlir::ktdp::LoadOp load_op);
-
-  // Get FIFO attributes for a store operation (compute unit -> memory)
-  std::pair<mlir::Attribute, mlir::Attribute> getFifoAttributesForStore(
-      mlir::ktdp::StoreOp store_op);
+  [[nodiscard]] auto mapMemorySpace(mlir::Attribute declared_space) const
+      -> mlir::Attribute {
+    if (const auto mapped = mem_space_map_.lookup(declared_space); mapped) {
+      return mapped;
+    }
+    return declared_space;
+  }
 
   // Compute offset for reinterpret_cast from indices and strides
   mlir::Value computeReinterpretCastOffset(
@@ -194,7 +235,8 @@ struct ConstructThreeStagePipelinePass
   // Member variables
   const SchedulerExtContext& scheduler_ctx_;
 
-  mlir::ktdf_arch::ResourceKinds* resource_kinds_;
+  mlir::ktdf_arch::Mapping* mapping_;
+  llvm::DenseMap<mlir::Attribute, mlir::Attribute> mem_space_map_;
 
   // Collected ktdp.load and ktdp.store operations
   llvm::SmallVector<mlir::ktdp::LoadOp> load_ops_;
@@ -394,8 +436,8 @@ llvm::SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
   assert(llvm::all_equal(linalg_op->getResultTypes()) &&
          "the results of a linalg op are expected to be the same shape");
 
-  // FIXME: Discover compute from op.
-  auto compute = resource_kinds_->getDefaultCompute();
+  auto compute =
+      mapping_->getOrMap(linalg_op, mapping_->byKind().getDefaultCompute());
   assert(compute && "no default compute resource");
 
   mlir::ShapedType shaped_type =
@@ -505,14 +547,14 @@ void ConstructThreeStagePipelinePass::annotateLoopsWithIteratorTypes(
 }
 
 void ConstructThreeStagePipelinePass::createLoopsFromLinalg(
-    llvm::ArrayRef<mlir::linalg::LinalgOp> linalg_ops) {
+    llvm::SmallVectorImpl<mlir::linalg::LinalgOp>& linalg_ops) {
   LDBG(1) << "Creating SCF loops from linalg.generic operations";
 
   assert(linalg_ops.size() <= 1 &&
          "Currently only supporting one linalg.generic operation after fusion");
 
   mlir::IRRewriter rewriter(&getContext());
-  for (mlir::linalg::LinalgOp linalg_op : linalg_ops) {
+  for (mlir::linalg::LinalgOp& linalg_op : linalg_ops) {
     LDBG(1) << "  Processing: " << linalg_op->getName() << "";
 
     rewriter.setInsertionPoint(linalg_op);
@@ -574,11 +616,14 @@ void ConstructThreeStagePipelinePass::createLoopsFromLinalg(
       tiled_loops_.assign(tiled_result->loops.begin(),
                           tiled_result->loops.end());
     }
+
+    linalg_op = tiled_result->op;
   }
 }
 
 mlir::ktdf::PrivateOp ConstructThreeStagePipelinePass::createPrivateOp(
-    mlir::OpBuilder& builder, mlir::Location loc) {
+    mlir::OpBuilder& builder, mlir::Location loc,
+    mlir::ktdf_arch::ExecutionUnitOp compute) {
   mlir::ktdf::TokenType token_type = mlir::ktdf::TokenType::get(&getContext());
   llvm::SmallVector<mlir::Type> private_result_types;
 
@@ -607,7 +652,9 @@ mlir::ktdf::PrivateOp ConstructThreeStagePipelinePass::createPrivateOp(
     mlir::Type element_type = tiled_type.getElementType();
 
     // Get FIFO attributes for this specific load operation
-    auto [load_src, load_dest] = getFifoAttributesForLoad(load_op);
+    const auto load_src =
+        mapMemorySpace(getMemorySpace(load_op.getAccessTile()));
+    const auto load_dest = compute.getKind();
     auto load_key = std::make_pair(load_src, load_dest);
 
     auto fifo_slot_type = mlir::ktdf::FifoSlotType::get(
@@ -635,7 +682,9 @@ mlir::ktdf::PrivateOp ConstructThreeStagePipelinePass::createPrivateOp(
     mlir::Type element_type = tiled_init_type.getElementType();
 
     // Get FIFO attributes for this specific store operation
-    auto [store_src, store_dest] = getFifoAttributesForStore(store_op);
+    const auto store_src = compute.getKind();
+    const auto store_dest =
+        mapMemorySpace(getMemorySpace(store_op.getAccessTile()));
     auto store_key = std::make_pair(store_src, store_dest);
 
     auto fifo_slot_type = mlir::ktdf::FifoSlotType::get(
@@ -688,7 +737,7 @@ mlir::ktdf::PrivateOp ConstructThreeStagePipelinePass::createPrivateOp(
 }
 
 void ConstructThreeStagePipelinePass::createPipeline(
-    mlir::scf::ForOp innermost_loop) {
+    mlir::scf::ForOp innermost_loop, mlir::ktdf_arch::ExecutionUnitOp compute) {
   LDBG(1) << "Creating ktdf.pipeline with three stages";
 
   compute_ops_.clear();
@@ -724,10 +773,6 @@ void ConstructThreeStagePipelinePass::createPipeline(
   // Create ktdf.pipeline operation at the start of the loop body.
   mlir::OpBuilder builder(innermost_loop.getBodyRegion());
 
-  // FIXME: Discover compute from op.
-  auto compute = resource_kinds_->getDefaultCompute();
-  assert(compute && "no default compute resource");
-
   auto incoming = mlir::ktdf_arch::getLink(
       mlir::ktdf_arch::LinkDirection::Incoming, compute);
   auto outgoing = mlir::ktdf_arch::getLink(
@@ -749,7 +794,7 @@ void ConstructThreeStagePipelinePass::createPipeline(
       builder, innermost_loop.getLoc(),
       [&](mlir::OpBuilder& builder, mlir::Location loc) {
         // Create ktdf.private operation with FIFO slots and tokens
-        auto private_op = createPrivateOp(builder, loc);
+        auto private_op = createPrivateOp(builder, loc, compute);
 
         // Tokens are at the end: fifo_count + 0, fifo_count + 1, fifo_count + 2
         size_t fifo_count = load_ops_.size() + store_ops_.size();
@@ -762,7 +807,7 @@ void ConstructThreeStagePipelinePass::createPipeline(
               // Add data transfer operations in stage1 for loads
               createDataTransfers(builder, loc, private_op, tile_sizes_,
                                   /*is_load=*/true,
-                                  /*private_result_offset=*/0);
+                                  /*private_result_offset=*/0, compute);
             });
 
         mlir::ktdf::StageOp::create(
@@ -784,7 +829,8 @@ void ConstructThreeStagePipelinePass::createPipeline(
               // Add data transfer operations in stage3 for stores
               createDataTransfers(builder, loc, private_op, tile_sizes_,
                                   /*is_load=*/false,
-                                  /*private_result_offset=*/load_ops_.size());
+                                  /*private_result_offset=*/load_ops_.size(),
+                                  compute);
             });
       });
 }
@@ -921,7 +967,8 @@ static mlir::AffineMap buildDataTransferMap(
 void ConstructThreeStagePipelinePass::createDataTransfers(
     mlir::OpBuilder& builder, mlir::Location loc,
     mlir::ktdf::PrivateOp private_op, llvm::ArrayRef<int64_t> tile_sizes,
-    bool is_load, size_t private_result_offset) {
+    bool is_load, size_t private_result_offset,
+    mlir::ktdf_arch::ExecutionUnitOp compute) {
   // Collect loop induction variables from tiled loops
   llvm::SmallVector<mlir::Value> loop_ivs;
   for (auto* loop_op : tiled_loops_) {
@@ -937,15 +984,6 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
   // Get the appropriate operation list
   size_t op_count = is_load ? load_ops_.size() : store_ops_.size();
 
-  // FIXME: Discover compute from op.
-  auto compute = resource_kinds_->getDefaultCompute();
-  if (!compute) {
-    getOperation()->emitError(
-        "ConstructThreeStagePipeline: no compute resource kind found in device "
-        "description");
-    signalPassFailure();
-    return;
-  }
   auto incoming = mlir::ktdf_arch::getLink(
       mlir::ktdf_arch::LinkDirection::Incoming, compute);
   auto outgoing = mlir::ktdf_arch::getLink(
@@ -1269,90 +1307,6 @@ mlir::Value ConstructThreeStagePipelinePass::computeReinterpretCastOffset(
   }
 }
 
-mlir::Attribute ConstructThreeStagePipelinePass::mapMemorySpace(
-    mlir::Attribute ktdp_memory_space) {
-  // Get the DeviceManager analysis
-  auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
-
-  // Get the import declaration which contains the mem_space_mapping
-  auto* const device = device_manager.getOrImportDevice();
-  if (!device) {
-    return ktdp_memory_space;  // Fallback to original if no device found
-  }
-
-  // Get the mem_space_mapping attribute
-  auto mem_space_mapping =
-      device->getAttrOfType<mlir::ktdf_arch::MapAttr>("mem_space_mapping");
-  if (!mem_space_mapping) {
-    return ktdp_memory_space;  // No mapping found, return original
-  }
-
-  // Look up the ktdp memory space in the mapping
-  auto mapped_attr =
-      mem_space_mapping.getAttr<mlir::StringAttr>(ktdp_memory_space);
-  if (mapped_attr) {
-    return mapped_attr;  // Return the mapped string attribute
-  }
-
-  return ktdp_memory_space;  // Fallback to original if not found in mapping
-}
-
-std::pair<mlir::Attribute, mlir::Attribute>
-ConstructThreeStagePipelinePass::getFifoAttributesForLoad(
-    mlir::ktdp::LoadOp load_op) {
-  // Load operations transfer data from memory (e.g., DDR) to compute unit
-  // (e.g., SFU) Get the memory space from the load operation's access tile
-  mlir::Attribute memory_space;
-  auto access_tile = load_op.getAccessTile();
-  if (auto construct_access_tile =
-          mlir::dyn_cast<mlir::ktdp::ConstructAccessTilesOp>(
-              access_tile.getDefiningOp())) {
-    auto memory_view = construct_access_tile.getBase();
-    if (auto construct_mem_view =
-            mlir::dyn_cast<mlir::ktdp::ConstructMemoryViewOp>(
-                memory_view.getDefiningOp())) {
-      memory_space = construct_mem_view.getMemorySpaceAttr();
-    }
-  }
-
-  // Map the memory space to device namespace
-  mlir::Attribute mapped_memory_space = mapMemorySpace(memory_space);
-
-  // FIXME: Discover compute from op.
-  auto compute = resource_kinds_->getDefaultCompute();
-  assert(compute && "no default compute resource");
-
-  return {mapped_memory_space, compute.getKind()};
-}
-
-std::pair<mlir::Attribute, mlir::Attribute>
-ConstructThreeStagePipelinePass::getFifoAttributesForStore(
-    mlir::ktdp::StoreOp store_op) {
-  // Store operations transfer data from compute unit (e.g., SFU) to memory
-  // (e.g., DDR) Get the memory space from the store operation's access tile
-  mlir::Attribute memory_space;
-  auto access_tile = store_op.getAccessTile();
-  if (auto construct_access_tile =
-          mlir::dyn_cast<mlir::ktdp::ConstructAccessTilesOp>(
-              access_tile.getDefiningOp())) {
-    auto memory_view = construct_access_tile.getBase();
-    if (auto construct_mem_view =
-            mlir::dyn_cast<mlir::ktdp::ConstructMemoryViewOp>(
-                memory_view.getDefiningOp())) {
-      memory_space = construct_mem_view.getMemorySpaceAttr();
-    }
-  }
-
-  // Map the memory space to device namespace
-  mlir::Attribute mapped_memory_space = mapMemorySpace(memory_space);
-
-  // FIXME: Discover compute from op.
-  auto compute = resource_kinds_->getDefaultCompute();
-  assert(compute && "no default compute resource");
-
-  return {compute.getKind(), mapped_memory_space};
-}
-
 void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     mlir::func::FuncOp func_op) {
   llvm::SmallVector<mlir::ktdp::ConstructAccessTilesOp> access_tiles;
@@ -1394,10 +1348,9 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
 
   for (mlir::ktdp::ConstructAccessTilesOp access_tile : access_tiles) {
     // Get the memory view (source memref) - first operand
-    mlir::Value memory_view = access_tile.getBase();
-    auto memory_view_type =
-        mlir::dyn_cast<mlir::MemRefType>(memory_view.getType());
-    if (!memory_view_type) {
+    const auto memory_view = llvm::dyn_cast<mlir::TypedValue<mlir::MemRefType>>(
+        access_tile.getBase());
+    if (!memory_view) {
       access_tile.emitError("Memory view is not a memref type");
       signalPassFailure();
       return;
@@ -1426,15 +1379,15 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     // Get strides from memory view type
     llvm::SmallVector<int64_t> strides;
     if (auto strided_layout = mlir::dyn_cast<mlir::StridedLayoutAttr>(
-            memory_view_type.getLayout())) {
+            memory_view.getType().getLayout())) {
       strides.assign(strided_layout.getStrides().begin(),
                      strided_layout.getStrides().end());
     } else {
       // Default strides for row-major layout
       int64_t stride = 1;
-      for (int i = memory_view_type.getRank() - 1; i >= 0; --i) {
+      for (int i = memory_view.getType().getRank() - 1; i >= 0; --i) {
         strides.insert(strides.begin(), stride);
-        stride *= memory_view_type.getShape()[i];
+        stride *= memory_view.getType().getShape()[i];
       }
     }
 
@@ -1490,29 +1443,22 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
       reinterpret_strides.push_back(builder.getIndexAttr(stride));
     }
 
-    // Get ktdp memory space from construct_memory_view operation attribute
-    auto construct_mem_view = mlir::dyn_cast<mlir::ktdp::ConstructMemoryViewOp>(
-        memory_view.getDefiningOp());
-    assert(construct_mem_view &&
-           "Memory view must be defined by construct_memory_view operation");
-    mlir::Attribute ktdp_memory_space = construct_mem_view.getMemorySpaceAttr();
-
     // Map the ktdp memory space to the device namespace using mem_space_mapping
-    mlir::Attribute mapped_memory_space = mapMemorySpace(ktdp_memory_space);
-
+    const auto memory_space = mapMemorySpace(getMemorySpace(memory_view));
     // This propagates the mapped memory space to the reinterpret_cast
-    mlir::MemRefType cast_source_type = mlir::MemRefType::get(
-        memory_view_type.getShape(), memory_view_type.getElementType(),
-        memory_view_type.getLayout(), mapped_memory_space);
+    const auto cast_source_type =
+        mlir::MemRefType::get(memory_view.getType().getShape(),
+                              memory_view.getType().getElementType(),
+                              memory_view.getType().getLayout(), memory_space);
     auto memory_space_cast = mlir::memref::MemorySpaceCastOp::create(
         builder, loc, cast_source_type, memory_view);
 
     llvm::SmallVector<int64_t> result_shape(tile_dims.begin(), tile_dims.end());
     mlir::StridedLayoutAttr strided_layout = mlir::StridedLayoutAttr::get(
         builder.getContext(), mlir::ShapedType::kDynamic, strides);
-    mlir::MemRefType result_type =
-        mlir::MemRefType::get(result_shape, memory_view_type.getElementType(),
-                              strided_layout, mapped_memory_space);
+    const auto result_type = mlir::MemRefType::get(
+        result_shape, memory_view.getType().getElementType(), strided_layout,
+        memory_space);
 
     mlir::OpFoldResult offset_fold_result(offset);
     auto cast_op = mlir::memref::ReinterpretCastOp::create(
@@ -1574,7 +1520,26 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
   // Step 4: Create pipeline if we have tiled loops
   if (!tiled_loops_.empty()) {
     auto innermost_loop = llvm::cast<mlir::scf::ForOp>(tiled_loops_.back());
-    createPipeline(innermost_loop);
+
+    // FIXME: Handle multiple compute units involved in a pipeline.
+    auto compute =
+        mapping_->lookup<mlir::ktdf_arch::ExecutionUnitOp>(linalg_ops.front());
+    if (!compute) {
+      llvm::report_fatal_error("default compute was not assigned");
+    }
+    for (auto linalg_op : llvm::ArrayRef(linalg_ops).drop_front()) {
+      if (mapping_->lookup(linalg_op) != compute) {
+        auto diag =
+            linalg_op.emitError()
+            << "unable to map to two different units in a single pipeline";
+        diag.attachNote(linalg_ops.front()->getLoc())
+            << "previous op was mapped to " << *compute.getOperation();
+        signalPassFailure();
+        return;
+      }
+    }
+
+    createPipeline(innermost_loop, compute);
   }
 
   LDBG(1) << "After pipeline created:\n" << func_op << "\n";
@@ -1589,35 +1554,39 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
 }
 
 void ConstructThreeStagePipelinePass::runOnOperation() {
-  if (DisableThisPass) return;
+  if (DisableThisPass) {
+    return;
+  }
 
-  mlir::ModuleOp module_op = getOperation();
-
-  auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
-  auto* const device = device_manager.getOrImportDevice();
-  if (!device) {
-    module_op->emitError(
-        "Unable to import the device specification. This could happen if the "
-        "device spec file is empty or contains multiple devices");
+  // Obtain the default device, emitting a diagnostic on failure.
+  const auto& default_device = getAnalysis<mlir::ktdf_arch::DefaultDevice>();
+  if (!default_device) {
     signalPassFailure();
     return;
   }
-  resource_kinds_ =
-      &device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
 
-  // FIXME: Remove this when it is no longer an invariant needed by this pass.
-  if (!resource_kinds_->getDefaultCompute()) {
-    module_op->emitError(
-        "ConstructThreeStagePipeline: no compute resource kind found in device "
-        "description");
+  // Construct a mapping adapter and ensure we have a default compute resource.
+  mlir::ktdf_arch::Mapping mapping(default_device.getRef());
+  if (!mapping.byKind().getDefaultCompute()) {
+    mapping.getDevice().getDeclaration().emitError(
+        "no (unambiguous) default compute resource");
     signalPassFailure();
     return;
+  }
+
+  // FIXME: Don't put per-invocation pass state in pass members.
+  mapping_ = &mapping;
+  {
+    mem_space_map_.clear();
+    mem_space_map_.insert_range(
+        mapping_->getDevice().getAttrOfType<mlir::ktdf_arch::MapAttr>(
+            "mem_space_mapping"));
   }
 
   LDBG(1) << "Starting ConstructThreeStagePipeline transformation";
 
   // Process each function in each nested module
-  module_op.walk([&](mlir::func::FuncOp func_op) {
+  getOperation().walk([&](mlir::func::FuncOp func_op) {
     resetState();
     runOnFunc(func_op);
   });
