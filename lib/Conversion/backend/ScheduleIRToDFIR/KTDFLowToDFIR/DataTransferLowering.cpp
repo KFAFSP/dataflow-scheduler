@@ -28,6 +28,7 @@
 #include "mlir/Analysis/Presburger/IntegerRelation.h"
 #include "mlir/Analysis/Presburger/PresburgerSpace.h"
 #include "mlir/Dialect/Affine/Analysis/AffineStructures.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IntegerSet.h"
@@ -237,6 +238,380 @@ mlir::AffineMap foldStepIntoSubscripts(mlir::MLIRContext* context,
   return mlir::AffineMap::get(map.getNumDims() + 1, map.getNumSymbols(),
                               results, context);
 }
+
+/// Emit a self-sync (dataflow.sync_send) before `indirect_transfer`, hoisted as
+/// far out of enclosing loops as possible without crossing a loop block that
+/// also encloses the IAB fill (`fill_op`). E.g.
+/// scf.for {
+///   agen.composite_load_and_store ... <IAB fill>
+/// }
+/// <self-sync here>
+/// scf.for {
+///   agen.composite_load_and_store ... <Indirect load/store>
+/// }
+///
+/// `fill_op` must be non-null; callers must only call this when a fill exists.
+/// The fill's ancestor blocks are collected once (O(depth)) and used as an
+/// O(1) membership test while walking up from `indirect_transfer` to find the
+/// hoist boundary.
+static void emitSelfSyncIndirect(
+    mlir::PatternRewriter& rewriter, mlir::Location loc,
+    mlir::ktdf::IndDataTransferOp indirect_transfer, mlir::Operation* fill_op,
+    mlir::dataflow::ProgramUnitOp program_unit,
+    const ResourceToUnits& components) {
+  assert(fill_op && "emitSelfSyncIndirect requires a non-null fill_op");
+  mlir::Operation* insertion_op = indirect_transfer.getOperation();
+  // Collect the set of blocks enclosing fill_op to find the hoist boundary.
+  llvm::DenseSet<mlir::Block*> fill_ancestor_blocks;
+  for (mlir::Operation* p = fill_op->getParentOp(); p; p = p->getParentOp())
+    fill_ancestor_blocks.insert(p->getBlock());
+
+  mlir::Operation* cursor = indirect_transfer->getParentOp();
+  while (cursor && !mlir::isa<mlir::dataflow::ProgramUnitOp>(cursor)) {
+    if (mlir::isa<mlir::scf::ForOp, mlir::affine::AffineForOp>(cursor)) {
+      // cursor is a common ancestor of op and fill_op so should not hoist
+      // the self-sync outside of cursor.
+      if (fill_ancestor_blocks.count(cursor->getBlock())) break;
+      insertion_op = cursor;
+    }
+    cursor = cursor->getParentOp();
+  }
+
+  llvm::SmallVector<mlir::Value, 4> self_units(program_unit.getUnits().begin(),
+                                               program_unit.getUnits().end());
+  mlir::OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(insertion_op);
+  mlir::Value self_unit =
+      createQueryMapForComponent(rewriter, program_unit, self_units, loc);
+  mlir::dataflow::SyncSendOp::create(
+      rewriter, loc, self_unit,
+      /*dbgName=*/nullptr,
+      /*wait_immediately_for_async_transfers=*/rewriter.getBoolAttr(true));
+}
+
+/// Pattern to lower ktdf.ind_data_transfer to
+/// agen.composite_indirect_load_and_store.
+///
+/// Scatter mode (ind_dst present, ind_src absent):
+///   dir_src is a local memref; dir_dst is a memref in global memory.
+///   The IAB entry at ind_dst_index drives the destination base address.
+///   The body is empty (just agen.yield).
+///
+/// Gather mode (ind_src present, ind_dst absent):
+///   dir_src is a memref in global memory; dir_dst is either a memref or a
+///   !ktdf.fifo.slot. The IAB entry at ind_src_index drives the source base
+///   address. When dir_dst is a FIFO slot, the body emits dataflow.send.
+struct LowerIndDataTransferPattern
+    : public mlir::OpRewritePattern<mlir::ktdf::IndDataTransferOp> {
+  LowerIndDataTransferPattern(mlir::MLIRContext* context,
+                              const ResourceToUnits& components,
+                              mlir::ktdf_arch::ResourceKinds& resource_kinds)
+      : OpRewritePattern(context),
+        components_(components),
+        resource_kinds_(resource_kinds) {}
+
+  mlir::LogicalResult matchAndRewrite(
+      mlir::ktdf::IndDataTransferOp op,
+      mlir::PatternRewriter& rewriter) const override {
+    auto* ctx = rewriter.getContext();
+    const auto loc = op.getLoc();
+
+    const bool is_gather = op.isGather();
+    const bool is_scatter = op.isScatter();
+    assert((is_gather ^ is_scatter) && "exactly one of gather/scatter");
+
+    auto dir_src = op.getDirSrc();
+    auto dir_dst = op.getDirDst();
+
+    // dir_src must be a memref in both modes (op verifier guarantees this for
+    // gather; scatter also requires a concrete source).
+    if (!mlir::isa<mlir::MemRefType>(dir_src.getType())) {
+      op.emitError(
+          "ind_data_transfer lowering: dir_src must be a memref; FIFO "
+          "dir_src is not yet supported");
+      return mlir::failure();
+    }
+    auto dir_src_memref_type = mlir::cast<mlir::MemRefType>(dir_src.getType());
+
+    const bool dst_is_fifo =
+        mlir::isa<mlir::ktdf::FifoSlotType>(dir_dst.getType());
+    if (is_scatter && dst_is_fifo) {
+      op.emitError(
+          "ind_data_transfer lowering: scatter mode requires dir_dst to be "
+          "a memref");
+      return mlir::failure();
+    }
+
+    auto static_src_sizes_attr = op.getStaticDirSrcSizes();
+    auto static_dst_sizes_attr = op.getStaticDirDstSizes();
+    if (!static_src_sizes_attr || !static_dst_sizes_attr) {
+      op.emitError(
+          "ind_data_transfer lowering: dynamic sizes are not yet supported");
+      return mlir::failure();
+    }
+    llvm::SmallVector<int64_t> src_sizes(*static_src_sizes_attr);
+    llvm::SmallVector<int64_t> dst_sizes(*static_dst_sizes_attr);
+
+    auto elem_type = dir_src_memref_type.getElementType();
+
+    auto compute = resource_kinds_.getDefaultCompute();
+    if (!compute) {
+      return op.emitError(
+          "ind_data_transfer lowering: cannot determine hardware vector "
+          "width; architecture declares no default compute resource");
+    }
+    const auto lanes = getVectorLanes(elem_type, compute);
+
+    const int64_t total_src = [&] {
+      int64_t t = 1;
+      for (int64_t s : src_sizes) t *= s;
+      return t;
+    }();
+    const int64_t iv_lanes = std::min(total_src, lanes);
+    auto load_iv_type = mlir::VectorType::get({iv_lanes}, elem_type);
+
+    // load_set / load_order: per-vector footprint on the dir_src side.
+    llvm::SmallVector<int64_t> load_sizes(src_sizes.size(), 1);
+    load_sizes.back() = iv_lanes;
+    auto load_set = scheduler::buildIntegerSetFromSizes(ctx, load_sizes);
+    auto load_order =
+        mlir::AffineMap::getMultiDimIdentityMap(load_sizes.size(), ctx);
+
+    // store_set / store_order: per-vector footprint on the dir_dst side.
+    llvm::SmallVector<int64_t> store_sizes;
+    if (!dst_is_fifo) {
+      store_sizes.assign(dst_sizes.size(), 1);
+      store_sizes.back() = iv_lanes;
+    } else {
+      store_sizes = load_sizes;
+    }
+    auto store_set = scheduler::buildIntegerSetFromSizes(ctx, store_sizes);
+    auto store_order =
+        mlir::AffineMap::getMultiDimIdentityMap(store_sizes.size(), ctx);
+
+    // Time set / order / addr maps.
+    TransferTimeDims src_time_dims = describeTransferTimeDims(src_sizes, lanes);
+    llvm::SmallVector<int64_t> time_extents = src_time_dims.extents;
+    if (time_extents.empty()) time_extents.push_back(1);
+    const unsigned num_time_dims = time_extents.size();
+
+    auto time_set = scheduler::buildIntegerSetFromSizes(ctx, time_extents);
+    auto time_order =
+        mlir::AffineMap::getMultiDimIdentityMap(num_time_dims, ctx);
+
+    auto load_direct_time_addr_map =
+        mlir::AffineMap::get(num_time_dims, 0, src_time_dims.offsets(ctx), ctx);
+
+    // Indirect time addr map: the IAB is indexed one entry per time step
+    // (each entry is one address, so the step size is 1). Computed the same
+    // way as the direct maps: describeTransferTimeDims on the IAB shape with
+    // lanes=1.
+    auto empty_map = mlir::AffineMap::get(0, 0, {}, ctx);
+    mlir::AffineMap load_indirect_time_addr_map = empty_map;
+    mlir::AffineMap store_indirect_time_addr_map = empty_map;
+    if (is_gather) {
+      auto iab_memref_type =
+          mlir::cast<mlir::MemRefType>(op.getIndSrcMemref().getType());
+      llvm::SmallVector<int64_t> iab_sizes(iab_memref_type.getShape());
+      TransferTimeDims iab_time_dims =
+          describeTransferTimeDims(iab_sizes, /*lanes=*/1);
+      load_indirect_time_addr_map = mlir::AffineMap::get(
+          num_time_dims, 0, iab_time_dims.offsets(ctx), ctx);
+    } else {
+      auto iab_memref_type =
+          mlir::cast<mlir::MemRefType>(op.getIndDstMemref().getType());
+      llvm::SmallVector<int64_t> iab_sizes(iab_memref_type.getShape());
+      TransferTimeDims iab_time_dims =
+          describeTransferTimeDims(iab_sizes, /*lanes=*/1);
+      store_indirect_time_addr_map = mlir::AffineMap::get(
+          num_time_dims, 0, iab_time_dims.offsets(ctx), ctx);
+    }
+
+    mlir::AffineMap store_direct_time_addr_map;
+    if (!dst_is_fifo) {
+      TransferTimeDims dst_time_dims =
+          describeTransferTimeDims(dst_sizes, lanes);
+      store_direct_time_addr_map = mlir::AffineMap::get(
+          num_time_dims, 0, dst_time_dims.offsets(ctx), ctx);
+    } else {
+      store_direct_time_addr_map =
+          mlir::AffineMap::get(num_time_dims, 0,
+                               llvm::SmallVector<mlir::AffineExpr>{
+                                   mlir::getAffineConstantExpr(0, ctx)},
+                               ctx);
+    }
+
+    // dir_src access map.
+    auto dir_src_map =
+        op.getDirSrcMap().value_or(mlir::AffineMap::getMultiDimIdentityMap(
+            dir_src_memref_type.getRank(), ctx));
+
+    // dir_dst access map and memref value.
+    mlir::Value dir_dst_memref;
+    mlir::AffineMap dir_dst_map;
+    if (!dst_is_fifo) {
+      dir_dst_memref = dir_dst;
+      auto dir_dst_memref_type =
+          mlir::cast<mlir::MemRefType>(dir_dst.getType());
+      dir_dst_map =
+          op.getDirDstMap().value_or(mlir::AffineMap::getMultiDimIdentityMap(
+              dir_dst_memref_type.getRank(), ctx));
+    } else {
+      // FIFO dst: pass dir_src as the placeholder direct_dst_memref so the
+      // builder's mandatory-memref assertion is satisfied.  The actual data
+      // path is expressed inside the body via dataflow.send.
+      dir_dst_memref = dir_src;
+      dir_dst_map = dir_src_map;
+    }
+
+    // Indirect memref values, their index operands, and access maps.
+    // Use the map stored on the op if present; fall back to an identity map
+    // whose rank matches the IAB memref.
+    mlir::Value ind_src_memref;
+    mlir::Value ind_dst_memref;
+    mlir::Value ind_src_index;
+    mlir::Value ind_dst_index;
+    mlir::AffineMap ind_src_map;
+    mlir::AffineMap ind_dst_map;
+    if (is_gather) {
+      ind_src_memref = op.getIndSrcMemref();
+      ind_src_index = op.getIndSrcIndex();
+      const auto ind_src_rank =
+          mlir::cast<mlir::MemRefType>(ind_src_memref.getType()).getRank();
+      ind_src_map = op.getIndSrcMap().value_or(
+          mlir::AffineMap::getMultiDimIdentityMap(ind_src_rank, ctx));
+    } else {
+      ind_dst_memref = op.getIndDstMemref();
+      ind_dst_index = op.getIndDstIndex();
+      const auto ind_dst_rank =
+          mlir::cast<mlir::MemRefType>(ind_dst_memref.getType()).getRank();
+      ind_dst_map = op.getIndDstMap().value_or(
+          mlir::AffineMap::getMultiDimIdentityMap(ind_dst_rank, ctx));
+    }
+
+    // Operands list (per builder contract):
+    //   indirect_src_indices, direct_src_indices,
+    //   indirect_dst_indices, direct_dst_indices,
+    //   multicast_info (none), time_symbols (none).
+    llvm::SmallVector<mlir::Value> operands;
+    uint32_t num_ind_src_indices = 0;
+    uint32_t num_ind_dst_indices = 0;
+
+    if (ind_src_index) {
+      operands.push_back(ind_src_index);
+      num_ind_src_indices = 1;
+    }
+    llvm::SmallVector<mlir::Value> dir_src_indices(op.getDirSrcIndices());
+    operands.append(dir_src_indices.begin(), dir_src_indices.end());
+    if (ind_dst_index) {
+      operands.push_back(ind_dst_index);
+      num_ind_dst_indices = 1;
+    }
+    llvm::SmallVector<mlir::Value> dir_dst_indices(op.getDirDstIndices());
+    if (!dst_is_fifo) {
+      operands.append(dir_dst_indices.begin(), dir_dst_indices.end());
+    } else {
+      // FIFO dst: use dir_src indices as placeholder for direct_dst.
+      operands.append(dir_src_indices.begin(), dir_src_indices.end());
+    }
+    const uint32_t num_dir_src_indices =
+        static_cast<uint32_t>(dir_src_indices.size());
+    const uint32_t num_dir_dst_indices =
+        dst_is_fifo ? num_dir_src_indices
+                    : static_cast<uint32_t>(dir_dst_indices.size());
+
+    // Resolve the enclosing program_unit (needed for self-sync and FIFO dest).
+    auto program_unit = op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
+
+    // Resolve the FIFO destination unit for gather-to-FIFO before creating
+    // the composite op; the send is inserted into the body afterwards because
+    // CompositeIndirectLoadAndStoreOp::build does not invoke the bodyBuilder
+    // callback.
+    mlir::Value fifo_dest_unit;
+    if (dst_is_fifo) {
+      auto dst_fifo_slot_type =
+          mlir::cast<mlir::ktdf::FifoSlotType>(dir_dst.getType());
+      auto dest_unit_result = resolveUnitFromFifoAttr(
+          dst_fifo_slot_type.getDest(), components_, rewriter, program_unit,
+          loc, op.getOperation());
+      if (mlir::failed(dest_unit_result)) return mlir::failure();
+      fifo_dest_unit = *dest_unit_result;
+    }
+
+    // Emit a self-sync before the indirect transfer only when there is a
+    // DataTransferOp whose destination is the IAB.
+    // The sync is hoisted as far out of enclosing loops as possible without
+    // crossing the fill. If the IAB has no fill, no sync is needed.
+    {
+      mlir::Value iab_memref =
+          is_gather ? op.getIndSrcMemref() : op.getIndDstMemref();
+      mlir::Operation* fill_op = nullptr;
+      for (mlir::Operation* user : iab_memref.getUsers()) {
+        if (auto dt = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(user)) {
+          if (dt.getDestination() == iab_memref) {
+            fill_op = user;
+            break;
+          }
+        }
+      }
+      if (fill_op)
+        emitSelfSyncIndirect(rewriter, loc, op, fill_op, program_unit,
+                             components_);
+    }
+
+    auto composite_op = mlir::agen::CompositeIndirectLoadAndStoreOp::create(
+        rewriter, loc,
+        /*indirect_src_memref=*/ind_src_memref,
+        /*direct_src_memref=*/dir_src,
+        /*indirect_dst_memref=*/ind_dst_memref,
+        /*direct_dst_memref=*/dir_dst_memref,
+        /*dbgName=*/nullptr,
+        /*indirect_src_map=*/
+        is_gather ? ind_src_map : mlir::AffineMap::get(0, 0, {}, ctx),
+        /*direct_src_map=*/dir_src_map,
+        /*indirect_dst_map=*/
+        is_scatter ? ind_dst_map : mlir::AffineMap::get(0, 0, {}, ctx),
+        /*direct_dst_map=*/dir_dst_map,
+        /*operands=*/operands,
+        /*type=*/load_iv_type,
+        /*load_set=*/load_set,
+        /*load_order=*/load_order,
+        /*store_set=*/store_set,
+        /*store_order=*/store_order,
+        /*time_set=*/time_set,
+        /*time_order=*/time_order,
+        /*load_indirect_time_addr_map=*/load_indirect_time_addr_map,
+        /*load_direct_time_addr_map=*/load_direct_time_addr_map,
+        /*store_indirect_time_addr_map=*/store_indirect_time_addr_map,
+        /*store_direct_time_addr_map=*/store_direct_time_addr_map,
+        /*num_ind_src_memref_indices=*/num_ind_src_indices,
+        /*num_dir_src_memref_indices=*/num_dir_src_indices,
+        /*num_ind_dst_memref_indices=*/num_ind_dst_indices,
+        /*num_dir_dst_memref_indices=*/num_dir_dst_indices,
+        /*num_multicast_info=*/0,
+        /*num_time_symbols=*/0,
+        /*bodyBuilder=*/nullptr);
+
+    // Insert dataflow.send into the body before the terminator for
+    // gather-to-FIFO transfers (the builder callback is not invoked by
+    // CompositeIndirectLoadAndStoreOp::build).
+    if (dst_is_fifo) {
+      mlir::Block& body = composite_op.getRegion().front();
+      mlir::Value load_iv = composite_op.getLoadInductionVar();
+      mlir::OpBuilder body_builder(body.getTerminator());
+      mlir::dataflow::SendOp::create(body_builder, loc, fifo_dest_unit, load_iv,
+                                     /*dir=*/nullptr,
+                                     /*dbgName=*/nullptr);
+    }
+
+    rewriter.eraseOp(op);
+    return mlir::success();
+  }
+
+ private:
+  const ResourceToUnits& components_;
+  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
+};
 
 /// Pattern to lower ktdf.data_transfer operations
 struct LowerDataTransferPattern
@@ -542,11 +917,12 @@ struct LowerDataTransferPattern
         scheduler::buildIntegerSetFromSizes(context, store_sizes);
 
     // load_order and store_order must match their respective set
-    // dimensionality.
+    // dimensionality, which is the number of per-vector sizes (load_sizes /
+    // store_sizes), not the rank of the original source/destination memref.
     auto load_order =
-        mlir::AffineMap::getMultiDimIdentityMap(src_num_dims, context);
+        mlir::AffineMap::getMultiDimIdentityMap(load_sizes.size(), context);
     auto store_order =
-        mlir::AffineMap::getMultiDimIdentityMap(dst_num_dims, context);
+        mlir::AffineMap::getMultiDimIdentityMap(store_sizes.size(), context);
 
     // Time dimensions: a single pinned step for a transfer of at most one
     // vector, one dimension per walked dimension otherwise.
@@ -700,6 +1076,8 @@ struct LowerDataTransferPattern
 void scheduler::populateDataTransferLoweringPatterns(
     mlir::RewritePatternSet& patterns, const ResourceToUnits& components,
     mlir::ktdf_arch::ResourceKinds& resource_kinds) {
+  patterns.add<LowerIndDataTransferPattern>(patterns.getContext(), components,
+                                            resource_kinds);
   patterns.add<LowerDataTransferPattern>(patterns.getContext(), components,
                                          resource_kinds);
 }

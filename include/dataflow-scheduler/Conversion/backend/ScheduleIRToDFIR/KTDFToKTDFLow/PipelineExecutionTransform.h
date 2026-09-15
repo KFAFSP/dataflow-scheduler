@@ -23,7 +23,6 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/StageToUnitsMap.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
-#include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace scheduler {

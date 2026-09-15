@@ -53,6 +53,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
+#include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 
@@ -911,7 +912,8 @@ mlir::LogicalResult scheduler::runOperationLowerings(
   // survivor produces an explicit error rather than silently passing through.
   mlir::ConversionTarget target(*func.getContext());
   target.addIllegalDialect<mlir::ktdf::KTDFDialect,
-                           mlir::ktdf_lowering::KTDFLoweringDialect>();
+                           mlir::ktdf_lowering::KTDFLoweringDialect,
+                           mlir::ktdp_lowering::KTDPLoweringDialect>();
   target.markUnknownOpDynamicallyLegal([](mlir::Operation*) { return true; });
   if (mlir::failed(mlir::applyPartialConversion(
           func, target,

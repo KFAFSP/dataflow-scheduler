@@ -29,6 +29,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 #include "llvm/ADT/DenseMap.h"
@@ -66,10 +67,10 @@ bool onlyDeallocUses(mlir::Value val) {
 }
 
 /// Phase 1: Walk all program_unit bodies in `func`.
-/// - Collect memory space attributes used by Source A chains and Source B
-/// casts.
+/// - Collect memory space attributes used by Source A chains,
+///   Source A' (ktdp_lowering.construct_memory_view), and Source B casts.
 /// - Prune Source B casts whose only uses are memref.dealloc (delete cast +
-/// deallocs). Returns the set of needed memory space attributes.
+///   deallocs). Returns the set of needed memory space attributes.
 llvm::SetVector<ResourceType> discoverAndPrune(mlir::func::FuncOp func) {
   llvm::SetVector<ResourceType> needed;
 
@@ -87,6 +88,15 @@ llvm::SetVector<ResourceType> discoverAndPrune(mlir::func::FuncOp func) {
               needed.insert(*ms);
           }
         }
+        return;
+      }
+
+      // Source A': ktdp_lowering.construct_memory_view — memory space is
+      // encoded directly on the result type (no downstream cast chain).
+      if (auto cmv =
+              mlir::dyn_cast<mlir::ktdp_lowering::ConstructMemoryViewOp>(op)) {
+        if (auto ms = getMemorySpaceAttr(cmv.getResult().getType()))
+          needed.insert(*ms);
         return;
       }
 
@@ -462,6 +472,61 @@ mlir::LogicalResult replaceSourceAChains(
   return mlir::success();
 }
 
+/// Replace all ktdp_lowering.construct_memory_view ops inside \p pu with
+/// dataflow.get_logical_memory_view. Unlike the ktdp variant these ops have no
+/// ViewLikeOpInterface chain: the memory space is encoded directly on the
+/// result type and the result is used directly by downstream agen ops.
+static mlir::LogicalResult replaceLoweringConstructMemoryViewOps(
+    mlir::dataflow::ProgramUnitOp pu,
+    const llvm::DenseMap<ResourceType, mlir::Value>& resolved_units,
+    mlir::OpBuilder& builder) {
+  auto* ctx = pu.getContext();
+
+  llvm::SmallVector<mlir::ktdp_lowering::ConstructMemoryViewOp> cmvs;
+  pu.getRegion().front().walk(
+      [&](mlir::ktdp_lowering::ConstructMemoryViewOp cmv) {
+        cmvs.push_back(cmv);
+      });
+
+  for (auto cmv : cmvs) {
+    for (int64_t s : cmv.getStaticSizes()) {
+      if (mlir::ShapedType::isDynamic(s))
+        return cmv.emitError(
+            "ktdp_lowering.construct_memory_view: dynamic sizes not supported");
+    }
+    for (int64_t s : cmv.getStaticStrides()) {
+      if (mlir::ShapedType::isDynamic(s))
+        return cmv.emitError(
+            "ktdp_lowering.construct_memory_view: dynamic strides not "
+            "supported");
+    }
+
+    auto src_type = mlir::cast<mlir::MemRefType>(cmv.getResult().getType());
+    auto ms = getMemorySpaceAttr(src_type);
+    if (!ms)
+      return cmv.emitError(
+          "ktdp_lowering.construct_memory_view: no memory space on result "
+          "type");
+    mlir::Value unit = resolved_units.lookup(*ms);
+    if (!unit)
+      return cmv.emitError(
+          "ktdp_lowering.construct_memory_view: no resolved unit for memory "
+          "space");
+
+    auto layout_map = buildLinearizationMap(ctx, cmv.getStaticStrides());
+    auto plain_type =
+        mlir::MemRefType::get(src_type.getShape(), src_type.getElementType());
+
+    builder.setInsertionPointAfter(cmv);
+    auto view_op = mlir::dataflow::GetLogicalMemoryViewOp::create(
+        builder, cmv.getLoc(), plain_type, unit, cmv.getOffset(),
+        mlir::AffineMapAttr::get(layout_map));
+    cmv.getResult().replaceAllUsesWith(view_op.getData());
+    cmv.erase();
+  }
+  return mlir::success();
+}
+
 /// Phase 3c: replace Source B unrealized_conversion_casts with
 /// get_logical_memory_view. Dealloc-only casts were pruned in Phase 1.
 mlir::LogicalResult replaceSourceBCasts(
@@ -687,10 +752,15 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
 
     llvm::DenseMap<mlir::Value, mlir::Value> replacements;
 
-    // Phase 3b: Source A chains.
+    // Phase 3b: Source A chains (ktdp.construct_memory_view).
     if (mlir::failed(replaceSourceAChains(pu, resolved_units, resource_kinds,
                                           replacements, symbols, definitions,
                                           builder)))
+      return mlir::failure();
+
+    // Phase 3b': ktdp_lowering.construct_memory_view (IAB and similar).
+    if (mlir::failed(
+            replaceLoweringConstructMemoryViewOps(pu, resolved_units, builder)))
       return mlir::failure();
 
     // Phase 3c: Source B casts.
