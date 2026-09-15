@@ -69,6 +69,31 @@ static bool matchAbsMaxOperands(mlir::arith::MaxNumFOp maxnum_op,
   return true;
 }
 
+/// Gets the compare operator standing for \p predicate, or nothing where the
+/// unit has none. Only the ordered predicates map: an unordered one asks about
+/// NaN, which the compare does not answer.
+[[nodiscard]] auto compareOperatorFor(mlir::arith::CmpFPredicate predicate)
+    -> std::optional<mlir::vectorchain::VectorChainElementWiseCompareOperator> {
+  using Predicate = mlir::arith::CmpFPredicate;
+  using Operator = mlir::vectorchain::VectorChainElementWiseCompareOperator;
+  switch (predicate) {
+    case Predicate::OEQ:
+      return Operator::compare_eq;
+    case Predicate::ONE:
+      return Operator::compare_neq;
+    case Predicate::OLT:
+      return Operator::compare_lt;
+    case Predicate::OLE:
+      return Operator::compare_le;
+    case Predicate::OGT:
+      return Operator::compare_gt;
+    case Predicate::OGE:
+      return Operator::compare_ge;
+    default:
+      return std::nullopt;
+  }
+}
+
 /// Pattern to lower linalg.generic compute operations
 struct LowerLinalgGenericPattern
     : public mlir::OpRewritePattern<mlir::linalg::GenericOp> {
@@ -160,6 +185,12 @@ struct LowerLinalgGenericPattern
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
                     mlir::vectorchain::VectorChainBinaryOperator::min, compute);
               })
+              .Case<mlir::arith::CmpFOp>([&](mlir::arith::CmpFOp op) {
+                return lowerCompareFOp(op, rewriter, compute);
+              })
+              .Case<mlir::arith::SelectOp>([&](mlir::arith::SelectOp op) {
+                return lowerSelectOp(op, rewriter, compute);
+              })
               .Case<mlir::arith::MaxNumFOp>([&](mlir::arith::MaxNumFOp op) {
                 mlir::Value lhs, rhs;
                 if (matchAbsMaxOperands(op, lhs, rhs)) {
@@ -179,9 +210,14 @@ struct LowerLinalgGenericPattern
                   }
                   return res;
                 }
-                return lowerBinaryFOp(
-                    op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::max, compute);
+                // Only the abs-of-both shape lowers. maxnumf and minnumf
+                // are the withdrawn 754-2008 operations, whose handling of NaN
+                // and of signed zero is left to the implementation, and what
+                // this unit does is not written down -- so mapping them to a
+                // plain max or min would be a guess. minimumf and maximumf say
+                // what they mean and are lowered instead.
+                return rewriter.notifyMatchFailure(
+                    op, "maxnumf outside the abs-max shape is not lowered");
               })
               .Case<mlir::math::AbsFOp>([&](mlir::math::AbsFOp op)
                                             -> mlir::LogicalResult {
@@ -306,6 +342,12 @@ struct LowerLinalgGenericPattern
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
                     mlir::vectorchain::VectorChainBinaryOperator::min, compute);
               })
+              .Case<mlir::arith::CmpFOp>([&](mlir::arith::CmpFOp op) {
+                return lowerCompareFOp(op, rewriter, compute);
+              })
+              .Case<mlir::arith::SelectOp>([&](mlir::arith::SelectOp op) {
+                return lowerSelectOp(op, rewriter, compute);
+              })
               .Case<mlir::memref::StoreOp>([&](mlir::memref::StoreOp op) {
                 return lowerMemRefStore(op, rewriter);
               })
@@ -327,9 +369,14 @@ struct LowerLinalgGenericPattern
                   }
                   return res;
                 }
-                return lowerBinaryFOp(
-                    op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::max, compute);
+                // Only the abs-of-both shape lowers. maxnumf and minnumf
+                // are the withdrawn 754-2008 operations, whose handling of NaN
+                // and of signed zero is left to the implementation, and what
+                // this unit does is not written down -- so mapping them to a
+                // plain max or min would be a guess. minimumf and maximumf say
+                // what they mean and are lowered instead.
+                return rewriter.notifyMatchFailure(
+                    op, "maxnumf outside the abs-max shape is not lowered");
               })
               .Case<mlir::math::AbsFOp>([&](mlir::math::AbsFOp op)
                                             -> mlir::LogicalResult {
@@ -638,6 +685,49 @@ struct LowerLinalgGenericPattern
         /*mask=*/nullptr, /*dbgName=*/nullptr, binary_kind, identity_map);
 
     rewriter.replaceOp(op, binary_op.getData());
+    return mlir::success();
+  }
+
+  /// Lowers \p op to an element-wise compare.
+  ///
+  /// The result carries the operands' type rather than a boolean: it is what a
+  /// selection takes as its condition, and the unit keeps it in a lane of the
+  /// same width. The i1 form of this op is the separate mask operand.
+  mlir::LogicalResult lowerCompareFOp(
+      mlir::arith::CmpFOp op, mlir::PatternRewriter& rewriter,
+      mlir::ktdf_arch::ExecutionUnitOp compute) const {
+    const auto compare_kind = compareOperatorFor(op.getPredicate());
+    if (!compare_kind) return mlir::failure();
+
+    const auto lhs_ty = llvm::dyn_cast<mlir::ShapedType>(op.getLhs().getType());
+    if (!lhs_ty) return mlir::failure();
+    auto operands = getFlattenedVectorType(lhs_ty, compute);
+    if (!operands) return mlir::failure();
+
+    auto compare_op = mlir::vectorchain::ElementWiseCompareOp::create(
+        rewriter, op->getLoc(), operands, op.getLhs(), op.getRhs(),
+        /*mask=*/nullptr, /*dbgName=*/nullptr, *compare_kind);
+
+    rewriter.replaceOp(op, compare_op.getData());
+    return mlir::success();
+  }
+
+  /// Lowers \p op to an element-wise selection, taking a lane from one side or
+  /// the other by the mask a compare left.
+  mlir::LogicalResult lowerSelectOp(
+      mlir::arith::SelectOp op, mlir::PatternRewriter& rewriter,
+      mlir::ktdf_arch::ExecutionUnitOp compute) const {
+    const auto picked =
+        llvm::dyn_cast<mlir::ShapedType>(op.getTrueValue().getType());
+    if (!picked) return mlir::failure();
+    auto result = getFlattenedVectorType(picked, compute);
+    if (!result) return mlir::failure();
+
+    auto selection_op = mlir::vectorchain::ElementWiseSelectionOp::create(
+        rewriter, op->getLoc(), result, op.getCondition(), op.getTrueValue(),
+        op.getFalseValue(), /*mask=*/nullptr, /*dbgName=*/nullptr);
+
+    rewriter.replaceOp(op, selection_op.getData());
     return mlir::success();
   }
 };
