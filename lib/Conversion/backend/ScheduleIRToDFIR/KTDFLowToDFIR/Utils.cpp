@@ -18,46 +18,33 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 
+#include <llvm/ADT/SmallVector.h>
+#include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/IR/Builders.h>
+#include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinTypeInterfaces.h>
+#include <mlir/IR/BuiltinTypes.h>
+#include <mlir/IR/IntegerSet.h>
+#include <mlir/IR/PatternMatch.h>
 
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Utils.h"
-#include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
-#include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/raw_ostream.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/IntegerSet.h"
-#include "mlir/IR/PatternMatch.h"
 
 using namespace scheduler;
 
-std::optional<scheduler::ResourceType>
-scheduler::getEnclosingProgramUnitResourceType(mlir::Operation* op) {
-  auto pu = op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
-  if (!pu || pu.getUnits().empty()) return std::nullopt;
-
-  mlir::Value first_unit = pu.getUnits().front();
-
-  // Direct dataflow.get_unit operand (already-lowered program_unit).
-  if (auto get_unit = mlir::dyn_cast_or_null<mlir::dataflow::GetUnitOp>(
-          first_unit.getDefiningOp())) {
-    auto type_attr = get_unit->getAttrOfType<mlir::StringAttr>("type");
-    if (type_attr)
-      return mlir::StringAttr::get(op->getContext(),
-                                   type_attr.getValue().upper());
+mlir::ktdf_arch::ExecutionUnitOp scheduler::getVectorUnit(
+    mlir::Operation* op, mlir::ktdf_arch::Mapping& mapping) {
+  auto mapped = mapping.resolve<mlir::ktdf_arch::ExecutionUnitOp>(op);
+  if (mapped && mapped.getFeature<mlir::ktdf_arch::feature::SIMD>()) {
+    return mapped;
   }
 
-  return std::nullopt;
+  return mapping.byKind().getDefaultCompute();
 }
 
 int64_t scheduler::getVectorLanes(mlir::Type elem_type,

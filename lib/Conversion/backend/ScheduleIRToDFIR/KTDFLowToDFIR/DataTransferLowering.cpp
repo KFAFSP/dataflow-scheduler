@@ -22,7 +22,7 @@
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Analysis/Presburger/IntegerRelation.h"
@@ -305,10 +305,8 @@ struct LowerIndDataTransferPattern
     : public mlir::OpRewritePattern<mlir::ktdf::IndDataTransferOp> {
   LowerIndDataTransferPattern(mlir::MLIRContext* context,
                               const ResourceToUnits& components,
-                              mlir::ktdf_arch::ResourceKinds& resource_kinds)
-      : OpRewritePattern(context),
-        components_(components),
-        resource_kinds_(resource_kinds) {}
+                              mlir::ktdf_arch::Mapping& mapping)
+      : OpRewritePattern(context), components_(components), mapping_(mapping) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::ktdf::IndDataTransferOp op,
@@ -354,11 +352,11 @@ struct LowerIndDataTransferPattern
 
     auto elem_type = dir_src_memref_type.getElementType();
 
-    auto compute = resource_kinds_.getDefaultCompute();
+    auto compute = getVectorUnit(op, mapping_);
     if (!compute) {
       return op.emitError(
           "ind_data_transfer lowering: cannot determine hardware vector "
-          "width; architecture declares no default compute resource");
+          "width; no compute resource is mapped");
     }
     const auto lanes = getVectorLanes(elem_type, compute);
 
@@ -610,7 +608,7 @@ struct LowerIndDataTransferPattern
 
  private:
   const ResourceToUnits& components_;
-  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
+  mlir::ktdf_arch::Mapping& mapping_;
 };
 
 /// Pattern to lower ktdf.data_transfer operations
@@ -618,10 +616,8 @@ struct LowerDataTransferPattern
     : public mlir::OpRewritePattern<mlir::ktdf::DataTransferOp> {
   LowerDataTransferPattern(mlir::MLIRContext* context,
                            const ResourceToUnits& components,
-                           mlir::ktdf_arch::ResourceKinds& resource_kinds)
-      : OpRewritePattern(context),
-        components_(components),
-        resource_kinds_(resource_kinds) {}
+                           mlir::ktdf_arch::Mapping& mapping)
+      : OpRewritePattern(context), components_(components), mapping_(mapping) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::ktdf::DataTransferOp data_transfer_op,
@@ -768,7 +764,7 @@ struct LowerDataTransferPattern
 
  private:
   const ResourceToUnits& components_;
-  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
+  mlir::ktdf_arch::Mapping& mapping_;
 
   /// Lower as CompositeLoadAndStore.
   ///
@@ -786,12 +782,11 @@ struct LowerDataTransferPattern
     auto* context = rewriter.getContext();
     const int64_t total = vector_type.getNumElements();
 
-    // FIXME: Discover compute from op.
-    auto compute = resource_kinds_.getDefaultCompute();
+    auto compute = getVectorUnit(data_transfer_op, mapping_);
     if (!compute) {
       return data_transfer_op.emitError(
-          "cannot determine the hardware vector width: the architecture "
-          "declares no default compute resource");
+          "cannot determine the hardware vector width: no compute resource is "
+          "mapped");
     }
 
     const auto lanes = getVectorLanes(vector_type.getElementType(), compute);
@@ -1075,9 +1070,9 @@ struct LowerDataTransferPattern
 
 void scheduler::populateDataTransferLoweringPatterns(
     mlir::RewritePatternSet& patterns, const ResourceToUnits& components,
-    mlir::ktdf_arch::ResourceKinds& resource_kinds) {
+    mlir::ktdf_arch::Mapping& mapping) {
   patterns.add<LowerIndDataTransferPattern>(patterns.getContext(), components,
-                                            resource_kinds);
+                                            mapping);
   patterns.add<LowerDataTransferPattern>(patterns.getContext(), components,
-                                         resource_kinds);
+                                         mapping);
 }

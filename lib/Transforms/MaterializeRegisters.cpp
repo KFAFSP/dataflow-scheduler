@@ -34,7 +34,7 @@
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchInterfaces.h"
 #include "dataflow-scheduler/Transforms/Passes.h"  // IWYU pragma: keep
@@ -74,47 +74,17 @@ auto getMappedConstants(linalg::GenericOp generic)
   return result;
 }
 
-/// Gets how many lanes of \p element a compute unit of the device of \p op has.
-///
-/// The unit's SIMD feature gives it per element type, and that is also how many
-/// a register holds. Zero when the device gives none, which the caller reports
-/// rather than guessing a width the template was not written for.
-auto getLaneCount(Operation* op, Type element, AnalysisManager analyses)
-    -> int64_t {
-  const auto declaration = ktdf_arch::findDeviceDeclarationFor(op);
-  if (!declaration) {
-    return 0;
-  }
-
-  ktdf_arch::DeviceRef device(declaration, analyses);
-  const auto& resource_kinds =
-      device.getDeviceManager().getOrCreateView<mlir::ktdf_arch::ResourceKinds>(
-          device);
-
-  // FIXME: Discover compute from op.
-  auto compute = resource_kinds.getDefaultCompute();
-  if (!compute) {
-    return 1;
-  }
-
-  return getVectorLanes(element, compute);
-}
-
 /// Turns \p constant into a register in front of \p generic.
 ///
 /// A template reads a whole vector out of a register, so the register is filled
-/// with the value repeated across its lanes. Returns it, for the body to read
-/// instead of the constant.
+/// with the value repeated across its lanes, as many as \p compute has. Returns
+/// it, for the body to read instead of the constant.
 auto materializeRegister(arith::ConstantOp constant, linalg::GenericOp generic,
-                         AnalysisManager analyses, RewriterBase& rewriter)
-    -> Value {
+                         ktdf_arch::ExecutionUnitOp compute,
+                         RewriterBase& rewriter) -> Value {
   const auto maps_to = ktdf_arch::getProperty<ktdf_arch::MapsToAttr>(constant);
   const auto element = constant.getType();
-  const auto lanes = getLaneCount(generic, element, analyses);
-  if (lanes == 0) {
-    constant.emitError("the device says no lane count for ") << element;
-    return nullptr;
-  }
+  const auto lanes = getVectorLanes(element, compute);
 
   const auto register_type =
       MemRefType::get({lanes}, element, MemRefLayoutAttrInterface{}, maps_to);
@@ -175,7 +145,7 @@ auto getTileSize(linalg::GenericOp generic) -> int64_t {
 /// \p zero is the index of the lane the body's own accesses land on, made here
 /// on the first allocation that needs one.
 auto hoistAllocation(Operation* alloc, linalg::GenericOp generic,
-                     AnalysisManager analyses, Value& zero,
+                     ktdf_arch::ExecutionUnitOp compute, Value& zero,
                      RewriterBase& rewriter) -> LogicalResult {
   const auto type = cast<MemRefType>(alloc->getResult(0).getType());
   if (type.getRank() != 0) {
@@ -201,16 +171,14 @@ auto hoistAllocation(Operation* alloc, linalg::GenericOp generic,
   // to be a whole number of them: otherwise the template would read a lane it
   // never wrote. Less than one register still gets one -- what the body works
   // on is a position in it.
-  const auto lanes = getLaneCount(generic, element, analyses);
+  const auto lanes = getVectorLanes(element, compute);
   int64_t held = tile;
-  if (lanes != 0) {
-    if (tile < lanes) {
-      held = lanes;
-    } else if (tile % lanes != 0) {
-      return alloc->emitError("a tile of ")
-             << tile << " does not divide into registers of " << lanes << " "
-             << element;
-    }
+  if (tile < lanes) {
+    held = lanes;
+  } else if (tile % lanes != 0) {
+    return alloc->emitError("a tile of ")
+           << tile << " does not divide into registers of " << lanes << " "
+           << element;
   }
 
   const auto register_type = MemRefType::get(
@@ -284,9 +252,26 @@ auto loadFirstLane(Value reg, Operation* reader, RewriterBase& rewriter)
 }
 
 /// Makes the registers \p generic uses real in front of its body.
-auto materializeRegisters(linalg::GenericOp generic, AnalysisManager analyses,
-                          RewriterBase& rewriter) -> LogicalResult {
+auto materializeRegisters(linalg::GenericOp generic,
+                          ktdf_arch::Mapping& mapping, RewriterBase& rewriter)
+    -> LogicalResult {
   const auto constants = getMappedConstants(generic);
+  const auto allocations = getBodyAllocations(generic);
+  if (constants.empty() && allocations.empty()) {
+    // Nothing to size, so nothing to say about where this one computes.
+    return success();
+  }
+
+  // A register is as wide as the unit that computes on it, so the unit the
+  // generic is mapped to sizes every register made here.
+  // FIXME: The default is the single compute kind the device declares, and a
+  //        kind resolves to one exemplar -- neither tells two units of the same
+  //        kind apart.
+  const auto compute = mapping.getOrMap<ktdf_arch::ExecutionUnitOp>(
+      generic, mapping.byKind().getDefaultCompute().getKind());
+  if (!compute) {
+    return generic.emitError("no compute resource is mapped to size registers");
+  }
 
   for (auto constant : constants) {
     // Only one still inside has to move. Moving one that is already out could
@@ -294,7 +279,7 @@ auto materializeRegisters(linalg::GenericOp generic, AnalysisManager analyses,
     if (generic->isProperAncestor(constant)) {
       rewriter.moveOpBefore(constant, generic);
     }
-    const auto reg = materializeRegister(constant, generic, analyses, rewriter);
+    const auto reg = materializeRegister(constant, generic, compute, rewriter);
     if (!reg) return failure();
 
     // Whatever read the constant reads the register now, where it stands: the
@@ -319,8 +304,8 @@ auto materializeRegisters(linalg::GenericOp generic, AnalysisManager analyses,
   // there. Handing it in as an operand is not open: a generic takes either
   // tensors or buffers throughout, and the data here is tensors.
   Value zero;
-  for (auto alloc : getBodyAllocations(generic)) {
-    if (failed(hoistAllocation(alloc, generic, analyses, zero, rewriter))) {
+  for (auto* alloc : allocations) {
+    if (failed(hoistAllocation(alloc, generic, compute, zero, rewriter))) {
       return failure();
     }
   }
@@ -333,10 +318,23 @@ struct MaterializeRegistersPass
   using MaterializeRegistersPassBase::MaterializeRegistersPassBase;
 
   void runOnOperation() override {
+    // Obtain the default device, emitting a diagnostic on failure.
+    const auto& default_device = getAnalysis<ktdf_arch::DefaultDevice>();
+    if (!default_device) {
+      signalPassFailure();
+      return;
+    }
+    ktdf_arch::Mapping mapping(default_device.getRef());
+    if (!mapping.byKind().getDefaultCompute()) {
+      mapping.getDevice().getDeclaration().emitError(
+          "no (unambiguous) default compute resource");
+      signalPassFailure();
+      return;
+    }
+
     IRRewriter rewriter(&getContext());
     const auto result = getOperation()->walk([&](linalg::GenericOp generic) {
-      if (failed(
-              materializeRegisters(generic, getAnalysisManager(), rewriter))) {
+      if (failed(materializeRegisters(generic, mapping, rewriter))) {
         return WalkResult::interrupt();
       }
       return WalkResult::skip();

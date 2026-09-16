@@ -46,6 +46,7 @@
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
 #include "dataflow-scheduler/Dialect/Dataflow/DataflowDialect.h"
+#include "dataflow-scheduler/Dialect/Dataflow/Transforms/MappableExtensions.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/MappableExtensions.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
@@ -101,6 +102,7 @@ void scheduler::registerExtensions(mlir::DialectRegistry& registry) {
   // Register the extensions required from KTIR.
 
   // Register the extensions provided by the scheduler.
+  mlir::dataflow::registerMappableInterfaceExternalModels(registry);
   mlir::ktdf::registerMappableInterfaceExternalModels(registry);
 }
 

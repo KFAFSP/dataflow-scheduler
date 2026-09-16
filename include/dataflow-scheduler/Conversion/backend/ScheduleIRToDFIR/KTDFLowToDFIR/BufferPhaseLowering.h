@@ -19,19 +19,18 @@
 #ifndef DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_BUFFERPHASELOWERING_H_
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_BUFFERPHASELOWERING_H_
 
-#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/UnitTypeDiscovery.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Support/LogicalResult.h"
+#include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Support/LogicalResult.h>
+
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 
 namespace scheduler {
 
 /// Lower all ktdf.buffer_phase / ktdf.select_memref pairs in `func` into
 /// iter-arg-based double buffering. Processes one pair at a time until none
 /// remain.
-mlir::LogicalResult lowerDoubleBuffering(
-    mlir::func::FuncOp func, const ResourceToUnits& components,
-    mlir::ktdf_arch::ResourceKinds& resource_kinds);
+mlir::LogicalResult lowerDoubleBuffering(mlir::func::FuncOp func,
+                                         mlir::ktdf_arch::Mapping& mapping);
 
 }  // namespace scheduler
 

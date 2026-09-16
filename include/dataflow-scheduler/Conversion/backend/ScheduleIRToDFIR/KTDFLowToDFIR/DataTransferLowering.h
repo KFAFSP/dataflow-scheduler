@@ -20,15 +20,15 @@
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_DATATRANSFERLOWERING_H_
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/UnitTypeDiscovery.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "mlir/IR/PatternMatch.h"
 
 namespace scheduler {
 
 /// Register LowerDataTransferPattern into the given pattern set.
-void populateDataTransferLoweringPatterns(
-    mlir::RewritePatternSet& patterns, const ResourceToUnits& components,
-    mlir::ktdf_arch::ResourceKinds& resource_kinds);
+void populateDataTransferLoweringPatterns(mlir::RewritePatternSet& patterns,
+                                          const ResourceToUnits& components,
+                                          mlir::ktdf_arch::Mapping& mapping);
 
 }  // namespace scheduler
 

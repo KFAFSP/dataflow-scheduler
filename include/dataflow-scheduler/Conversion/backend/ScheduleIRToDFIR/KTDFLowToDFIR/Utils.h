@@ -23,7 +23,7 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/UnitTypeDiscovery.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/DenseMap.h"
@@ -47,13 +47,15 @@ enum class DataTransferType {
   kReceiveAndStore  // FIFO to memory - use receive and vector_store
 };
 
-/// Walk up the parent chain of `op` to find the enclosing
-/// dataflow::ProgramUnitOp and resolve its resource type from its first unit
-/// operand.
-/// Returns std::nullopt if no enclosing program_unit exists, it has no unit
-/// operands, or the resource type cannot be resolved.
-std::optional<scheduler::ResourceType> getEnclosingProgramUnitResourceType(
-    mlir::Operation* op);
+/// Gets the unit whose SIMD width bounds the vectors `op` works on.
+///
+/// The unit `op` is mapped to, when that unit declares a SIMD width. A data
+/// mover declares none, so a transfer takes the width of the device's compute.
+///
+/// FIXME: That fallback assumes the device declares exactly one compute, and
+///        that a mover moves data at the compute's width.
+mlir::ktdf_arch::ExecutionUnitOp getVectorUnit(
+    mlir::Operation* op, mlir::ktdf_arch::Mapping& mapping);
 
 /// Helper to get flattened vector type from tensor or vector type.
 mlir::VectorType getFlattenedVectorType(

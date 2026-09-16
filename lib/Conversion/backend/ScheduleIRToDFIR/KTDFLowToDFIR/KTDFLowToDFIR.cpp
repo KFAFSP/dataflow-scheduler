@@ -36,7 +36,7 @@
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
 #include "dataflow-scheduler/Dialect/Symbol/Symbol.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
@@ -88,19 +88,24 @@ struct KTDFLowToDFIRPass
     LDBG(1) << "========= " PASS_NAME " =========";
     mlir::ModuleOp module_op = getOperation();
 
-    auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
-    auto* const device = device_manager.getOrImportDevice();
-    if (!device) {
-      module_op->emitError(
-          "Unable to import the device specification. This could happen if the "
-          "device spec file is empty or contains multiple devices");
+    // Obtain the default device, emitting a diagnostic on failure.
+    const auto& default_device = getAnalysis<mlir::ktdf_arch::DefaultDevice>();
+    if (!default_device) {
+      signalPassFailure();
+      return;
+    }
+
+    // The lowerings ask the mapping which resource runs an op, so they can size
+    // vectors and address memory the way that resource does.
+    mlir::ktdf_arch::Mapping mapping(default_device.getRef());
+    if (!mapping.byKind().getDefaultCompute()) {
+      mapping.getDevice().getDeclaration().emitError(
+          "no (unambiguous) default compute resource");
       signalPassFailure();
       return;
     }
     auto& memory_tree =
-        device_manager.getOrCreateView<arch_view::MemoryTree>(*device);
-    auto& resource_kinds =
-        device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
+        default_device.getRef().getOrCreateView<arch_view::MemoryTree>();
 
     // The run's symbols, numbered once for the whole module: nothing sets a
     // range of ids aside, so two functions cannot each start from the top. This
@@ -139,7 +144,7 @@ struct KTDFLowToDFIRPass
       (void)mlir::runRegionDCE(rewriter, func.getBody());
 
       if (mlir::failed(buildLogicalMemoryViews(
-              func, memory_tree, resource_kinds, scheduler_ctx_, symbols))) {
+              func, memory_tree, mapping.byKind(), scheduler_ctx_, symbols))) {
         return signalPassFailure();
       }
       // run arith folding into query maps after logical mem view is built to
@@ -151,8 +156,7 @@ struct KTDFLowToDFIRPass
 
       // Run operation lowerings after program units have been created
       if (mlir::failed(runOperationLowerings(func, schedulerExtContext(),
-                                             components, resource_kinds,
-                                             symbols))) {
+                                             components, mapping, symbols))) {
         func.emitError("failed to run operation lowerings for ")
             << func.getName();
         return signalPassFailure();

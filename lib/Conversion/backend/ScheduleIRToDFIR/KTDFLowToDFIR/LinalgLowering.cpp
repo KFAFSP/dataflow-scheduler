@@ -30,7 +30,7 @@
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
 #include "llvm/ADT/STLExtras.h"
@@ -97,8 +97,8 @@ static bool matchAbsMaxOperands(mlir::arith::MaxNumFOp maxnum_op,
 struct LowerLinalgGenericPattern
     : public mlir::OpRewritePattern<mlir::linalg::GenericOp> {
   LowerLinalgGenericPattern(mlir::MLIRContext* context,
-                            mlir::ktdf_arch::ResourceKinds& resource_kinds)
-      : OpRewritePattern(context), resource_kinds_(resource_kinds) {}
+                            mlir::ktdf_arch::Mapping& mapping)
+      : OpRewritePattern(context), mapping_(mapping) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::linalg::GenericOp generic_op,
@@ -112,8 +112,7 @@ struct LowerLinalgGenericPattern
       return mlir::failure();
     }
 
-    // FIXME: Discover compute from op.
-    auto compute = resource_kinds_.getDefaultCompute();
+    auto compute = getCompute(generic_op);
     if (!compute) {
       return llvm::failure();
     }
@@ -263,7 +262,14 @@ struct LowerLinalgGenericPattern
   }
 
  private:
-  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
+  mlir::ktdf_arch::Mapping& mapping_;
+
+  /// Gets the unit whose width bounds the vectors \p op becomes.
+  [[nodiscard]] auto getCompute(mlir::Operation* op) const
+      -> mlir::ktdf_arch::ExecutionUnitOp {
+    return mapping_.getOrMap<mlir::ktdf_arch::ExecutionUnitOp>(
+        op, mapping_.byKind().getDefaultCompute());
+  }
 
   // Lowers a linalg.generic with buffer semantics (memref init operand).
   // The resulting accumulated vector is written back to the output buffer via
@@ -273,17 +279,16 @@ struct LowerLinalgGenericPattern
       mlir::PatternRewriter& rewriter) const {
     mlir::Location loc = generic_op.getLoc();
 
-    // FIXME: Discover compute from op.
-    auto compute = resource_kinds_.getDefaultCompute();
-    if (!compute) {
-      return llvm::failure();
-    }
-
     mlir::Block& body = generic_op.getRegion().front();
     auto yield_op = mlir::dyn_cast<mlir::linalg::YieldOp>(body.getTerminator());
     const unsigned accumulators = generic_op.getNumDpsInits();
     if (!yield_op || yield_op.getNumOperands() != accumulators) {
       return mlir::failure();
+    }
+
+    auto compute = getCompute(generic_op);
+    if (!compute) {
+      return llvm::failure();
     }
 
     // Replace input block arguments with their corresponding linalg ins
@@ -590,11 +595,9 @@ struct LowerLinalgGenericPattern
 struct LowerLinalgFillPattern
     : public mlir::OpRewritePattern<mlir::linalg::FillOp> {
   LowerLinalgFillPattern(mlir::MLIRContext* context,
-                         mlir::ktdf_arch::ResourceKinds& resource_kinds,
+                         mlir::ktdf_arch::Mapping& mapping,
                          scheduler::SymbolAllocator& symbols)
-      : OpRewritePattern(context),
-        resource_kinds_(resource_kinds),
-        symbols_(symbols) {}
+      : OpRewritePattern(context), mapping_(mapping), symbols_(symbols) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::linalg::FillOp fill_op,
@@ -609,12 +612,6 @@ struct LowerLinalgFillPattern
     mlir::Attribute value;
     const bool is_constant =
         fill_def && mlir::m_Constant(&value).match(fill_def);
-
-    // FIXME: Discover compute from op.
-    auto compute = resource_kinds_.getDefaultCompute();
-    if (!compute) {
-      return llvm::failure();
-    }
 
     // A fill value the compiler does not know becomes a symbol: the bitstream
     // carries the id, and whatever resolves the symbols writes the value in.
@@ -649,6 +646,13 @@ struct LowerLinalgFillPattern
             fill_op, "fill value must not exceed 64 bits");
       }
       fill_bits = fill_bits.zext(64U);
+    }
+
+    // The fill becomes a vector of the unit that holds it, so that unit's
+    // width bounds it.
+    auto compute = getVectorUnit(fill_op, mapping_);
+    if (!compute) {
+      return llvm::failure();
     }
 
     // Derive output vector type from the output operand (memref or tensor).
@@ -701,17 +705,15 @@ struct LowerLinalgFillPattern
   }
 
  private:
-  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
+  mlir::ktdf_arch::Mapping& mapping_;
   scheduler::SymbolAllocator& symbols_;
 };
 
 }  // namespace
 
 void scheduler::populateLinalgLoweringPatterns(
-    mlir::RewritePatternSet& patterns,
-    mlir::ktdf_arch::ResourceKinds& resource_kinds, SymbolAllocator& symbols) {
-  patterns.add<LowerLinalgGenericPattern>(patterns.getContext(),
-                                          resource_kinds);
-  patterns.add<LowerLinalgFillPattern>(patterns.getContext(), resource_kinds,
-                                       symbols);
+    mlir::RewritePatternSet& patterns, mlir::ktdf_arch::Mapping& mapping,
+    SymbolAllocator& symbols) {
+  patterns.add<LowerLinalgGenericPattern>(patterns.getContext(), mapping);
+  patterns.add<LowerLinalgFillPattern>(patterns.getContext(), mapping, symbols);
 }
