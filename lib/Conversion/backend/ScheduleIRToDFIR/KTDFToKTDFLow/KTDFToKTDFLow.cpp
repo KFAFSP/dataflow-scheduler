@@ -206,7 +206,7 @@ static llvm::SmallVector<mlir::scf::ForOp, 2> collectDependentLoops(
 // before recording the back-edge.  collectDependentLoops then walks the
 // def-use chains of the qualifying transfers to find all non-trivial loops
 // whose IVs index the scratchpad — these are stored in BackEdgeInfo as
-// dependent_loops and drive the multi-loop conjunction guards emitted by
+// dependent_loops and drive the multi-loop boundary guards emitted by
 // insertSignals.  If no dependent loops are found the candidate is skipped
 // (no back-edge needed).
 //

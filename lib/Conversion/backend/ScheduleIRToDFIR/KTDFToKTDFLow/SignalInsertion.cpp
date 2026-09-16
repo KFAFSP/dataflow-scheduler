@@ -130,7 +130,7 @@ mlir::LogicalResult scheduler::insertSignals(
         mlir::Value not_first = mlir::arith::CmpIOp::create(
             builder, loc, mlir::arith::CmpIPredicate::ne,
             loop.getInductionVar(), loop.getLowerBound());
-        cond = cond ? mlir::arith::AndIOp::create(builder, loc, cond, not_first)
+        cond = cond ? mlir::arith::OrIOp::create(builder, loc, cond, not_first)
                           .getResult()
                     : not_first;
       }
@@ -157,7 +157,7 @@ mlir::LogicalResult scheduler::insertSignals(
         mlir::Value not_last = mlir::arith::CmpIOp::create(
             builder, loc, mlir::arith::CmpIPredicate::ne,
             loop.getInductionVar(), last_iv);
-        cond = cond ? mlir::arith::AndIOp::create(builder, loc, cond, not_last)
+        cond = cond ? mlir::arith::OrIOp::create(builder, loc, cond, not_last)
                           .getResult()
                     : not_last;
       }

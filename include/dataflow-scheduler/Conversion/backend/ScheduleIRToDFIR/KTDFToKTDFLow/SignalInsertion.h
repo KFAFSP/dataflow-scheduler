@@ -66,10 +66,10 @@ struct BackEdgeInfo {
 /// For cross-iteration back-edges recorded in `back_edges` two guarded
 /// SignalOps are emitted instead:
 ///   - at the start of load_stage body:
-///       scf.if (iv0 != lb0 && iv1 != lb1 && ...) { signal }
+///       scf.if (iv0 != lb0 || iv1 != lb1 || ...) { signal }
 ///   - at the end   of store_stage body:
-///       scf.if (iv0 != ub0-step0 && iv1 != ub1-step1 && ...) { signal }
-/// where the conjunction runs over all loops in dependent_loops.
+///       scf.if (iv0 != ub0-step0 || iv1 != ub1-step1 || ...) { signal }
+/// where the disjunction runs over all loops in dependent_loops.
 mlir::LogicalResult insertSignals(
     mlir::Location loc, const StageToUnitsMap& stage_to_units,
     const mlir::ktdf::StageDependencyDAG& global_dag,

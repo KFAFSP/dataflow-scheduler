@@ -8,185 +8,190 @@
 // CHECK: #[[$ATTR_5:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK: #[[$ATTR_6:.+]] = affine_set<(d0, d1, d2, d3, d4) : (d0 >= 0, -d0 + 11 >= 0, d1 >= 0, -d1 >= 0, d2 >= 0, -d2 >= 0, d3 >= 0, -d3 + 63 >= 0, d4 >= 0, -d4 + 63 >= 0)>
 // CHECK-LABEL:   ktdf_arch.device @sample_device import("../../../../Dialect/KTDFArch/sample_device.mlir")
-// CHECK-LABEL:   func.func private @"local-schedule-0"() attributes {grid = [2]} {
-// CHECK-NEXT:       %[[GET_UNIT_0:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-mnilu", type = "mnilu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_1:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-mnilu", type = "mnilu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_2:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-mnisu", type = "mnisu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_3:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-mnisu", type = "mnisu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_4:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-l1lu-CL0", type = "l1lu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_5:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-l1lu-CL0", type = "l1lu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_6:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 1 : i32, name = "C0-l1lu-CL1", type = "l1lu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_7:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 1 : i32, name = "C1-l1lu-CL1", type = "l1lu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_8:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-sfu-CL0", type = "sfu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_9:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-sfu-CL0", type = "sfu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_10:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 1 : i32, name = "C0-sfu-CL1", type = "sfu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_11:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 1 : i32, name = "C1-sfu-CL1", type = "sfu"} : index
-// CHECK-NEXT:       %[[GET_UNIT_12:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-l1su-CL0", type = "l1su"} : index
-// CHECK-NEXT:       %[[GET_UNIT_13:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-l1su-CL0", type = "l1su"} : index
-// CHECK-NEXT:       %[[GET_UNIT_14:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 1 : i32, name = "C0-l1su-CL1", type = "l1su"} : index
-// CHECK-NEXT:       %[[GET_UNIT_15:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 1 : i32, name = "C1-l1su-CL1", type = "l1su"} : index
-// CHECK-NEXT:       %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
-// CHECK-NEXT:       %[[CONSTANT_0:.*]] = arith.constant 0 : index
-// CHECK-NEXT:       %[[CONSTANT_1:.*]] = arith.constant 1 : index
-// CHECK-NEXT:       %[[DEF_IMMUTABLE_MAPPING_0:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_0]] -> %[[GET_UNIT_0]]], {{\[}}%[[CONSTANT_1]] -> %[[GET_UNIT_1]]]):index
-// CHECK-NEXT:       %[[QUERY_MAP_0:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_0]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
-// CHECK-NEXT:       %[[CONSTANT_2:.*]] = arith.constant 0 : index
-// CHECK-NEXT:       %[[CONSTANT_3:.*]] = arith.constant 1 : index
-// CHECK-NEXT:       %[[DEF_IMMUTABLE_MAPPING_1:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_2]] -> %[[GET_UNIT_2]]], {{\[}}%[[CONSTANT_3]] -> %[[GET_UNIT_3]]]):index
-// CHECK-NEXT:       %[[QUERY_MAP_1:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_1]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
-// CHECK-NEXT:       %[[CONSTANT_4:.*]] = arith.constant 0 : index
-// CHECK-NEXT:       %[[CONSTANT_5:.*]] = arith.constant 1 : index
-// CHECK-NEXT:       %[[DEF_IMMUTABLE_MAPPING_2:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_4]] -> %[[GET_UNIT_4]]], {{\[}}%[[CONSTANT_5]] -> %[[GET_UNIT_5]]]):index
-// CHECK-NEXT:       %[[QUERY_MAP_2:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_2]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
-// CHECK-NEXT:       %[[CONSTANT_6:.*]] = arith.constant 0 : index
-// CHECK-NEXT:       %[[CONSTANT_7:.*]] = arith.constant 1 : index
-// CHECK-NEXT:       %[[DEF_IMMUTABLE_MAPPING_3:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_6]] -> %[[GET_UNIT_6]]], {{\[}}%[[CONSTANT_7]] -> %[[GET_UNIT_7]]]):index
-// CHECK-NEXT:       %[[QUERY_MAP_3:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_3]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
-// CHECK-NEXT:       %[[CONSTANT_8:.*]] = arith.constant 0 : index
-// CHECK-NEXT:       %[[CONSTANT_9:.*]] = arith.constant 1 : index
-// CHECK-NEXT:       %[[DEF_IMMUTABLE_MAPPING_4:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_8]] -> %[[GET_UNIT_8]]], {{\[}}%[[CONSTANT_9]] -> %[[GET_UNIT_9]]]):index
-// CHECK-NEXT:       %[[QUERY_MAP_4:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_4]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
-// CHECK-NEXT:       %[[CONSTANT_10:.*]] = arith.constant 0 : index
-// CHECK-NEXT:       %[[CONSTANT_11:.*]] = arith.constant 1 : index
-// CHECK-NEXT:       %[[DEF_IMMUTABLE_MAPPING_5:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_10]] -> %[[GET_UNIT_10]]], {{\[}}%[[CONSTANT_11]] -> %[[GET_UNIT_11]]]):index
-// CHECK-NEXT:       %[[QUERY_MAP_5:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_5]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
-// CHECK-NEXT:       %[[CONSTANT_12:.*]] = arith.constant 0 : index
-// CHECK-NEXT:       %[[CONSTANT_13:.*]] = arith.constant 1 : index
-// CHECK-NEXT:       %[[DEF_IMMUTABLE_MAPPING_6:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_12]] -> %[[GET_UNIT_12]]], {{\[}}%[[CONSTANT_13]] -> %[[GET_UNIT_13]]]):index
-// CHECK-NEXT:       %[[QUERY_MAP_6:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_6]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
-// CHECK-NEXT:       %[[CONSTANT_14:.*]] = arith.constant 0 : index
-// CHECK-NEXT:       %[[CONSTANT_15:.*]] = arith.constant 1 : index
-// CHECK-NEXT:       %[[DEF_IMMUTABLE_MAPPING_7:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_14]] -> %[[GET_UNIT_14]]], {{\[}}%[[CONSTANT_15]] -> %[[GET_UNIT_15]]]):index
-// CHECK-NEXT:       %[[QUERY_MAP_7:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_7]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
-// CHECK-NEXT:       %[[CONSTANT_16:.*]] = arith.constant 32 : index
-// CHECK-NEXT:       %[[CONSTANT_17:.*]] = arith.constant 6 : index
-// CHECK-NEXT:       %[[CONSTANT_18:.*]] = arith.constant 2 : index
-// CHECK-NEXT:       %[[CONSTANT_19:.*]] = arith.constant 0 : index
-// CHECK-NEXT:       %[[CONSTANT_20:.*]] = arith.constant 1 : index
-// CHECK-NEXT:       %[[CONSTANT_21:.*]] = arith.constant 64 : index
-// CHECK-NEXT:       %[[CONSTANT_22:.*]] = arith.constant 113216 : index
-// CHECK-NEXT:       %[[CONSTANT_23:.*]] = arith.constant 113152 : index
-// CHECK-NEXT:       %[[CONSTANT_24:.*]] = arith.constant 64000 : index
-// CHECK-NEXT:       %[[CONSTANT_25:.*]] = arith.constant 12 : index
-// CHECK-NEXT:       %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_24]], sizes: [12, 1, 64, 64], strides: [4096, 4096, 64, 1] {coordinate_set = #[[$ATTR_4]], memory_space = #ktdp.memory_space<global>} : memref<12x1x64x64xf16>
-// CHECK-NEXT:       %[[MEMORY_SPACE_CAST_0:.*]] = memref.memory_space_cast %[[CONSTRUCT_MEMORY_VIEW_0]] : memref<12x1x64x64xf16> to memref<12x1x64x64xf16, "DDR">
-// CHECK-NEXT:       %[[REINTERPRET_CAST_0:.*]] = memref.reinterpret_cast %[[MEMORY_SPACE_CAST_0]] to offset: [0], sizes: [12, 1, 64, 64], strides: [4096, 4096, 64, 1] : memref<12x1x64x64xf16, "DDR"> to memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1]>, "DDR">
-// CHECK-NEXT:       %[[CAST_0:.*]] = memref.cast %[[REINTERPRET_CAST_0]] : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1]>, "DDR"> to memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">
-// CHECK-NEXT:       %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_23]], sizes: [1, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_5]], memory_space = #ktdp.memory_space<global>} : memref<1x64xf16>
-// CHECK-NEXT:       %[[MEMORY_SPACE_CAST_1:.*]] = memref.memory_space_cast %[[CONSTRUCT_MEMORY_VIEW_1]] : memref<1x64xf16> to memref<1x64xf16, "DDR">
-// CHECK-NEXT:       %[[REINTERPRET_CAST_1:.*]] = memref.reinterpret_cast %[[MEMORY_SPACE_CAST_1]] to offset: [0], sizes: [1, 64], strides: [64, 1] : memref<1x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1]>, "DDR">
-// CHECK-NEXT:       %[[CAST_1:.*]] = memref.cast %[[REINTERPRET_CAST_1]] : memref<1x64xf16, strided<[64, 1]>, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
-// CHECK-NEXT:       %[[CONSTRUCT_MEMORY_VIEW_2:.*]] = ktdp.construct_memory_view %[[CONSTANT_22]], sizes: [12, 1, 1, 64, 64], strides: [4096, 4096, 4096, 64, 1] {coordinate_set = #[[$ATTR_6]], memory_space = #ktdp.memory_space<global>} : memref<12x1x1x64x64xf16>
-// CHECK-NEXT:       %[[MEMORY_SPACE_CAST_2:.*]] = memref.memory_space_cast %[[CONSTRUCT_MEMORY_VIEW_2]] : memref<12x1x1x64x64xf16> to memref<12x1x1x64x64xf16, "DDR">
-// CHECK-NEXT:       %[[REINTERPRET_CAST_2:.*]] = memref.reinterpret_cast %[[MEMORY_SPACE_CAST_2]] to offset: [0], sizes: [12, 1, 1, 64, 64], strides: [4096, 4096, 4096, 64, 1] : memref<12x1x1x64x64xf16, "DDR"> to memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1]>, "DDR">
-// CHECK-NEXT:       %[[CAST_2:.*]] = memref.cast %[[REINTERPRET_CAST_2]] : memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1]>, "DDR"> to memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
-// CHECK-NEXT:       %[[CONSTANT_26:.*]] = arith.constant 0 : index
-// CHECK-NEXT:       %[[UNREALIZED_CONVERSION_CAST_0:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_26]] : index to memref<1x64xf16, "L1">
-// CHECK-NEXT:       ktdf_lowering.execute_on %[[QUERY_MAP_0]] {
-// CHECK-NEXT:         ktdf_lowering.execute_on %[[QUERY_MAP_0]] {
-// CHECK-NEXT:           ktdf.data_transfer from %[[CAST_1]]{{\[}}%[[CONSTANT_19]], %[[CONSTANT_19]]] size [1, 64] to %[[UNREALIZED_CONVERSION_CAST_0]][0, 0] size [1, 64] : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
-// CHECK-NEXT:         }
-// CHECK-NEXT:       }
-// CHECK-NEXT:       %[[CONSTANT_27:.*]] = arith.constant 128 : index
-// CHECK-NEXT:       %[[UNREALIZED_CONVERSION_CAST_1:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_27]] : index to memref<2x2x1x1x1x64xf16, "L1">
-// CHECK-NEXT:       %[[CAST_3:.*]] = memref.cast %[[UNREALIZED_CONVERSION_CAST_1]] : memref<2x2x1x1x1x64xf16, "L1"> to memref<?x?x1x1x1x64xf16, "L1">
-// CHECK-NEXT:       %[[CONSTANT_28:.*]] = arith.constant 640 : index
-// CHECK-NEXT:       %[[UNREALIZED_CONVERSION_CAST_2:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_28]] : index to memref<2x2x1x1x1x64xf16, "L1">
-// CHECK-NEXT:       %[[CAST_4:.*]] = memref.cast %[[UNREALIZED_CONVERSION_CAST_2]] : memref<2x2x1x1x1x64xf16, "L1"> to memref<?x?x1x1x1x64xf16, "L1">
-// CHECK-NEXT:       %[[CONSTANT_29:.*]] = arith.constant 1152 : index
-// CHECK-NEXT:       %[[UNREALIZED_CONVERSION_CAST_3:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_29]] : index to memref<2x2x1x1x1x1x64xf16, "L1">
-// CHECK-NEXT:       %[[CAST_5:.*]] = memref.cast %[[UNREALIZED_CONVERSION_CAST_3]] : memref<2x2x1x1x1x1x64xf16, "L1"> to memref<?x?x1x1x1x1x64xf16, "L1">
-// CHECK-NEXT:       %[[CONSTANT_30:.*]] = arith.constant 1664 : index
-// CHECK-NEXT:       %[[UNREALIZED_CONVERSION_CAST_4:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_30]] : index to memref<2x2x1x1x1x1x64xf16, "L1">
-// CHECK-NEXT:       %[[CAST_6:.*]] = memref.cast %[[UNREALIZED_CONVERSION_CAST_4]] : memref<2x2x1x1x1x1x64xf16, "L1"> to memref<?x?x1x1x1x1x64xf16, "L1">
-// CHECK-NEXT:       %[[CONSTANT_31:.*]] = arith.constant 2240 : index
-// CHECK-NEXT:       %[[UNREALIZED_CONVERSION_CAST_5:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_31]] : index to memref<6x32x64xf16, "L1">
-// CHECK-NEXT:       scf.for %[[VAL_0:.*]] = %[[CONSTANT_19]] to %[[CONSTANT_17]] step %[[CONSTANT_20]] {
-// CHECK-NEXT:         %[[TILING_0:.*]] = ktdf.tiling.derive_size {{\[}}%[[VAL_0]] : %[[CONSTANT_18]]], total_size = %[[CONSTANT_25]] : index
-// CHECK-NEXT:         scf.for %[[VAL_1:.*]] = %[[CONSTANT_19]] to %[[CONSTANT_16]] step %[[CONSTANT_20]] {
-// CHECK-NEXT:           %[[TILING_1:.*]] = ktdf.tiling.derive_size {{\[}}%[[VAL_1]] : %[[CONSTANT_18]]], total_size = %[[CONSTANT_21]] : index
-// CHECK-NEXT:           %[[BUFFER_PHASE_0:.*]] = ktdf.buffer_phase(%[[VAL_0]], %[[VAL_1]]) {num_phases = 2 : i64} : index
-// CHECK-NEXT:           %[[SELECT_MEMREF_0:.*]] = ktdf.select_memref %[[BUFFER_PHASE_0]]{{\[}}%[[CAST_3]], %[[CAST_4]]] : memref<?x?x1x1x1x64xf16, "L1">
-// CHECK-NEXT:           %[[SELECT_MEMREF_1:.*]] = ktdf.select_memref %[[BUFFER_PHASE_0]]{{\[}}%[[CAST_5]], %[[CAST_6]]] : memref<?x?x1x1x1x1x64xf16, "L1">
-// CHECK-NEXT:           ktdf_lowering.execute_on %[[QUERY_MAP_0]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]], %[[QUERY_MAP_4]], %[[QUERY_MAP_5]], %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_1]] {
-// CHECK-NEXT:             %[[CONSTANT_32:.*]] = arith.constant 2176 : index
-// CHECK-NEXT:             %[[UNREALIZED_CONVERSION_CAST_6:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_32]] : index to memref<1x64xf16, "L1">
-// CHECK-NEXT:             %[[CREATE_TOKEN_0:.*]] = ktdf.create_token : !ktdf.token
-// CHECK-NEXT:             %[[CREATE_TOKEN_1:.*]] = ktdf.create_token : !ktdf.token
-// CHECK-NEXT:             ktdf_lowering.execute_on %[[QUERY_MAP_0]] {
-// CHECK-NEXT:               scf.for %[[VAL_2:.*]] = %[[CONSTANT_19]] to %[[TILING_0]] step %[[CONSTANT_20]] {
-// CHECK-NEXT:                 scf.for %[[VAL_3:.*]] = %[[CONSTANT_19]] to %[[TILING_1]] step %[[CONSTANT_20]] {
-// CHECK-NEXT:                   %[[APPLY_0:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_0]], %[[VAL_2]])
-// CHECK-NEXT:                   %[[APPLY_1:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_1]], %[[VAL_3]])
-// CHECK-NEXT:                   ktdf.data_transfer from %[[CAST_0]]{{\[}}%[[VAL_0]] * 2 + %[[VAL_2]], 0, %[[VAL_1]] * 2 + %[[VAL_3]], 0] size [1, 1, 1, 64] to %[[SELECT_MEMREF_0]]{{\[}}%[[VAL_2]], %[[VAL_3]], 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">, memref<?x?x1x1x1x64xf16, "L1">
-// CHECK-NEXT:                 }
-// CHECK-NEXT:               }
-// CHECK-NEXT:             }
-// CHECK-NEXT:             ktdf_lowering.signal %[[QUERY_MAP_0]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]]
-// CHECK-NEXT:             ktdf_lowering.execute_on %[[QUERY_MAP_2]], %[[QUERY_MAP_3]], %[[QUERY_MAP_4]], %[[QUERY_MAP_5]], %[[QUERY_MAP_6]], %[[QUERY_MAP_7]] {
-// CHECK-NEXT:               ktdf.parallel (%[[VAL_4:.*]], %[[VAL_5:.*]]) = (%[[CONSTANT_19]]) to (%[[TILING_0]]) step (%[[CONSTANT_20]]) distribute(num_instances = 2) {
-// CHECK-NEXT:                 scf.for %[[VAL_6:.*]] = %[[CONSTANT_19]] to %[[TILING_1]] step %[[CONSTANT_20]] {
-// CHECK-NEXT:                   ktdf_lowering.execute_on %[[QUERY_MAP_2]], %[[QUERY_MAP_3]], %[[QUERY_MAP_4]], %[[QUERY_MAP_5]], %[[QUERY_MAP_6]], %[[QUERY_MAP_7]] {
-// CHECK-NEXT:                     %[[FIFO_0:.*]]:2 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
-// CHECK-NEXT:                     %[[FIFO_1:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>
-// CHECK-NEXT:                     %[[CREATE_TOKEN_2:.*]] = ktdf.create_token : !ktdf.token
-// CHECK-NEXT:                     %[[CREATE_TOKEN_3:.*]] = ktdf.create_token : !ktdf.token
-// CHECK-NEXT:                     ktdf_lowering.execute_on %[[QUERY_MAP_2]], %[[QUERY_MAP_3]] {
-// CHECK-NEXT:                       %[[CMPI_0:.*]] = arith.cmpi ne, %[[VAL_6]], %[[CONSTANT_19]] : index
-// CHECK-NEXT:                       %[[CMPI_1:.*]] = arith.cmpi ne, %[[VAL_0]], %[[CONSTANT_19]] : index
-// CHECK-NEXT:                       %[[ANDI_0:.*]] = arith.andi %[[CMPI_0]], %[[CMPI_1]] : i1
-// CHECK-NEXT:                       scf.if %[[ANDI_0]] {
-// CHECK-NEXT:                         ktdf_lowering.signal %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]]
-// CHECK-NEXT:                       }
-// CHECK-NEXT:                       ktdf.data_transfer from %[[SELECT_MEMREF_0]]{{\[}}%[[VAL_4]], %[[VAL_6]], 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] to %[[FIFO_0]]#0 size [64] : memref<?x?x1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
-// CHECK-NEXT:                       scf.for %[[VAL_7:.*]] = %[[CONSTANT_19]] to %[[CONSTANT_21]] step %[[CONSTANT_20]] {
-// CHECK-NEXT:                         ktdf.data_transfer from %[[UNREALIZED_CONVERSION_CAST_5]]{{\[}}%[[VAL_0]], %[[VAL_6]], %[[VAL_7]]] size [1, 1, 64] to %[[FIFO_0]]#1 size [64] : memref<6x32x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
-// CHECK-NEXT:                       }
-// CHECK-NEXT:                     }
-// CHECK-NEXT:                     ktdf_lowering.execute_on %[[QUERY_MAP_4]], %[[QUERY_MAP_5]] {
-// CHECK-NEXT:                       %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[FIFO_0]]#0 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x1x1x64xf16>
-// CHECK-NEXT:                       %[[READ_FROM_FIFO_1:.*]] = ktdf.read_from_fifo %[[FIFO_0]]#1 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x64xf16>
-// CHECK-NEXT:                       %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x1x1x1x64xf16>
-// CHECK-NEXT:                       %[[GENERIC_0:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_1]], #[[$ATTR_2]], #[[$ATTR_3]]], iterator_types = ["parallel", "parallel", "parallel", "parallel", "parallel"]} ins(%[[READ_FROM_FIFO_0]], %[[READ_FROM_FIFO_1]] : tensor<1x1x1x64xf16>, tensor<1x64xf16>) outs(%[[EMPTY_0]] : tensor<1x1x1x1x64xf16>) {
-// CHECK-NEXT:                       ^bb0(%[[VAL_8:.*]]: f16, %[[VAL_9:.*]]: f16, %[[VAL_10:.*]]: f16):
-// CHECK-NEXT:                         %[[ADDF_0:.*]] = arith.addf %[[VAL_8]], %[[VAL_9]] : f16
-// CHECK-NEXT:                         linalg.yield %[[ADDF_0]] : f16
-// CHECK-NEXT:                       } -> tensor<1x1x1x1x64xf16>
-// CHECK-NEXT:                       ktdf.write_to_fifo %[[GENERIC_0]], %[[FIFO_1]] : tensor<1x1x1x1x64xf16>, <"SFU" -> "L1SU", 64xf16>
-// CHECK-NEXT:                     }
-// CHECK-NEXT:                     ktdf_lowering.execute_on %[[QUERY_MAP_6]], %[[QUERY_MAP_7]] {
-// CHECK-NEXT:                       ktdf.data_transfer from %[[FIFO_1]] size [64] to %[[SELECT_MEMREF_1]]{{\[}}%[[VAL_4]], %[[VAL_6]], 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] : !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<?x?x1x1x1x1x64xf16, "L1">
-// CHECK-NEXT:                       ktdf.data_transfer from %[[FIFO_1]] size [64] to %[[UNREALIZED_CONVERSION_CAST_5]]{{\[}}%[[VAL_0]], %[[VAL_6]], %[[CONSTANT_19]]] size [1, 1, 64] : !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<6x32x64xf16, "L1">
-// CHECK-NEXT:                       %[[SUBI_0:.*]] = arith.subi %[[TILING_1]], %[[CONSTANT_20]] : index
-// CHECK-NEXT:                       %[[CMPI_2:.*]] = arith.cmpi ne, %[[VAL_6]], %[[SUBI_0]] : index
-// CHECK-NEXT:                       %[[SUBI_1:.*]] = arith.subi %[[CONSTANT_17]], %[[CONSTANT_20]] : index
-// CHECK-NEXT:                       %[[CMPI_3:.*]] = arith.cmpi ne, %[[VAL_0]], %[[SUBI_1]] : index
-// CHECK-NEXT:                       %[[ANDI_1:.*]] = arith.andi %[[CMPI_2]], %[[CMPI_3]] : i1
-// CHECK-NEXT:                       scf.if %[[ANDI_1]] {
-// CHECK-NEXT:                         ktdf_lowering.signal %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]]
-// CHECK-NEXT:                       }
-// CHECK-NEXT:                     }
-// CHECK-NEXT:                   }
-// CHECK-NEXT:                 }
-// CHECK-NEXT:                 ktdf.parallel_yield
-// CHECK-NEXT:               }
-// CHECK-NEXT:             }
-// CHECK-NEXT:             ktdf_lowering.signal %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_1]]
-// CHECK-NEXT:             ktdf_lowering.execute_on %[[QUERY_MAP_1]] {
-// CHECK-NEXT:               scf.for %[[VAL_11:.*]] = %[[CONSTANT_19]] to %[[TILING_0]] step %[[CONSTANT_20]] {
-// CHECK-NEXT:                 scf.for %[[VAL_12:.*]] = %[[CONSTANT_19]] to %[[TILING_1]] step %[[CONSTANT_20]] {
-// CHECK-NEXT:                   %[[APPLY_2:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_0]], %[[VAL_11]])
-// CHECK-NEXT:                   %[[APPLY_3:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_1]], %[[VAL_12]])
-// CHECK-NEXT:                   ktdf.data_transfer from %[[SELECT_MEMREF_1]]{{\[}}%[[VAL_11]], %[[VAL_12]], 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] to %[[CAST_2]]{{\[}}%[[VAL_0]] * 2 + %[[VAL_11]], 0, 0, %[[VAL_1]] * 2 + %[[VAL_12]], 0] size [1, 1, 1, 1, 64] : memref<?x?x1x1x1x1x64xf16, "L1">, memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
-// CHECK-NEXT:                 }
-// CHECK-NEXT:               }
-// CHECK-NEXT:             }
-// CHECK-NEXT:           }
-// CHECK-NEXT:         }
-// CHECK-NEXT:       }
-// CHECK-NEXT:       return
-// CHECK-NEXT:     }
-// CHECK-NEXT:   }
+
+// CHECK:   module {
+// CHECK:     func.func private @"local-schedule-0"() attributes {grid = [2]} {
+// CHECK:       %[[GET_UNIT_0:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-mnilu", type = "mnilu"} : index
+// CHECK:       %[[GET_UNIT_1:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-mnilu", type = "mnilu"} : index
+// CHECK:       %[[GET_UNIT_2:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-mnisu", type = "mnisu"} : index
+// CHECK:       %[[GET_UNIT_3:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-mnisu", type = "mnisu"} : index
+// CHECK:       %[[GET_UNIT_4:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-l1lu-CL0", type = "l1lu"} : index
+// CHECK:       %[[GET_UNIT_5:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-l1lu-CL0", type = "l1lu"} : index
+// CHECK:       %[[GET_UNIT_6:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 1 : i32, name = "C0-l1lu-CL1", type = "l1lu"} : index
+// CHECK:       %[[GET_UNIT_7:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 1 : i32, name = "C1-l1lu-CL1", type = "l1lu"} : index
+// CHECK:       %[[GET_UNIT_8:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-sfu-CL0", type = "sfu"} : index
+// CHECK:       %[[GET_UNIT_9:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-sfu-CL0", type = "sfu"} : index
+// CHECK:       %[[GET_UNIT_10:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 1 : i32, name = "C0-sfu-CL1", type = "sfu"} : index
+// CHECK:       %[[GET_UNIT_11:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 1 : i32, name = "C1-sfu-CL1", type = "sfu"} : index
+// CHECK:       %[[GET_UNIT_12:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-l1su-CL0", type = "l1su"} : index
+// CHECK:       %[[GET_UNIT_13:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-l1su-CL0", type = "l1su"} : index
+// CHECK:       %[[GET_UNIT_14:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 1 : i32, name = "C0-l1su-CL1", type = "l1su"} : index
+// CHECK:       %[[GET_UNIT_15:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 1 : i32, name = "C1-l1su-CL1", type = "l1su"} : index
+// CHECK:       %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
+// CHECK:       %[[CONSTANT_0:.*]] = arith.constant 0 : index
+// CHECK:       %[[CONSTANT_1:.*]] = arith.constant 1 : index
+// CHECK:       %[[DEF_IMMUTABLE_MAPPING_0:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_0]] -> %[[GET_UNIT_0]]], {{\[}}%[[CONSTANT_1]] -> %[[GET_UNIT_1]]]):index
+// CHECK:       %[[QUERY_MAP_0:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_0]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
+// CHECK:       %[[CONSTANT_2:.*]] = arith.constant 0 : index
+// CHECK:       %[[CONSTANT_3:.*]] = arith.constant 1 : index
+// CHECK:       %[[DEF_IMMUTABLE_MAPPING_1:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_2]] -> %[[GET_UNIT_2]]], {{\[}}%[[CONSTANT_3]] -> %[[GET_UNIT_3]]]):index
+// CHECK:       %[[QUERY_MAP_1:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_1]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
+// CHECK:       %[[CONSTANT_4:.*]] = arith.constant 0 : index
+// CHECK:       %[[CONSTANT_5:.*]] = arith.constant 1 : index
+// CHECK:       %[[DEF_IMMUTABLE_MAPPING_2:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_4]] -> %[[GET_UNIT_4]]], {{\[}}%[[CONSTANT_5]] -> %[[GET_UNIT_5]]]):index
+// CHECK:       %[[QUERY_MAP_2:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_2]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
+// CHECK:       %[[CONSTANT_6:.*]] = arith.constant 0 : index
+// CHECK:       %[[CONSTANT_7:.*]] = arith.constant 1 : index
+// CHECK:       %[[DEF_IMMUTABLE_MAPPING_3:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_6]] -> %[[GET_UNIT_6]]], {{\[}}%[[CONSTANT_7]] -> %[[GET_UNIT_7]]]):index
+// CHECK:       %[[QUERY_MAP_3:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_3]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
+// CHECK:       %[[CONSTANT_8:.*]] = arith.constant 0 : index
+// CHECK:       %[[CONSTANT_9:.*]] = arith.constant 1 : index
+// CHECK:       %[[DEF_IMMUTABLE_MAPPING_4:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_8]] -> %[[GET_UNIT_8]]], {{\[}}%[[CONSTANT_9]] -> %[[GET_UNIT_9]]]):index
+// CHECK:       %[[QUERY_MAP_4:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_4]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
+// CHECK:       %[[CONSTANT_10:.*]] = arith.constant 0 : index
+// CHECK:       %[[CONSTANT_11:.*]] = arith.constant 1 : index
+// CHECK:       %[[DEF_IMMUTABLE_MAPPING_5:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_10]] -> %[[GET_UNIT_10]]], {{\[}}%[[CONSTANT_11]] -> %[[GET_UNIT_11]]]):index
+// CHECK:       %[[QUERY_MAP_5:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_5]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
+// CHECK:       %[[CONSTANT_12:.*]] = arith.constant 0 : index
+// CHECK:       %[[CONSTANT_13:.*]] = arith.constant 1 : index
+// CHECK:       %[[DEF_IMMUTABLE_MAPPING_6:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_12]] -> %[[GET_UNIT_12]]], {{\[}}%[[CONSTANT_13]] -> %[[GET_UNIT_13]]]):index
+// CHECK:       %[[QUERY_MAP_6:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_6]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
+// CHECK:       %[[CONSTANT_14:.*]] = arith.constant 0 : index
+// CHECK:       %[[CONSTANT_15:.*]] = arith.constant 1 : index
+// CHECK:       %[[DEF_IMMUTABLE_MAPPING_7:.*]] = uniform.def_immutable_mapping({{\[}}%[[CONSTANT_14]] -> %[[GET_UNIT_14]]], {{\[}}%[[CONSTANT_15]] -> %[[GET_UNIT_15]]]):index
+// CHECK:       %[[QUERY_MAP_7:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_7]], key:%[[GET_COMPUTE_TILE_ID_0]]) : index
+// CHECK:       %[[CONSTANT_16:.*]] = arith.constant 32 : index
+// CHECK:       %[[CONSTANT_17:.*]] = arith.constant 6 : index
+// CHECK:       %[[CONSTANT_18:.*]] = arith.constant 2 : index
+// CHECK:       %[[CONSTANT_19:.*]] = arith.constant 0 : index
+// CHECK:       %[[CONSTANT_20:.*]] = arith.constant 1 : index
+// CHECK:       %[[CONSTANT_21:.*]] = arith.constant 64 : index
+// CHECK:       %[[CONSTANT_22:.*]] = arith.constant 113216 : index
+// CHECK:       %[[CONSTANT_23:.*]] = arith.constant 113152 : index
+// CHECK:       %[[CONSTANT_24:.*]] = arith.constant 64000 : index
+// CHECK:       %[[CONSTANT_25:.*]] = arith.constant 12 : index
+// CHECK:       %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_24]], sizes: [12, 1, 64, 64], strides: [4096, 4096, 64, 1] {coordinate_set = #[[$ATTR_4]], memory_space = #ktdp.memory_space<global>} : memref<12x1x64x64xf16>
+// CHECK:       %[[MEMORY_SPACE_CAST_0:.*]] = memref.memory_space_cast %[[CONSTRUCT_MEMORY_VIEW_0]] : memref<12x1x64x64xf16> to memref<12x1x64x64xf16, "DDR">
+// CHECK:       %[[REINTERPRET_CAST_0:.*]] = memref.reinterpret_cast %[[MEMORY_SPACE_CAST_0]] to offset: [0], sizes: [12, 1, 64, 64], strides: [4096, 4096, 64, 1] : memref<12x1x64x64xf16, "DDR"> to memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1]>, "DDR">
+// CHECK:       %[[CAST_0:.*]] = memref.cast %[[REINTERPRET_CAST_0]] : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1]>, "DDR"> to memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">
+// CHECK:       %[[CONSTRUCT_MEMORY_VIEW_1:.*]] = ktdp.construct_memory_view %[[CONSTANT_23]], sizes: [1, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_5]], memory_space = #ktdp.memory_space<global>} : memref<1x64xf16>
+// CHECK:       %[[MEMORY_SPACE_CAST_1:.*]] = memref.memory_space_cast %[[CONSTRUCT_MEMORY_VIEW_1]] : memref<1x64xf16> to memref<1x64xf16, "DDR">
+// CHECK:       %[[REINTERPRET_CAST_1:.*]] = memref.reinterpret_cast %[[MEMORY_SPACE_CAST_1]] to offset: [0], sizes: [1, 64], strides: [64, 1] : memref<1x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1]>, "DDR">
+// CHECK:       %[[CAST_1:.*]] = memref.cast %[[REINTERPRET_CAST_1]] : memref<1x64xf16, strided<[64, 1]>, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
+// CHECK:       %[[CONSTRUCT_MEMORY_VIEW_2:.*]] = ktdp.construct_memory_view %[[CONSTANT_22]], sizes: [12, 1, 1, 64, 64], strides: [4096, 4096, 4096, 64, 1] {coordinate_set = #[[$ATTR_6]], memory_space = #ktdp.memory_space<global>} : memref<12x1x1x64x64xf16>
+// CHECK:       %[[MEMORY_SPACE_CAST_2:.*]] = memref.memory_space_cast %[[CONSTRUCT_MEMORY_VIEW_2]] : memref<12x1x1x64x64xf16> to memref<12x1x1x64x64xf16, "DDR">
+// CHECK:       %[[REINTERPRET_CAST_2:.*]] = memref.reinterpret_cast %[[MEMORY_SPACE_CAST_2]] to offset: [0], sizes: [12, 1, 1, 64, 64], strides: [4096, 4096, 4096, 64, 1] : memref<12x1x1x64x64xf16, "DDR"> to memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1]>, "DDR">
+// CHECK:       %[[CAST_2:.*]] = memref.cast %[[REINTERPRET_CAST_2]] : memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1]>, "DDR"> to memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
+// CHECK:       %[[CONSTANT_26:.*]] = arith.constant 0 : index
+// CHECK:       %[[UNREALIZED_CONVERSION_CAST_0:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_26]] : index to memref<1x64xf16, "L1">
+// CHECK:       ktdf_lowering.execute_on %[[QUERY_MAP_0]] {
+// CHECK:         ktdf_lowering.execute_on %[[QUERY_MAP_0]] {
+// CHECK:           ktdf.data_transfer from %[[CAST_1]]{{\[}}%[[CONSTANT_19]], %[[CONSTANT_19]]] size [1, 64] to %[[UNREALIZED_CONVERSION_CAST_0]][0, 0] size [1, 64] : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
+// CHECK:         }
+// CHECK:       }
+// CHECK:       %[[CONSTANT_27:.*]] = arith.constant 128 : index
+// CHECK:       %[[UNREALIZED_CONVERSION_CAST_1:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_27]] : index to memref<2x2x1x1x1x64xf16, "L1">
+// CHECK:       %[[CAST_3:.*]] = memref.cast %[[UNREALIZED_CONVERSION_CAST_1]] : memref<2x2x1x1x1x64xf16, "L1"> to memref<?x?x1x1x1x64xf16, "L1">
+// CHECK:       %[[CONSTANT_28:.*]] = arith.constant 640 : index
+// CHECK:       %[[UNREALIZED_CONVERSION_CAST_2:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_28]] : index to memref<2x2x1x1x1x64xf16, "L1">
+// CHECK:       %[[CAST_4:.*]] = memref.cast %[[UNREALIZED_CONVERSION_CAST_2]] : memref<2x2x1x1x1x64xf16, "L1"> to memref<?x?x1x1x1x64xf16, "L1">
+// CHECK:       %[[CONSTANT_29:.*]] = arith.constant 1152 : index
+// CHECK:       %[[UNREALIZED_CONVERSION_CAST_3:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_29]] : index to memref<2x2x1x1x1x1x64xf16, "L1">
+// CHECK:       %[[CAST_5:.*]] = memref.cast %[[UNREALIZED_CONVERSION_CAST_3]] : memref<2x2x1x1x1x1x64xf16, "L1"> to memref<?x?x1x1x1x1x64xf16, "L1">
+// CHECK:       %[[CONSTANT_30:.*]] = arith.constant 1664 : index
+// CHECK:       %[[UNREALIZED_CONVERSION_CAST_4:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_30]] : index to memref<2x2x1x1x1x1x64xf16, "L1">
+// CHECK:       %[[CAST_6:.*]] = memref.cast %[[UNREALIZED_CONVERSION_CAST_4]] : memref<2x2x1x1x1x1x64xf16, "L1"> to memref<?x?x1x1x1x1x64xf16, "L1">
+// CHECK:       %[[CONSTANT_31:.*]] = arith.constant 2240 : index
+// CHECK:       %[[UNREALIZED_CONVERSION_CAST_5:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_31]] : index to memref<6x32x64xf16, "L1">
+// CHECK:       scf.for %[[VAL_0:.*]] = %[[CONSTANT_19]] to %[[CONSTANT_17]] step %[[CONSTANT_20]] {
+// CHECK:         %[[TILING_0:.*]] = ktdf.tiling.derive_size {{\[}}%[[VAL_0]] : %[[CONSTANT_18]]], total_size = %[[CONSTANT_25]] : index
+// CHECK:         scf.for %[[VAL_1:.*]] = %[[CONSTANT_19]] to %[[CONSTANT_16]] step %[[CONSTANT_20]] {
+// CHECK:           %[[TILING_1:.*]] = ktdf.tiling.derive_size {{\[}}%[[VAL_1]] : %[[CONSTANT_18]]], total_size = %[[CONSTANT_21]] : index
+// CHECK:           %[[BUFFER_PHASE_0:.*]] = ktdf.buffer_phase(%[[VAL_0]], %[[VAL_1]]) {num_phases = 2 : i64} : index
+// CHECK:           %[[SELECT_MEMREF_0:.*]] = ktdf.select_memref %[[BUFFER_PHASE_0]]{{\[}}%[[CAST_3]], %[[CAST_4]]] : memref<?x?x1x1x1x64xf16, "L1">
+// CHECK:           %[[SELECT_MEMREF_1:.*]] = ktdf.select_memref %[[BUFFER_PHASE_0]]{{\[}}%[[CAST_5]], %[[CAST_6]]] : memref<?x?x1x1x1x1x64xf16, "L1">
+// CHECK:           ktdf_lowering.execute_on %[[QUERY_MAP_0]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]], %[[QUERY_MAP_4]], %[[QUERY_MAP_5]], %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_1]] {
+// CHECK:             %[[CONSTANT_32:.*]] = arith.constant 2176 : index
+// CHECK:             %[[UNREALIZED_CONVERSION_CAST_6:.*]] = builtin.unrealized_conversion_cast %[[CONSTANT_32]] : index to memref<1x64xf16, "L1">
+// CHECK:             %[[CREATE_TOKEN_0:.*]] = ktdf.create_token : !ktdf.token
+// CHECK:             %[[CREATE_TOKEN_1:.*]] = ktdf.create_token : !ktdf.token
+// CHECK:             ktdf_lowering.execute_on %[[QUERY_MAP_0]] {
+// CHECK:               scf.for %[[VAL_2:.*]] = %[[CONSTANT_19]] to %[[TILING_0]] step %[[CONSTANT_20]] {
+// CHECK:                 scf.for %[[VAL_3:.*]] = %[[CONSTANT_19]] to %[[TILING_1]] step %[[CONSTANT_20]] {
+// CHECK:                   %[[APPLY_0:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_0]], %[[VAL_2]])
+// CHECK:                   %[[APPLY_1:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_1]], %[[VAL_3]])
+// CHECK:                   ktdf.data_transfer from %[[CAST_0]]{{\[}}%[[VAL_0]] * 2 + %[[VAL_2]], 0, %[[VAL_1]] * 2 + %[[VAL_3]], 0] size [1, 1, 1, 64] to %[[SELECT_MEMREF_0]]{{\[}}%[[VAL_2]], %[[VAL_3]], 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">, memref<?x?x1x1x1x64xf16, "L1">
+// CHECK:                 }
+// CHECK:               }
+// CHECK:             }
+// CHECK:             ktdf_lowering.signal %[[QUERY_MAP_0]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]]
+// CHECK:             ktdf_lowering.execute_on %[[QUERY_MAP_2]], %[[QUERY_MAP_3]], %[[QUERY_MAP_4]], %[[QUERY_MAP_5]], %[[QUERY_MAP_6]], %[[QUERY_MAP_7]] {
+// CHECK:               ktdf.parallel (%[[VAL_4:.*]], %[[VAL_5:.*]]) = (%[[CONSTANT_19]]) to (%[[TILING_0]]) step (%[[CONSTANT_20]]) distribute(num_instances = 2) {
+// CHECK:                 scf.for %[[VAL_6:.*]] = %[[CONSTANT_19]] to %[[TILING_1]] step %[[CONSTANT_20]] {
+// CHECK:                   ktdf_lowering.execute_on %[[QUERY_MAP_2]], %[[QUERY_MAP_3]], %[[QUERY_MAP_4]], %[[QUERY_MAP_5]], %[[QUERY_MAP_6]], %[[QUERY_MAP_7]] {
+// CHECK:                     %[[FIFO_0:.*]]:2 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+// CHECK:                     %[[FIFO_1:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>
+// CHECK:                     %[[CREATE_TOKEN_2:.*]] = ktdf.create_token : !ktdf.token
+// CHECK:                     %[[CREATE_TOKEN_3:.*]] = ktdf.create_token : !ktdf.token
+// CHECK:                     ktdf_lowering.execute_on %[[QUERY_MAP_2]], %[[QUERY_MAP_3]] {
+// CHECK:                       %[[CMPI_0:.*]] = arith.cmpi ne, %[[VAL_6]], %[[CONSTANT_19]] : index
+// CHECK:                       %[[CMPI_1:.*]] = arith.cmpi ne, %[[VAL_0]], %[[CONSTANT_19]] : index
+// CHECK:                       %[[ORI_0:.*]] = arith.ori %[[CMPI_0]], %[[CMPI_1]] : i1
+// CHECK:                       scf.if %[[ORI_0]] {
+// CHECK:                         ktdf_lowering.signal %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]]
+// CHECK:                       }
+// CHECK:                       ktdf.data_transfer from %[[SELECT_MEMREF_0]]{{\[}}%[[VAL_4]], %[[VAL_6]], 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] to %[[FIFO_0]]#0 size [64] : memref<?x?x1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+// CHECK:                       scf.for %[[VAL_7:.*]] = %[[CONSTANT_19]] to %[[CONSTANT_21]] step %[[CONSTANT_20]] {
+// CHECK:                         ktdf.data_transfer from %[[UNREALIZED_CONVERSION_CAST_5]]{{\[}}%[[VAL_0]], %[[VAL_6]], %[[VAL_7]]] size [1, 1, 64] to %[[FIFO_0]]#1 size [64] : memref<6x32x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+// CHECK:                       }
+// CHECK:                     }
+// CHECK:                     ktdf_lowering.execute_on %[[QUERY_MAP_4]], %[[QUERY_MAP_5]] {
+// CHECK:                       %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[FIFO_0]]#0 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x1x1x64xf16>
+// CHECK:                       %[[READ_FROM_FIFO_1:.*]] = ktdf.read_from_fifo %[[FIFO_0]]#1 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x64xf16>
+// CHECK:                       %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x1x1x1x64xf16>
+// CHECK:                       %[[GENERIC_0:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_1]], #[[$ATTR_2]], #[[$ATTR_3]]], iterator_types = ["parallel", "parallel", "parallel", "parallel", "parallel"]} ins(%[[READ_FROM_FIFO_0]], %[[READ_FROM_FIFO_1]] : tensor<1x1x1x64xf16>, tensor<1x64xf16>) outs(%[[EMPTY_0]] : tensor<1x1x1x1x64xf16>) {
+// CHECK:                       ^bb0(%[[VAL_8:.*]]: f16, %[[VAL_9:.*]]: f16, %[[VAL_10:.*]]: f16):
+// CHECK:                         %[[ADDF_0:.*]] = arith.addf %[[VAL_8]], %[[VAL_9]] : f16
+// CHECK:                         linalg.yield %[[ADDF_0]] : f16
+// CHECK:                       } -> tensor<1x1x1x1x64xf16>
+// CHECK:                       ktdf.write_to_fifo %[[GENERIC_0]], %[[FIFO_1]] : tensor<1x1x1x1x64xf16>, <"SFU" -> "L1SU", 64xf16>
+// CHECK:                     }
+// CHECK:                     ktdf_lowering.execute_on %[[QUERY_MAP_6]], %[[QUERY_MAP_7]] {
+// CHECK:                       ktdf.data_transfer from %[[FIFO_1]] size [64] to %[[SELECT_MEMREF_1]]{{\[}}%[[VAL_4]], %[[VAL_6]], 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] : !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<?x?x1x1x1x1x64xf16, "L1">
+// CHECK:                       ktdf.data_transfer from %[[FIFO_1]] size [64] to %[[UNREALIZED_CONVERSION_CAST_5]]{{\[}}%[[VAL_0]], %[[VAL_6]], %[[CONSTANT_19]]] size [1, 1, 64] : !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<6x32x64xf16, "L1">
+// CHECK:                       %[[SUBI_0:.*]] = arith.subi %[[TILING_1]], %[[CONSTANT_20]] : index
+// CHECK:                       %[[CMPI_2:.*]] = arith.cmpi ne, %[[VAL_6]], %[[SUBI_0]] : index
+// CHECK:                       %[[SUBI_1:.*]] = arith.subi %[[CONSTANT_17]], %[[CONSTANT_20]] : index
+// CHECK:                       %[[CMPI_3:.*]] = arith.cmpi ne, %[[VAL_0]], %[[SUBI_1]] : index
+// CHECK:                       %[[ORI_1:.*]] = arith.ori %[[CMPI_2]], %[[CMPI_3]] : i1
+// CHECK:                       scf.if %[[ORI_1]] {
+// CHECK:                         ktdf_lowering.signal %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_2]], %[[QUERY_MAP_3]]
+// CHECK:                       }
+// CHECK:                     }
+// CHECK:                   }
+// CHECK:                 }
+// CHECK:                 ktdf.parallel_yield
+// CHECK:               }
+// CHECK:             }
+// CHECK:             ktdf_lowering.signal %[[QUERY_MAP_6]], %[[QUERY_MAP_7]], %[[QUERY_MAP_1]]
+// CHECK:             ktdf_lowering.execute_on %[[QUERY_MAP_1]] {
+// CHECK:               scf.for %[[VAL_11:.*]] = %[[CONSTANT_19]] to %[[TILING_0]] step %[[CONSTANT_20]] {
+// CHECK:                 scf.for %[[VAL_12:.*]] = %[[CONSTANT_19]] to %[[TILING_1]] step %[[CONSTANT_20]] {
+// CHECK:                   %[[APPLY_2:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_0]], %[[VAL_11]])
+// CHECK:                   %[[APPLY_3:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_1]], %[[VAL_12]])
+// CHECK:                   ktdf.data_transfer from %[[SELECT_MEMREF_1]]{{\[}}%[[VAL_11]], %[[VAL_12]], 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] to %[[CAST_2]]{{\[}}%[[VAL_0]] * 2 + %[[VAL_11]], 0, 0, %[[VAL_1]] * 2 + %[[VAL_12]], 0] size [1, 1, 1, 1, 64] : memref<?x?x1x1x1x1x64xf16, "L1">, memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
+// CHECK:                 }
+// CHECK:               }
+// CHECK:             }
+// CHECK:           }
+// CHECK:         }
+// CHECK:       }
+// CHECK:       return
+// CHECK:     }
+// CHECK:   }
+
+// CHECK: }
+
 
 
 // Test that backedge signal guards check conditions only on IVs of scf.for
@@ -206,11 +211,11 @@
 // %arg5 (inside the load stage,) is not an ancestor of the pipeline and
 // must be excluded from the guard.
 //
-// Expected backedge guards (condition on %arg4 AND %arg0 IVs):
+// Expected backedge guards (condition on %arg4 OR %arg0 IVs):
 //   recv guard at top of load_stage body:
-//     cmpi ne(%arg4, lb) AND cmpi ne(%arg0, lb) => scf.if { signal }
+//     cmpi ne(%arg4, lb) OR cmpi ne(%arg0, lb) => scf.if { signal }
 //   send guard at bottom of store_stage body:
-//     cmpi ne(%arg4, ub-step) AND cmpi ne(%arg0, ub-step) => scf.if { signal }
+//     cmpi ne(%arg4, ub-step) OR cmpi ne(%arg0, ub-step) => scf.if { signal }
 
 
 
