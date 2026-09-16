@@ -19,18 +19,15 @@
 #ifndef DATAFLOW_SCHEDULER_CONVERSION_KTDFTOKTDFLOW_COMPONENTCLASSIFIER_H_
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFTOKTDFLOW_COMPONENTCLASSIFIER_H_
 
+#include <llvm/ADT/SetVector.h>
+#include <mlir/Dialect/Func/IR/FuncOps.h>
+
 #include <map>
 
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
-#include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallSet.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/Attributes.h"
-#include "mlir/IR/BuiltinOps.h"
 
 namespace scheduler {
-
-using ResourceType = mlir::Attribute;
 
 /// Classification result: components grouped by parallel/non-parallel
 struct ComponentClassification {

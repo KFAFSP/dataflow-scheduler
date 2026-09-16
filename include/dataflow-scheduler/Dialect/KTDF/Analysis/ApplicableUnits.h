@@ -25,11 +25,10 @@
 
 #include <llvm/ADT/SetVector.h>
 
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 
 namespace mlir::ktdf {
-
-using ResourceType = mlir::Attribute;
 
 /// Union the `applicable_units` of every immediate `ktdf.stage` child of
 /// `pipeline`. Does not descend into nested pipelines or stage bodies.
@@ -42,7 +41,7 @@ using ResourceType = mlir::Attribute;
 /// Returns an empty SetVector when the pipeline has no immediate stages
 /// (e.g., a pipeline containing only `ktdf.private`).
 auto collectPipelineApplicableUnits(PipelineOp pipeline)
-    -> llvm::SmallSetVector<ResourceType, 4>;
+    -> llvm::SmallSetVector<scheduler::ResourceType, 4>;
 
 }  // namespace mlir::ktdf
 

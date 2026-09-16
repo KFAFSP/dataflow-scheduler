@@ -164,7 +164,8 @@ bool StageGroupingAnalysis::shouldGroupTogether(StageOp stage1,
       [&](Value val, llvm::DenseSet<mlir::Attribute>& below_scratchpad_mems,
           llvm::SmallVector<FifoSlotType, 4>& fifos) {
         if (auto memref_type = dyn_cast<MemRefType>(val.getType())) {
-          auto mem_space = memref_type.getMemorySpace();
+          auto mem_space =
+              cast<scheduler::ResourceType>(memref_type.getMemorySpace());
           if (mem_space && memory_tree_.isBelowScratchPad(mem_space)) {
             below_scratchpad_mems.insert(mem_space);
           }

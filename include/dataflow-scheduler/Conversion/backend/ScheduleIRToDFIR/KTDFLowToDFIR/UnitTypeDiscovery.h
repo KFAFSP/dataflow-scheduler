@@ -26,12 +26,13 @@
 #ifndef DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_UNITTYPEDISCOVERY_H_
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_UNITTYPEDISCOVERY_H_
 
-#include "dataflow-scheduler/Utils/SchedulerExtContext.h"  // scheduler::ResourceType
-#include "llvm/ADT/MapVector.h"
-#include "llvm/ADT/SmallVector.h"
-#include "mlir/IR/Operation.h"
-#include "mlir/IR/Value.h"
-#include "mlir/Support/LogicalResult.h"
+#include <llvm/ADT/MapVector.h>
+#include <llvm/ADT/SmallVector.h>
+#include <mlir/IR/Operation.h>
+#include <mlir/IR/Value.h>
+#include <mlir/Support/LogicalResult.h>
+
+#include "dataflow-scheduler/Analysis/Mapping.h"
 
 namespace scheduler {
 

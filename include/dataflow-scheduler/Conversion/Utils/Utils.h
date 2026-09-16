@@ -19,11 +19,11 @@
 #ifndef DATAFLOW_SCHEDULER_CONVERSION_UTILS_UTILS_H_
 #define DATAFLOW_SCHEDULER_CONVERSION_UTILS_UTILS_H_
 
+#include <mlir/IR/Value.h>
+
 #include <optional>
 
-#include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
-#include "dataflow-scheduler/Utils/SchedulerExtContext.h"
-#include "mlir/IR/Value.h"
+#include "dataflow-scheduler/Analysis/Mapping.h"
 
 namespace scheduler {
 

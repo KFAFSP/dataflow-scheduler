@@ -24,9 +24,6 @@
 
 namespace scheduler {
 
-// Type alias for resource representation
-using ResourceType = mlir::Attribute;
-
 struct SchedulerExtContext {
   SchedulerExtContext();
   virtual ~SchedulerExtContext();

@@ -21,6 +21,7 @@
 #include <mlir/IR/Matchers.h>
 
 #include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/UniformInfra.h"
@@ -85,7 +86,7 @@ llvm::SetVector<ResourceType> discoverAndPrune(mlir::func::FuncOp func) {
           if (auto msc =
                   mlir::dyn_cast<mlir::memref::MemorySpaceCastOp>(user)) {
             if (auto ms = getMemorySpaceAttr(msc.getDest().getType()))
-              needed.insert(*ms);
+              needed.insert(llvm::cast<ResourceType>(*ms));
           }
         }
         return;
@@ -96,7 +97,7 @@ llvm::SetVector<ResourceType> discoverAndPrune(mlir::func::FuncOp func) {
       if (auto cmv =
               mlir::dyn_cast<mlir::ktdp_lowering::ConstructMemoryViewOp>(op)) {
         if (auto ms = getMemorySpaceAttr(cmv.getResult().getType()))
-          needed.insert(*ms);
+          needed.insert(llvm::cast<ResourceType>(*ms));
         return;
       }
 
@@ -112,7 +113,7 @@ llvm::SetVector<ResourceType> discoverAndPrune(mlir::func::FuncOp func) {
         if (onlyDeallocUses(ucc.getOutputs()[0])) {
           to_prune.push_back(op);
         } else {
-          needed.insert(*ms);
+          needed.insert(llvm::cast<ResourceType>(*ms));
         }
       }
     });
@@ -307,7 +308,7 @@ mlir::LogicalResult replaceSourceAChains(
         if (!ms)
           return cmv.emitError(
               "construct_memory_view: no memory space found in chain");
-        mlir::Value unit = resolved_units.lookup(*ms);
+        mlir::Value unit = resolved_units.lookup(llvm::cast<ResourceType>(*ms));
         if (!unit) return cmv.emitError("no resolved unit for memory space");
 
         // Emit get_logical_memory_view with plain result type (no memory space,
@@ -376,8 +377,8 @@ mlir::LogicalResult replaceSourceAChains(
         if (!memory_space)
           return cmv.emitError(
               "construct_memory_view: no memory space found in chain");
-        mlir::FailureOr<int64_t> word_size =
-            wordSizeOf(pu, *memory_space, resource_kinds);
+        mlir::FailureOr<int64_t> word_size = wordSizeOf(
+            pu, llvm::cast<ResourceType>(*memory_space), resource_kinds);
         if (mlir::failed(word_size)) return mlir::failure();
 
         mlir::FailureOr<mlir::Value> symbolic = emitSymbolicStartAddress(
@@ -436,8 +437,8 @@ mlir::LogicalResult replaceSourceAChains(
           if (!memory_space)
             return cmv.emitError(
                 "construct_memory_view: no memory space found in chain");
-          mlir::FailureOr<int64_t> word_size =
-              wordSizeOf(pu, *memory_space, resource_kinds);
+          mlir::FailureOr<int64_t> word_size = wordSizeOf(
+              pu, llvm::cast<ResourceType>(*memory_space), resource_kinds);
           if (mlir::failed(word_size)) return mlir::failure();
 
           // No displacement: the offset is in the expression, and the grid
@@ -507,7 +508,7 @@ static mlir::LogicalResult replaceLoweringConstructMemoryViewOps(
       return cmv.emitError(
           "ktdp_lowering.construct_memory_view: no memory space on result "
           "type");
-    mlir::Value unit = resolved_units.lookup(*ms);
+    mlir::Value unit = resolved_units.lookup(llvm::cast<ResourceType>(*ms));
     if (!unit)
       return cmv.emitError(
           "ktdp_lowering.construct_memory_view: no resolved unit for memory "
@@ -570,7 +571,8 @@ mlir::LogicalResult replaceSourceBCasts(
     auto ms = getMemorySpaceAttr(result_type);
     if (!ms)
       return ucc.emitError("unrealized_conversion_cast: no ktdf memory space");
-    mlir::Value from_unit = resolved_units.lookup(*ms);
+    mlir::Value from_unit =
+        resolved_units.lookup(llvm::cast<ResourceType>(*ms));
     if (!from_unit) return ucc.emitError("no resolved unit for memory space");
 
     auto plain_type =
@@ -584,7 +586,8 @@ mlir::LogicalResult replaceSourceBCasts(
     // transfers reach keeps its bytes.
     mlir::Value addr = ucc.getInputs()[0];
     const auto element_bytes = *tryGetSizeInBytes(result_type.getElementType());
-    if (element_bytes > 1 && memory_tree.isBelowScratchPad(*ms)) {
+    if (element_bytes > 1 &&
+        memory_tree.isBelowScratchPad(llvm::cast<ResourceType>(*ms))) {
       mlir::IntegerAttr addr_bits;
       if (auto* const addr_def = addr.getDefiningOp();
           addr_def && mlir::m_Constant(&addr_bits).match(addr_def) &&
@@ -664,7 +667,8 @@ mlir::LogicalResult propagateTypes(
         // consumed directly by compute ops (linalg.*, write_to_fifo, …).
         // Any consumer is valid; just swap the operand.
         auto ms = getMemorySpaceAttr(old_val.getType());
-        if (ms && memory_tree.isBelowScratchPad(*ms)) {
+        if (ms &&
+            memory_tree.isBelowScratchPad(llvm::cast<ResourceType>(*ms))) {
           user->replaceUsesOfWith(old_val, new_val);
         } else {
           return pu.emitError(

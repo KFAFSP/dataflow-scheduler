@@ -27,6 +27,7 @@
 
 #include <map>
 
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Analysis/WriteSetScan.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/ComponentClassifier.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/PipelineExecutionTransform.h"
@@ -377,6 +378,7 @@ struct KTDFToKTDFLoweringPass
         assert(applicable_units && "Stage should have applicable units");
 
         for (auto component : applicable_units.getValue()) {
+          const auto resource = llvm::cast<ResourceType>(component);
           // Check if stage is in a parallel region
           mlir::Operation* parallel_parent =
               mlir::ktdf::findParallelParent(stage);
@@ -388,7 +390,7 @@ struct KTDFToKTDFLoweringPass
             int num_corelets = parallel_op.getNumInstances();
             for (int corelet = 0; corelet < num_corelets; ++corelet) {
               auto parallel_key = std::make_pair(
-                  std::make_pair(parallel_parent, component), corelet);
+                  std::make_pair(parallel_parent, resource), corelet);
               auto query_it = queried_units.parallel.find(parallel_key);
               if (query_it != queried_units.parallel.end()) {
                 stage_to_units.mapping[stage.getOperation()].push_back(
@@ -398,7 +400,7 @@ struct KTDFToKTDFLoweringPass
             }
           } else {
             // Non-parallel stage: first try queried_units.non_parallel
-            auto query_it = queried_units.non_parallel.find(component);
+            auto query_it = queried_units.non_parallel.find(resource);
             if (query_it != queried_units.non_parallel.end()) {
               stage_to_units.mapping[stage.getOperation()].push_back(
                   query_it->second);
@@ -409,13 +411,13 @@ struct KTDFToKTDFLoweringPass
               // component and use those units
               for (auto& [parallel_op, parallel_comps] :
                    components.parallel_components_map) {
-                if (parallel_comps.contains(component)) {
+                if (parallel_comps.contains(resource)) {
                   auto parallel_parent_op =
                       mlir::dyn_cast<mlir::ktdf::ParallelOp>(parallel_op);
                   int num_corelets = parallel_parent_op.getNumInstances();
                   for (int corelet = 0; corelet < num_corelets; ++corelet) {
                     auto parallel_key = std::make_pair(
-                        std::make_pair(parallel_op, component), corelet);
+                        std::make_pair(parallel_op, resource), corelet);
                     auto parallel_query_it =
                         queried_units.parallel.find(parallel_key);
                     if (parallel_query_it != queried_units.parallel.end()) {

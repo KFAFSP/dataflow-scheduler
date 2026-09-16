@@ -44,6 +44,7 @@
 #include <memory>
 #include <optional>
 
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Analysis/MemoryTrackerAnalysis.h"
 #include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"  // IWYU pragma: keep
@@ -340,9 +341,10 @@ struct AddressAssignmentPass
       // Only the memories this program has to itself start over. Global memory
       // is how one program hands its results to the next, so it keeps what
       // earlier ones left in it.
-      llvm::SmallDenseSet<mlir::Attribute> reusable;
+      llvm::SmallDenseSet<ResourceType> reusable;
       for (auto alloc : allocs) {
-        mlir::Attribute space = alloc.getType().getMemorySpace();
+        const auto space =
+            llvm::cast<ResourceType>(alloc.getType().getMemorySpace());
         if (!tracker.getMemoryTree().isGlobalMemory(space)) {
           reusable.insert(space);
         }
@@ -382,7 +384,8 @@ struct AddressAssignmentPass
 
     // Get the memory space attribute from the memref type
     auto memref_type = alloc.getType();
-    mlir::Attribute memory_space_attr = memref_type.getMemorySpace();
+    const auto memory_space_attr =
+        llvm::cast<ResourceType>(memref_type.getMemorySpace());
     assert(memory_space_attr);
 
     const auto alignment = alloc.getAlignment().valueOrOne();
