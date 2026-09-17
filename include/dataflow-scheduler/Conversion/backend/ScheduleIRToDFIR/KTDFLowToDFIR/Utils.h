@@ -47,16 +47,6 @@ enum class DataTransferType {
   kReceiveAndStore  // FIFO to memory - use receive and vector_store
 };
 
-/// Gets the unit whose SIMD width bounds the vectors `op` works on.
-///
-/// The unit `op` is mapped to, when that unit declares a SIMD width. A data
-/// mover declares none, so a transfer takes the width of the device's compute.
-///
-/// FIXME: That fallback assumes the device declares exactly one compute, and
-///        that a mover moves data at the compute's width.
-mlir::ktdf_arch::ExecutionUnitOp getVectorUnit(
-    mlir::Operation* op, mlir::ktdf_arch::Mapping& mapping);
-
 /// Helper to get flattened vector type from tensor or vector type.
 [[nodiscard]] auto getFlattenedVectorType(mlir::ShapedType type)
     -> mlir::VectorType;

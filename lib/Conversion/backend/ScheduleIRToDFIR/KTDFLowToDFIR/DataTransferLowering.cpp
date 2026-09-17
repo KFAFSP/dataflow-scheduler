@@ -352,12 +352,15 @@ struct LowerIndDataTransferPattern
 
     auto elem_type = dir_src_memref_type.getElementType();
 
-    auto compute = getVectorUnit(op, mapping_);
-    if (!compute) {
-      return op.emitError(
-          "ind_data_transfer lowering: cannot determine hardware vector "
-          "width; no compute resource is mapped");
-    }
+    // FIXME: Either remove the need for knowing the compute, or pass it through
+    //        the IR as an annotation on the ind_data_transfer operation.
+    //
+    //        At this point in the lowering, the op is mapped to the load-store
+    //        unit that performs the transfer. There is no connection to the
+    //        unit that uses the data, and it can not be easily recovered from
+    //        the IR since we're already past ktdf_lowering.
+    auto compute = mapping_.byKind().getDefaultCompute();
+    assert(compute && "no default compute");
     const auto lanes = getVectorLanes(elem_type, compute);
 
     const int64_t total_src = [&] {
@@ -782,13 +785,15 @@ struct LowerDataTransferPattern
     auto* context = rewriter.getContext();
     const int64_t total = vector_type.getNumElements();
 
-    auto compute = getVectorUnit(data_transfer_op, mapping_);
-    if (!compute) {
-      return data_transfer_op.emitError(
-          "cannot determine the hardware vector width: no compute resource is "
-          "mapped");
-    }
-
+    // FIXME: Either remove the need for knowing the compute, or pass it through
+    //        the IR as an annotation on the ind_data_transfer operation.
+    //
+    //        At this point in the lowering, the op is mapped to the load-store
+    //        unit that performs the transfer. There is no connection to the
+    //        unit that uses the data, and it can not be easily recovered from
+    //        the IR since we're already past ktdf_lowering.
+    auto compute = mapping_.byKind().getDefaultCompute();
+    assert(compute && "no default compute");
     const auto lanes = getVectorLanes(vector_type.getElementType(), compute);
 
     // Sizes describing the elements covered by one AGEN vector transfer, and

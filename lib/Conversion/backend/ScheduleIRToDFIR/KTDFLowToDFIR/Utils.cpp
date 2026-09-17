@@ -37,16 +37,6 @@
 
 using namespace scheduler;
 
-mlir::ktdf_arch::ExecutionUnitOp scheduler::getVectorUnit(
-    mlir::Operation* op, mlir::ktdf_arch::Mapping& mapping) {
-  auto mapped = mapping.resolve<mlir::ktdf_arch::ExecutionUnitOp>(op);
-  if (mapped && mapped.getFeature<mlir::ktdf_arch::feature::SIMD>()) {
-    return mapped;
-  }
-
-  return mapping.byKind().getDefaultCompute();
-}
-
 int64_t scheduler::getVectorLanes(mlir::Type elem_type,
                                   mlir::ktdf_arch::ExecutionUnitOp compute) {
   return std::max(
