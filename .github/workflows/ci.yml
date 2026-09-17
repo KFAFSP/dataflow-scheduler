@@ -125,6 +125,8 @@ jobs:
         run: cmake --build build
 
       - name: Test
+        # Tests should take under a minute, so this catches a hang-up.
+        timeout-minutes: 5
         env:
           # MLIR comes in prebuilt and uninstrumented, which costs two options.
           #
@@ -141,4 +143,7 @@ jobs:
           #
           # Both go away if the artifact is ever built instrumented.
           ASAN_OPTIONS: detect_leaks=0:allow_user_poisoning=0
-        run: cmake --build build --target check-dataflow-scheduler check-dataflow-scheduler-format
+        run: cmake --build build --target check-dataflow-scheduler
+
+      - name: Check formatting
+        run: cmake --build build --target check-dataflow-scheduler-format
