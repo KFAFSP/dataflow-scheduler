@@ -32,7 +32,8 @@ using namespace mlir::dataflow;
 namespace {
 
 [[nodiscard]] auto getResource(GetUnitOp op) -> ktdf_arch::ResourceSpecAttr {
-  return mlir::ktdf_arch::KindAttr(op.getTypeAttr());
+  return mlir::ktdf_arch::KindAttr(
+      StringAttr::get(op.getContext(), op.getType().upper()));
 }
 
 struct ProgramUnitModel

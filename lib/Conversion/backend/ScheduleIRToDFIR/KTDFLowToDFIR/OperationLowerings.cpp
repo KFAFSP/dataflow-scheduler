@@ -51,9 +51,10 @@
 #include "dataflow-scheduler/Dialect/Dataflow/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
-#include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
+#include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 
@@ -78,25 +79,26 @@ struct LowerReadFromFifoPattern
     auto fifo_slot_type =
         llvm::cast<mlir::ktdf::FifoSlotType>(read_op.getFifoSlot().getType());
 
-    // The read lands in a vector of the unit that reads it, so that unit's
-    // width bounds it.
-    auto compute = getVectorUnit(read_op, mapping_);
+    // The read operation is inside the compute unit's program unit.
+    auto compute = mapping_.resolve<mlir::ktdf_arch::ExecutionUnitOp>(read_op);
     if (!compute) {
-      return llvm::failure();
+      return rewriter.notifyMatchFailure(read_op, "not mapped to compute");
     }
 
     // Convert result type (tensor or memref) to flattened vector type
     auto vector_type = getFlattenedVectorType(read_op.getType(), compute);
     if (!vector_type) {
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(read_op,
+                                         "vector does not have static shape");
     }
 
     // Find the enclosing program_unit
     auto program_unit =
         read_op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
     if (!program_unit) {
+      // FIXME: Patterns can only fail to apply, not fail the pass.
       read_op.emitError("read_from_fifo must be inside a program_unit");
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(read_op, "not inside a program_unit");
     }
 
     // Resolve the source unit from the FIFO src attribute
@@ -104,7 +106,8 @@ struct LowerReadFromFifoPattern
         fifo_slot_type.getSrc(), components_, rewriter, program_unit,
         read_op.getLoc(), read_op.getOperation());
     if (mlir::failed(queried_unit_result)) {
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(read_op,
+                                         "unable to determine source unit");
     }
     mlir::Value queried_unit = *queried_unit_result;
 
@@ -138,8 +141,7 @@ struct LowerWriteToFifoPattern
     auto fifo_slot_type =
         llvm::cast<mlir::ktdf::FifoSlotType>(write_op.getFifoSlot().getType());
 
-    // The data written comes out of a vector of the unit that writes it, so
-    // that unit's width bounds it.
+    // FIXME: There is no connection to the compute op anymore.
     auto compute = getVectorUnit(write_op, mapping_);
     if (!compute) {
       return write_op.emitError("no compute resource is mapped");
@@ -149,15 +151,17 @@ struct LowerWriteToFifoPattern
     auto vector_type =
         getFlattenedVectorType(write_op.getData().getType(), compute);
     if (!vector_type) {
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(write_op,
+                                         "vector does not have static shape");
     }
 
     // Find the enclosing program_unit
     auto program_unit =
         write_op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
     if (!program_unit) {
+      // FIXME: Patterns can only fail to apply, not fail the pass.
       write_op.emitError("write_to_fifo must be inside a program_unit");
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(write_op, "not inside a program_unit");
     }
 
     // Resolve the destination unit from the FIFO dest attribute
@@ -165,7 +169,8 @@ struct LowerWriteToFifoPattern
         fifo_slot_type.getDest(), components_, rewriter, program_unit,
         write_op.getLoc(), write_op.getOperation());
     if (mlir::failed(queried_unit_result)) {
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(
+          write_op, "unable to determine destination unit");
     }
     mlir::Value queried_unit = *queried_unit_result;
 
