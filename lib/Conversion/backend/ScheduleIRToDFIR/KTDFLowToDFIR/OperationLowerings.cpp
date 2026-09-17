@@ -68,9 +68,8 @@ namespace {
 struct LowerReadFromFifoPattern
     : public mlir::OpRewritePattern<mlir::ktdf::ReadFromFifoOp> {
   LowerReadFromFifoPattern(mlir::MLIRContext* context,
-                           mlir::ktdf_arch::Mapping& mapping,
                            const ResourceToUnits& components)
-      : OpRewritePattern(context), mapping_(mapping), components_(components) {}
+      : OpRewritePattern(context), components_(components) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::ktdf::ReadFromFifoOp read_op,
@@ -79,14 +78,8 @@ struct LowerReadFromFifoPattern
     auto fifo_slot_type =
         llvm::cast<mlir::ktdf::FifoSlotType>(read_op.getFifoSlot().getType());
 
-    // The read operation is inside the compute unit's program unit.
-    auto compute = mapping_.resolve<mlir::ktdf_arch::ExecutionUnitOp>(read_op);
-    if (!compute) {
-      return rewriter.notifyMatchFailure(read_op, "not mapped to compute");
-    }
-
-    // Convert result type (tensor or memref) to flattened vector type
-    auto vector_type = getFlattenedVectorType(read_op.getType(), compute);
+    // Convert result type (tensor or memref) to flattened vector type.
+    auto vector_type = getFlattenedVectorType(read_op.getType());
     if (!vector_type) {
       return rewriter.notifyMatchFailure(read_op,
                                          "vector does not have static shape");
@@ -123,16 +116,14 @@ struct LowerReadFromFifoPattern
   }
 
  private:
-  mlir::ktdf_arch::Mapping& mapping_;
   const ResourceToUnits& components_;
 };
 
 struct LowerWriteToFifoPattern
     : public mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
   LowerWriteToFifoPattern(mlir::MLIRContext* context,
-                          mlir::ktdf_arch::Mapping& mapping,
                           const ResourceToUnits& components)
-      : OpRewritePattern(context), mapping_(mapping), components_(components) {}
+      : OpRewritePattern(context), components_(components) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::ktdf::WriteToFifoOp write_op,
@@ -141,15 +132,8 @@ struct LowerWriteToFifoPattern
     auto fifo_slot_type =
         llvm::cast<mlir::ktdf::FifoSlotType>(write_op.getFifoSlot().getType());
 
-    // FIXME: There is no connection to the compute op anymore.
-    auto compute = getVectorUnit(write_op, mapping_);
-    if (!compute) {
-      return write_op.emitError("no compute resource is mapped");
-    }
-
     // Convert data type (tensor or vector) to flattened vector type
-    auto vector_type =
-        getFlattenedVectorType(write_op.getData().getType(), compute);
+    auto vector_type = getFlattenedVectorType(write_op.getData().getType());
     if (!vector_type) {
       return rewriter.notifyMatchFailure(write_op,
                                          "vector does not have static shape");
@@ -193,7 +177,6 @@ struct LowerWriteToFifoPattern
   }
 
  private:
-  mlir::ktdf_arch::Mapping& mapping_;
   const ResourceToUnits& components_;
 };
 
@@ -881,11 +864,10 @@ mlir::LogicalResult scheduler::runOperationLowerings(
     SymbolAllocator& symbols) {
   // Lower linalg.generic compute operations and FIFO operations
   mlir::RewritePatternSet patterns(func.getContext());
-  populateLinalgLoweringPatterns(patterns, mapping, symbols);
+  populateLinalgLoweringPatterns(patterns, symbols);
   patterns.add<LowerMemRefCopyFromFifoPattern>(func.getContext(), mapping);
-  patterns.add<LowerReadFromFifoPattern>(func.getContext(), mapping,
-                                         components);
-  patterns.add<LowerWriteToFifoPattern>(func.getContext(), mapping, components);
+  patterns.add<LowerReadFromFifoPattern>(func.getContext(), components);
+  patterns.add<LowerWriteToFifoPattern>(func.getContext(), components);
   populateDataTransferLoweringPatterns(patterns, components, mapping);
   patterns.add<LowerSignalPattern>(func.getContext(), scheduler_ctx,
                                    components);

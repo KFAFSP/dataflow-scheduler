@@ -105,18 +105,13 @@ void scheduler::emitVectorStore(mlir::OpBuilder& builder, mlir::Location loc,
                                     store_set, map);
 }
 
-mlir::VectorType scheduler::getFlattenedVectorType(
-    mlir::ShapedType type, mlir::ktdf_arch::ExecutionUnitOp compute) {
+auto scheduler::getFlattenedVectorType(mlir::ShapedType type)
+    -> mlir::VectorType {
   if (!type.hasStaticShape()) {
     return nullptr;
   }
 
-  const auto total_elements = type.getNumElements();
-  const auto max_vector_length = getVectorLanes(type.getElementType(), compute);
-  assert(total_elements <= max_vector_length &&
-         "Flattened tensor/memref size exceeds maximum vector length");
-
-  return mlir::VectorType::get({total_elements}, type.getElementType());
+  return mlir::VectorType::get({type.getNumElements()}, type.getElementType());
 }
 
 mlir::Value scheduler::createQueryMapForComponent(

@@ -58,8 +58,8 @@ mlir::ktdf_arch::ExecutionUnitOp getVectorUnit(
     mlir::Operation* op, mlir::ktdf_arch::Mapping& mapping);
 
 /// Helper to get flattened vector type from tensor or vector type.
-mlir::VectorType getFlattenedVectorType(
-    mlir::ShapedType type, mlir::ktdf_arch::ExecutionUnitOp compute);
+[[nodiscard]] auto getFlattenedVectorType(mlir::ShapedType type)
+    -> mlir::VectorType;
 
 /// Number of vector lanes the compute resource provides for `elem_type`.
 int64_t getVectorLanes(mlir::Type elem_type,

@@ -30,8 +30,6 @@
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -96,9 +94,7 @@ static bool matchAbsMaxOperands(mlir::arith::MaxNumFOp maxnum_op,
 /// Pattern to lower linalg.generic compute operations
 struct LowerLinalgGenericPattern
     : public mlir::OpRewritePattern<mlir::linalg::GenericOp> {
-  LowerLinalgGenericPattern(mlir::MLIRContext* context,
-                            mlir::ktdf_arch::Mapping& mapping)
-      : OpRewritePattern(context), mapping_(mapping) {}
+  using OpRewritePattern::OpRewritePattern;
 
   mlir::LogicalResult matchAndRewrite(
       mlir::linalg::GenericOp generic_op,
@@ -110,11 +106,6 @@ struct LowerLinalgGenericPattern
     if (!generic_op.hasPureTensorSemantics() ||
         generic_op.getNumResults() != 1) {
       return mlir::failure();
-    }
-
-    auto compute = getCompute(generic_op);
-    if (!compute) {
-      return llvm::failure();
     }
 
     // ReductionLoopExposure and MapReductionPartials run before this pass and
@@ -147,7 +138,7 @@ struct LowerLinalgGenericPattern
          llvm::zip(body.getArguments().take_front(num_inputs),
                    generic_op.getDpsInputs())) {
       mlir::Value converted =
-          convertConstTensorInputToVector(input, generic_op, rewriter, compute);
+          convertConstTensorInputToVector(input, generic_op, rewriter);
       rewriter.replaceAllUsesWith(block_arg, converted);
     }
 
@@ -169,33 +160,33 @@ struct LowerLinalgGenericPattern
               .Case<mlir::arith::MulFOp>([&](mlir::arith::MulFOp op) {
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::mul, compute);
+                    mlir::vectorchain::VectorChainBinaryOperator::mul);
               })
               .Case<mlir::arith::AddFOp>([&](mlir::arith::AddFOp op) {
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::add, compute);
+                    mlir::vectorchain::VectorChainBinaryOperator::add);
               })
               .Case<mlir::arith::SubFOp>([&](mlir::arith::SubFOp op) {
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::sub, compute);
+                    mlir::vectorchain::VectorChainBinaryOperator::sub);
               })
               .Case<mlir::arith::MaximumFOp>([&](mlir::arith::MaximumFOp op) {
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::max, compute);
+                    mlir::vectorchain::VectorChainBinaryOperator::max);
               })
               .Case<mlir::arith::MinimumFOp>([&](mlir::arith::MinimumFOp op) {
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::min, compute);
+                    mlir::vectorchain::VectorChainBinaryOperator::min);
               })
               .Case<mlir::arith::CmpFOp>([&](mlir::arith::CmpFOp op) {
-                return lowerCompareFOp(op, rewriter, compute);
+                return lowerCompareFOp(op, rewriter);
               })
               .Case<mlir::arith::SelectOp>([&](mlir::arith::SelectOp op) {
-                return lowerSelectOp(op, rewriter, compute);
+                return lowerSelectOp(op, rewriter);
               })
               .Case<mlir::arith::MaxNumFOp>([&](mlir::arith::MaxNumFOp op) {
                 mlir::Value lhs, rhs;
@@ -206,8 +197,7 @@ struct LowerLinalgGenericPattern
                   mlir::Operation* rhs_abs = op.getRhs().getDefiningOp();
                   mlir::LogicalResult res = lowerBinaryFOp(
                       op, lhs, rhs, rewriter, identity_map,
-                      mlir::vectorchain::VectorChainBinaryOperator::abs_max,
-                      compute);
+                      mlir::vectorchain::VectorChainBinaryOperator::abs_max);
                   // maxnumf is now replaced; absf results are unused — safe to
                   // erase.
                   if (mlir::succeeded(res)) {
@@ -246,7 +236,7 @@ struct LowerLinalgGenericPattern
                 return lowerMemRefStore(op, rewriter);
               })
               .Case<mlir::memref::LoadOp>([&](mlir::memref::LoadOp op) {
-                return lowerMemRefLoad(op, rewriter, compute);
+                return lowerMemRefLoad(op, rewriter);
               })
               .Default([](mlir::Operation* unknown_op) {
                 return unknown_op->emitError(
@@ -262,15 +252,6 @@ struct LowerLinalgGenericPattern
   }
 
  private:
-  mlir::ktdf_arch::Mapping& mapping_;
-
-  /// Gets the unit whose width bounds the vectors \p op becomes.
-  [[nodiscard]] auto getCompute(mlir::Operation* op) const
-      -> mlir::ktdf_arch::ExecutionUnitOp {
-    return mapping_.getOrMap<mlir::ktdf_arch::ExecutionUnitOp>(
-        op, mapping_.byKind().getDefaultCompute());
-  }
-
   // Lowers a linalg.generic with buffer semantics (memref init operand).
   // The resulting accumulated vector is written back to the output buffer via
   // agen.vector_store.
@@ -284,11 +265,6 @@ struct LowerLinalgGenericPattern
     const unsigned accumulators = generic_op.getNumDpsInits();
     if (!yield_op || yield_op.getNumOperands() != accumulators) {
       return mlir::failure();
-    }
-
-    auto compute = getCompute(generic_op);
-    if (!compute) {
-      return llvm::failure();
     }
 
     // Replace input block arguments with their corresponding linalg ins
@@ -310,7 +286,7 @@ struct LowerLinalgGenericPattern
       out_memrefs.push_back(out_memref);
 
       auto out_memref_type = mlir::cast<mlir::MemRefType>(out_memref.getType());
-      auto acc_vec_type = getFlattenedVectorType(out_memref_type, compute);
+      auto acc_vec_type = getFlattenedVectorType(out_memref_type);
       if (!acc_vec_type) return mlir::failure();
 
       rewriter.replaceAllUsesWith(
@@ -332,39 +308,39 @@ struct LowerLinalgGenericPattern
               .Case<mlir::arith::MulFOp>([&](mlir::arith::MulFOp op) {
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::mul, compute);
+                    mlir::vectorchain::VectorChainBinaryOperator::mul);
               })
               .Case<mlir::arith::AddFOp>([&](mlir::arith::AddFOp op) {
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::add, compute);
+                    mlir::vectorchain::VectorChainBinaryOperator::add);
               })
               .Case<mlir::arith::SubFOp>([&](mlir::arith::SubFOp op) {
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::sub, compute);
+                    mlir::vectorchain::VectorChainBinaryOperator::sub);
               })
               .Case<mlir::arith::MaximumFOp>([&](mlir::arith::MaximumFOp op) {
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::max, compute);
+                    mlir::vectorchain::VectorChainBinaryOperator::max);
               })
               .Case<mlir::arith::MinimumFOp>([&](mlir::arith::MinimumFOp op) {
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::min, compute);
+                    mlir::vectorchain::VectorChainBinaryOperator::min);
               })
               .Case<mlir::arith::CmpFOp>([&](mlir::arith::CmpFOp op) {
-                return lowerCompareFOp(op, rewriter, compute);
+                return lowerCompareFOp(op, rewriter);
               })
               .Case<mlir::arith::SelectOp>([&](mlir::arith::SelectOp op) {
-                return lowerSelectOp(op, rewriter, compute);
+                return lowerSelectOp(op, rewriter);
               })
               .Case<mlir::memref::StoreOp>([&](mlir::memref::StoreOp op) {
                 return lowerMemRefStore(op, rewriter);
               })
               .Case<mlir::memref::LoadOp>([&](mlir::memref::LoadOp op) {
-                return lowerMemRefLoad(op, rewriter, compute);
+                return lowerMemRefLoad(op, rewriter);
               })
               .Case<mlir::arith::MaxNumFOp>([&](mlir::arith::MaxNumFOp op) {
                 mlir::Value lhs, rhs;
@@ -373,8 +349,7 @@ struct LowerLinalgGenericPattern
                   mlir::Operation* rhs_abs = op.getRhs().getDefiningOp();
                   mlir::LogicalResult res = lowerBinaryFOp(
                       op, lhs, rhs, rewriter, identity_map,
-                      mlir::vectorchain::VectorChainBinaryOperator::abs_max,
-                      compute);
+                      mlir::vectorchain::VectorChainBinaryOperator::abs_max);
                   if (mlir::succeeded(res)) {
                     rewriter.eraseOp(lhs_abs);
                     rewriter.eraseOp(rhs_abs);
@@ -427,8 +402,7 @@ struct LowerLinalgGenericPattern
   /// unchanged.
   mlir::Value convertConstTensorInputToVector(
       mlir::Value input, mlir::linalg::GenericOp generic_op,
-      mlir::PatternRewriter& rewriter,
-      mlir::ktdf_arch::ExecutionUnitOp compute) const {
+      mlir::PatternRewriter& rewriter) const {
     // Only act on tensor-typed inputs — vectors and scalars pass through.
     auto tensor_type = mlir::dyn_cast<mlir::RankedTensorType>(input.getType());
     if (!tensor_type) return input;
@@ -442,7 +416,7 @@ struct LowerLinalgGenericPattern
     if (!dense_attr) return input;
 
     // Determine the target vector type (same element type, flattened shape).
-    auto vector_type = getFlattenedVectorType(tensor_type, compute);
+    auto vector_type = getFlattenedVectorType(tensor_type);
     if (!vector_type) return input;
 
     // Re-materialise the constant with the vector type, preserving all element
@@ -477,11 +451,10 @@ struct LowerLinalgGenericPattern
   }
 
   /// Lowers a load out of a register to the vector load that reads it.
-  mlir::LogicalResult lowerMemRefLoad(
-      mlir::memref::LoadOp op, mlir::PatternRewriter& rewriter,
-      mlir::ktdf_arch::ExecutionUnitOp compute) const {
+  mlir::LogicalResult lowerMemRefLoad(mlir::memref::LoadOp op,
+                                      mlir::PatternRewriter& rewriter) const {
     const auto vector_type = getFlattenedVectorType(
-        llvm::cast<mlir::MemRefType>(op.getMemRef().getType()), compute);
+        llvm::cast<mlir::MemRefType>(op.getMemRef().getType()));
     if (!vector_type) return mlir::failure();
 
     const auto access = getRegisterAccess(op.getMemRef());
@@ -518,13 +491,12 @@ struct LowerLinalgGenericPattern
   mlir::LogicalResult lowerBinaryFOp(
       mlir::Operation* op, mlir::Value lhs, mlir::Value rhs,
       mlir::PatternRewriter& rewriter, mlir::AffineMap identity_map,
-      mlir::vectorchain::VectorChainBinaryOperator binary_kind,
-      mlir::ktdf_arch::ExecutionUnitOp compute) const {
+      mlir::vectorchain::VectorChainBinaryOperator binary_kind) const {
     const auto lhs_ty = llvm::dyn_cast<mlir::ShapedType>(lhs.getType());
     if (!lhs_ty) {
       return llvm::failure();
     }
-    auto vector_type = getFlattenedVectorType(lhs_ty, compute);
+    auto vector_type = getFlattenedVectorType(lhs_ty);
     if (!vector_type) return mlir::failure();
 
     auto binary_op = mlir::vectorchain::BinaryOp::create(
@@ -540,15 +512,14 @@ struct LowerLinalgGenericPattern
   /// The result carries the operands' type rather than a boolean: it is what a
   /// selection takes as its condition, and the unit keeps it in a lane of the
   /// same width. The i1 form of this op is the separate mask operand.
-  mlir::LogicalResult lowerCompareFOp(
-      mlir::arith::CmpFOp op, mlir::PatternRewriter& rewriter,
-      mlir::ktdf_arch::ExecutionUnitOp compute) const {
+  mlir::LogicalResult lowerCompareFOp(mlir::arith::CmpFOp op,
+                                      mlir::PatternRewriter& rewriter) const {
     const auto compare_kind = compareOperatorFor(op.getPredicate());
     if (!compare_kind) return mlir::failure();
 
     const auto lhs_ty = llvm::dyn_cast<mlir::ShapedType>(op.getLhs().getType());
     if (!lhs_ty) return mlir::failure();
-    auto operands = getFlattenedVectorType(lhs_ty, compute);
+    auto operands = getFlattenedVectorType(lhs_ty);
     if (!operands) return mlir::failure();
 
     auto compare_op = mlir::vectorchain::ElementWiseCompareOp::create(
@@ -561,13 +532,12 @@ struct LowerLinalgGenericPattern
 
   /// Lowers \p op to an element-wise selection, taking a lane from one side or
   /// the other by the mask a compare left.
-  mlir::LogicalResult lowerSelectOp(
-      mlir::arith::SelectOp op, mlir::PatternRewriter& rewriter,
-      mlir::ktdf_arch::ExecutionUnitOp compute) const {
+  mlir::LogicalResult lowerSelectOp(mlir::arith::SelectOp op,
+                                    mlir::PatternRewriter& rewriter) const {
     const auto picked =
         llvm::dyn_cast<mlir::ShapedType>(op.getTrueValue().getType());
     if (!picked) return mlir::failure();
-    auto result = getFlattenedVectorType(picked, compute);
+    auto result = getFlattenedVectorType(picked);
     if (!result) return mlir::failure();
 
     auto selection_op = mlir::vectorchain::ElementWiseSelectionOp::create(
@@ -595,9 +565,8 @@ struct LowerLinalgGenericPattern
 struct LowerLinalgFillPattern
     : public mlir::OpRewritePattern<mlir::linalg::FillOp> {
   LowerLinalgFillPattern(mlir::MLIRContext* context,
-                         mlir::ktdf_arch::Mapping& mapping,
                          scheduler::SymbolAllocator& symbols)
-      : OpRewritePattern(context), mapping_(mapping), symbols_(symbols) {}
+      : OpRewritePattern(context), symbols_(symbols) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::linalg::FillOp fill_op,
@@ -648,17 +617,10 @@ struct LowerLinalgFillPattern
       fill_bits = fill_bits.zext(64U);
     }
 
-    // The fill becomes a vector of the unit that holds it, so that unit's
-    // width bounds it.
-    auto compute = getVectorUnit(fill_op, mapping_);
-    if (!compute) {
-      return llvm::failure();
-    }
-
     // Derive output vector type from the output operand (memref or tensor).
     mlir::Value out_operand = fill_op.getOutputs()[0];
     mlir::VectorType out_vec_type = getFlattenedVectorType(
-        llvm::cast<mlir::ShapedType>(out_operand.getType()), compute);
+        llvm::cast<mlir::ShapedType>(out_operand.getType()));
     if (!out_vec_type) {
       return rewriter.notifyMatchFailure(
           fill_op, "output must convert to a flattened vector type");
@@ -705,15 +667,13 @@ struct LowerLinalgFillPattern
   }
 
  private:
-  mlir::ktdf_arch::Mapping& mapping_;
   scheduler::SymbolAllocator& symbols_;
 };
 
 }  // namespace
 
 void scheduler::populateLinalgLoweringPatterns(
-    mlir::RewritePatternSet& patterns, mlir::ktdf_arch::Mapping& mapping,
-    SymbolAllocator& symbols) {
-  patterns.add<LowerLinalgGenericPattern>(patterns.getContext(), mapping);
-  patterns.add<LowerLinalgFillPattern>(patterns.getContext(), mapping, symbols);
+    mlir::RewritePatternSet& patterns, SymbolAllocator& symbols) {
+  patterns.add<LowerLinalgGenericPattern>(patterns.getContext());
+  patterns.add<LowerLinalgFillPattern>(patterns.getContext(), symbols);
 }
