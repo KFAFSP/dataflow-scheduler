@@ -19,6 +19,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/MappableExtensions.h"
 
 #include <llvm/Support/LogicalResult.h>
+#include <mlir/IR/OperationSupport.h>
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"
@@ -51,6 +52,20 @@ struct StageModel : ktdf_arch::Mappable::ExternalModel<StageModel, StageOp> {
   static auto removeMapsTo(Operation* op) -> mlir::ktdf_arch::MapsToAttr {
     return dyn_cast<mlir::ktdf_arch::MapsToAttr>(
         cast<StageOp>(op).removeApplicableUnitsAttr());
+  }
+
+  static auto verifyMapping(Operation* op,
+                            ArrayRef<ktdf_arch::Resource> resources)
+      -> LogicalResult {
+    for (auto resource : resources) {
+      if (!isa<ktdf_arch::ExecutionUnitOp>(resource)) {
+        auto diag = op->emitError("invalid mapping: not an execution unit");
+        diag.attachNote(resource->getLoc()) << "see this resource";
+        return diag;
+      }
+    }
+
+    return success();
   }
 };
 
