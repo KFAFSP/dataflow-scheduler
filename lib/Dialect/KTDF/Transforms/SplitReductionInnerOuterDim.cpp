@@ -496,11 +496,6 @@ struct SplitReductionInnerOuterDimPass
     }
 
     for (linalg::GenericOp generic_op : candidates) {
-      // The inner reduction dimension is split to what the unit computing it
-      // does at once, so the unit it is mapped to says where to split.
-      // FIXME: The default is the single compute kind the device declares, and
-      //        a kind resolves to one exemplar -- neither tells two units of
-      //        the same kind apart.
       auto compute = mapping.getOrMap<mlir::ktdf_arch::ExecutionUnitOp>(
           generic_op, mapping.byKind().getDefaultCompute().getKind());
       if (!compute) {

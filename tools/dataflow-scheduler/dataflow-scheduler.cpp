@@ -46,9 +46,8 @@ void registerPassPipelinesForScheduler() {
       });
 }
 
-// FIXME: We should use dataflow-scheduler-opt for internal testing, and turn
-//        this executable into a self-contained tool front-end, without the
-//        default MLIR CLI etc.
+// FIXME: Internal testing has moved to dataflow-scheduler-opt, and the tool is
+//        integrated as a pipeline downstream. Delete this executable?
 auto main(int argc, char** argv) -> int {
   scheduler::registerAllPasses();
   registerPassPipelinesForScheduler();

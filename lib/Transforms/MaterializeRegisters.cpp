@@ -262,12 +262,9 @@ auto materializeRegisters(linalg::GenericOp generic,
     return success();
   }
 
-  // A register is as wide as the unit that computes on it, so the unit the
-  // generic is mapped to sizes every register made here.
-  // FIXME: The default is the single compute kind the device declares, and a
-  //        kind resolves to one exemplar -- neither tells two units of the same
-  //        kind apart.
-  const auto compute = mapping.getOrMap<ktdf_arch::ExecutionUnitOp>(
+  // We assume the register is for the compute that the generic is mapped to,
+  // which is defaulted if it is not yet mapped.
+  auto compute = mapping.getOrMap<ktdf_arch::ExecutionUnitOp>(
       generic, mapping.byKind().getDefaultCompute().getKind());
   if (!compute) {
     return generic.emitError("no compute resource is mapped to size registers");
