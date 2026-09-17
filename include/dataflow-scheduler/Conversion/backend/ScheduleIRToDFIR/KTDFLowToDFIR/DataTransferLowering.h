@@ -25,10 +25,12 @@
 
 namespace scheduler {
 
+static constexpr llvm::StringLiteral kThrottleAttrName =
+    "dataflow_scheduler.throttle";
+
 /// Register LowerDataTransferPattern into the given pattern set.
 void populateDataTransferLoweringPatterns(mlir::RewritePatternSet& patterns,
-                                          const ResourceToUnits& components,
-                                          mlir::ktdf_arch::Mapping& mapping);
+                                          const ResourceToUnits& components);
 
 }  // namespace scheduler
 

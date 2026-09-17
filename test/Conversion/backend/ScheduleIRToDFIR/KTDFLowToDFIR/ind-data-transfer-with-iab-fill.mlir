@@ -254,6 +254,7 @@ module {
           ktdf.data_transfer
               from %addr_buf[%c0] size [32]
               to   %iab[%c0]      size [32]
+              {dataflow_scheduler.throttle = 1 : i64}
               : memref<32xindex, strided<[1], offset: ?>, "DDR">, memref<32xindex, "IAB">
         }
         // Use the filled IAB to gather a tile from DDR.
@@ -262,6 +263,7 @@ module {
             dir_src = %data[%c0, %c0] size [1, 64]
             ind_dst = none
             dir_dst = %staging[%c0, %c0] size [1, 64]
+            {dataflow_scheduler.throttle = 64 : i64}
             : memref<32xindex, "IAB">,
               memref<64x64xf16, strided<[64, 1], offset: ?>, "DDR">,
               none,
@@ -307,6 +309,7 @@ module {
       ktdf.data_transfer
           from %addr_buf[%c0] size [32]
           to   %iab[%c0]      size [32]
+          {dataflow_scheduler.throttle = 1 : i64}
           : memref<32xindex, strided<[1], offset: ?>, "DDR">, memref<32xindex, "IAB">
       // Scatter using the IAB-driven destination address.
       ktdf.ind_data_transfer
@@ -314,6 +317,7 @@ module {
           dir_src = %staging[%c0, %c0] size [1, 64]
           ind_dst = %iab[%c1]
           dir_dst = %dst[%c0, %c0]     size [1, 64]
+          {dataflow_scheduler.throttle = 64 : i64}
           : none,
             memref<1x64xf16, "L1">,
             memref<32xindex, "IAB">,
@@ -373,12 +377,14 @@ module {
         ktdf.data_transfer
             from %addr_buf[%c0] size [32]
             to   %iab_ld[%c0]   size [32]
+            {dataflow_scheduler.throttle = 1 : i64}
             : memref<32xindex, strided<[1], offset: ?>, "DDR">, memref<32xindex, "IAB">
         ktdf.ind_data_transfer
             ind_src = %iab_ld[%c1]
             dir_src = %src_data[%c0, %c0] size [1, 64]
             ind_dst = none
             dir_dst = %staging[%c0, %c0]  size [1, 64]
+            {dataflow_scheduler.throttle = 64 : i64}
             : memref<32xindex, "IAB">,
               memref<64x64xf16, strided<[64, 1], offset: ?>, "DDR">,
               none,
@@ -393,12 +399,14 @@ module {
         ktdf.data_transfer
             from %addr_buf[%c0] size [32]
             to   %iab_st[%c0]   size [32]
+            {dataflow_scheduler.throttle = 1 : i64}
             : memref<32xindex, strided<[1], offset: ?>, "DDR">, memref<32xindex, "IAB">
         ktdf.ind_data_transfer
             ind_src = none
             dir_src = %staging[%c0, %c0] size [1, 64]
             ind_dst = %iab_st[%c1]
             dir_dst = %dst_data[%c0, %c0] size [1, 64]
+            {dataflow_scheduler.throttle = 64 : i64}
             : none,
               memref<1x64xf16, "L1">,
               memref<32xindex, "IAB">,
@@ -446,6 +454,7 @@ module {
       ktdf.data_transfer
           from %addr_buf[%c0] size [32]
           to   %iab[%c0]      size [32]
+          {dataflow_scheduler.throttle = 1 : i64}
           : memref<32xindex, strided<[1], offset: ?>, "DDR">, memref<32xindex, "IAB">
       // Use the filled IAB on every loop iteration; sync must be hoisted
       // to before the loop, not inside it.
@@ -455,6 +464,7 @@ module {
             dir_src = %data[%c0, %c0] size [1, 64]
             ind_dst = none
             dir_dst = %staging[%c0, %c0] size [1, 64]
+            {dataflow_scheduler.throttle = 64 : i64}
             : memref<32xindex, "IAB">,
               memref<64x64xf16, strided<[64, 1], offset: ?>, "DDR">,
               none,

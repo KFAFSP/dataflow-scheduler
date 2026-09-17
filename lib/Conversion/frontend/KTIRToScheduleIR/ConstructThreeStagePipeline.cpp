@@ -51,8 +51,10 @@
 #include <mlir/Support/LLVM.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 
+#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/DataTransferLowering.h"
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDF/KTDFTypes.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/NodeLinks.h"
@@ -1092,7 +1094,9 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
     }
 
     // Get the FIFO slot from ktdf.private results.
-    mlir::Value fifo_slot = private_op.getResult(private_result_offset + i);
+    const auto fifo_slot =
+        llvm::cast<mlir::TypedValue<mlir::ktdf::FifoSlotType>>(
+            private_op.getResult(private_result_offset + i));
 
     // For a load, the FIFO must hold the full input tile — including any
     // reduction dimensions — because the compute stage reads a tensor of that
@@ -1119,17 +1123,27 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
     // The fifo side gets a null AffineMap; the access-tile (memref) side gets
     // the substituted+compressed map. map_ivs has exactly one entry per dim
     // that survived compression.
-    mlir::AffineMap null_map;
+    mlir::ktdf::DataTransferOp transfer;
     if (is_load) {
-      mlir::ktdf::DataTransferOp::create(builder, loc, access_tile_value,
-                                         substituted_map, map_ivs,
-                                         access_tile_sizes, fifo_slot, null_map,
-                                         mlir::ValueRange{}, fifo_sizes);
+      transfer = mlir::ktdf::DataTransferOp::create(
+          builder, loc, access_tile_value, substituted_map, map_ivs,
+          access_tile_sizes, fifo_slot, {}, {}, fifo_sizes);
     } else {
-      mlir::ktdf::DataTransferOp::create(
-          builder, loc, fifo_slot, null_map, mlir::ValueRange{}, fifo_sizes,
-          access_tile_value, substituted_map, map_ivs, access_tile_sizes);
+      transfer = mlir::ktdf::DataTransferOp::create(
+          builder, loc, fifo_slot, {}, {}, fifo_sizes, access_tile_value,
+          substituted_map, map_ivs, access_tile_sizes);
     }
+
+    // FIXME: The DataTransferLowering needs to know the amount of elements it
+    //        is allowed to transfer in a single time step. This is called the
+    //        throttle, and is determined by the vector width of the target
+    //        compute. However, path expansion will have to update the throttle
+    //        on the whole chain of transfers based on the bottleneck!
+    const auto throttle = std::max(
+        1LL, compute.getFeature<mlir::ktdf_arch::feature::SIMD>().getLanes(
+                 fifo_slot.getType().getElementType()));
+    transfer->setDiscardableAttr(kThrottleAttrName,
+                                 builder.getI64IntegerAttr(throttle));
   }
 }
 

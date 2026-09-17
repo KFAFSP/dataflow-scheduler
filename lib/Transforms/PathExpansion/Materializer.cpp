@@ -594,10 +594,12 @@ bool PathExpansionMaterializer::tryAdaptDataTransferOp(
       canonicalizeMapAndIndices(transfer_info->dest_map, params.dest_indices);
 
   // Create the adapted transfer operation
-  mlir::ktdf::DataTransferOp::create(builder_, transfer_op.getLoc(), source,
-                                     source_map, params.source_indices,
-                                     params.source_sizes, destination, dest_map,
-                                     params.dest_indices, params.dest_sizes);
+  auto result = mlir::ktdf::DataTransferOp::create(
+      builder_, transfer_op.getLoc(), source, source_map, params.source_indices,
+      params.source_sizes, destination, dest_map, params.dest_indices,
+      params.dest_sizes);
+  result->setDiscardableAttrs(
+      transfer_info->template_op->getRawDictionaryAttrs());
 
   return true;
 }
@@ -670,11 +672,13 @@ bool PathExpansionMaterializer::tryAdaptIndDataTransferOp(
       new_dir_dst_sizes.push_back(materializeOpFoldResult(s));
   }
 
-  mlir::ktdf::IndDataTransferOp::create(
+  auto result = mlir::ktdf::IndDataTransferOp::create(
       builder_, ind_transfer_op.getLoc(), ind_src_memref, ind_src_index,
       new_dir_src, new_dir_src_map, new_dir_src_indices, new_dir_src_sizes,
       ind_dst_memref, ind_dst_index, new_dir_dst, new_dir_dst_map,
       new_dir_dst_indices, new_dir_dst_sizes);
+  result->setDiscardableAttrs(
+      transfer_info->template_op->getRawDictionaryAttrs());
 
   return true;
 }
@@ -790,10 +794,14 @@ void PathExpansionMaterializer::synthesizeTransferStage(
     mlir::AffineMap dest_map =
         canonicalizeMapAndIndices(transfer_info->dest_map, params.dest_indices);
 
-    mlir::ktdf::DataTransferOp::create(
+    auto transfer = mlir::ktdf::DataTransferOp::create(
         builder_, loc, source, source_map, params.source_indices,
         params.source_sizes, destination, dest_map, params.dest_indices,
         params.dest_sizes);
+    if (transfer_info->template_op) {
+      transfer->setDiscardableAttrs(
+          transfer_info->template_op->getRawDictionaryAttrs());
+    }
   }
 }
 

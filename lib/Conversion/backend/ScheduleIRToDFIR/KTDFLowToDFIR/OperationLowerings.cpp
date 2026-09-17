@@ -584,8 +584,7 @@ struct LowerSignalPattern
 /// Lowers the copy to agen.vector_store of the source value into the dest.
 struct LowerMemRefCopyFromFifoPattern
     : public mlir::OpRewritePattern<mlir::memref::CopyOp> {
-  LowerMemRefCopyFromFifoPattern(mlir::MLIRContext* context,
-                                 mlir::ktdf_arch::Mapping& /*mapping*/)
+  explicit LowerMemRefCopyFromFifoPattern(mlir::MLIRContext* context)
       : OpRewritePattern(context, /*benefit=*/2) {}
 
   mlir::LogicalResult matchAndRewrite(
@@ -865,10 +864,10 @@ mlir::LogicalResult scheduler::runOperationLowerings(
   // Lower linalg.generic compute operations and FIFO operations
   mlir::RewritePatternSet patterns(func.getContext());
   populateLinalgLoweringPatterns(patterns, symbols);
-  patterns.add<LowerMemRefCopyFromFifoPattern>(func.getContext(), mapping);
+  patterns.add<LowerMemRefCopyFromFifoPattern>(func.getContext());
   patterns.add<LowerReadFromFifoPattern>(func.getContext(), components);
   patterns.add<LowerWriteToFifoPattern>(func.getContext(), components);
-  populateDataTransferLoweringPatterns(patterns, components, mapping);
+  populateDataTransferLoweringPatterns(patterns, components);
   patterns.add<LowerSignalPattern>(func.getContext(), scheduler_ctx,
                                    components);
   patterns.add<LowerGetTileSizePattern>(func.getContext(), scheduler_ctx,
