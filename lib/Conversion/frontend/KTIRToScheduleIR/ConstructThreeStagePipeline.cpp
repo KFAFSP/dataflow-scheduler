@@ -1139,9 +1139,9 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
     //        throttle, and is determined by the vector width of the target
     //        compute. However, path expansion will have to update the throttle
     //        on the whole chain of transfers based on the bottleneck!
-    const auto throttle = std::max(
-        1LL, compute.getFeature<mlir::ktdf_arch::feature::SIMD>().getLanes(
-                 fifo_slot.getType().getElementType()));
+    const auto throttle = std::max<int64_t>(
+        1, compute.getFeature<mlir::ktdf_arch::feature::SIMD>().getLanes(
+               fifo_slot.getType().getElementType()));
     transfer->setDiscardableAttr(kThrottleAttrName,
                                  builder.getI64IntegerAttr(throttle));
   }
