@@ -420,7 +420,8 @@ llvm::SmallVector<ResourceType> MemoryTree::getMemoryResourcesWithCapacity()
 // Made with Bob
 void MemoryTree::populateAliases(mlir::Attribute mem_space_mapping_attr) {
   auto mem_space_mapping =
-      mlir::dyn_cast<mlir::ktdf_arch::MapAttr>(mem_space_mapping_attr);
+      mlir::dyn_cast<mlir::ktdf_arch::TypedMapAttr<ResourceType, ResourceType>>(
+          mem_space_mapping_attr);
   if (!mem_space_mapping) {
     return;
   }

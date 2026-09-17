@@ -18,47 +18,24 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 
+#include <llvm/ADT/SmallVector.h>
+#include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/IR/Builders.h>
+#include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinTypeInterfaces.h>
+#include <mlir/IR/BuiltinTypes.h>
+#include <mlir/IR/IntegerSet.h>
+#include <mlir/IR/PatternMatch.h>
 
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Utils.h"
-#include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
-#include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/raw_ostream.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/IntegerSet.h"
-#include "mlir/IR/PatternMatch.h"
 
 using namespace scheduler;
-
-std::optional<scheduler::ResourceType>
-scheduler::getEnclosingProgramUnitResourceType(mlir::Operation* op) {
-  auto pu = op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
-  if (!pu || pu.getUnits().empty()) return std::nullopt;
-
-  mlir::Value first_unit = pu.getUnits().front();
-
-  // Direct dataflow.get_unit operand (already-lowered program_unit).
-  if (auto get_unit = mlir::dyn_cast_or_null<mlir::dataflow::GetUnitOp>(
-          first_unit.getDefiningOp())) {
-    auto type_attr = get_unit->getAttrOfType<mlir::StringAttr>("type");
-    if (type_attr)
-      return mlir::StringAttr::get(op->getContext(),
-                                   type_attr.getValue().upper());
-  }
-
-  return std::nullopt;
-}
 
 int64_t scheduler::getVectorLanes(mlir::Type elem_type,
                                   mlir::ktdf_arch::ExecutionUnitOp compute) {
@@ -118,18 +95,13 @@ void scheduler::emitVectorStore(mlir::OpBuilder& builder, mlir::Location loc,
                                     store_set, map);
 }
 
-mlir::VectorType scheduler::getFlattenedVectorType(
-    mlir::ShapedType type, mlir::ktdf_arch::ExecutionUnitOp compute) {
+auto scheduler::getFlattenedVectorType(mlir::ShapedType type)
+    -> mlir::VectorType {
   if (!type.hasStaticShape()) {
     return nullptr;
   }
 
-  const auto total_elements = type.getNumElements();
-  const auto max_vector_length = getVectorLanes(type.getElementType(), compute);
-  assert(total_elements <= max_vector_length &&
-         "Flattened tensor/memref size exceeds maximum vector length");
-
-  return mlir::VectorType::get({total_elements}, type.getElementType());
+  return mlir::VectorType::get({type.getNumElements()}, type.getElementType());
 }
 
 mlir::Value scheduler::createQueryMapForComponent(

@@ -299,7 +299,7 @@ mlir::LogicalResult validateLinearChain(
 /// with a memory space, otherwise return nullptr.
 static ResourceType memrefMemorySpace(mlir::Value val) {
   if (auto mt = mlir::dyn_cast<mlir::MemRefType>(val.getType()))
-    return mt.getMemorySpace();
+    return llvm::cast<ResourceType>(mt.getMemorySpace());
   return nullptr;
 }
 
@@ -439,7 +439,7 @@ static void assignOriginalStageResources(
       assert(units->size() == 1 &&
              "path expansion currently does not handle nested pipelines with "
              "multi-unit stages");
-      info.stage_resource = units->getValue()[0];
+      info.stage_resource = llvm::cast<ResourceType>(units->getValue()[0]);
       continue;
     }
 

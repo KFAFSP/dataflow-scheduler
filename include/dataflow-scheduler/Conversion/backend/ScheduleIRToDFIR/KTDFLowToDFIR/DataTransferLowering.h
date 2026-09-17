@@ -20,15 +20,29 @@
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_DATATRANSFERLOWERING_H_
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/UnitTypeDiscovery.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "mlir/IR/PatternMatch.h"
 
 namespace scheduler {
 
+/// Name of the throttle attribute.
+///
+/// When lowering a data transfer, the lowering may decide to emit an
+/// `agen.composite_load_and_store` operation, which is able to spread out a
+/// transfer across the time domain. To be able to use this feature, the passes
+/// before the lowering do not narrow transfers down to the throughput that the
+/// actual compute achieves.
+///
+/// The throttle attribute indicates, in the number of elements as a 64-bit int,
+/// the throughput limitation that this data transfer has to obey. This is set
+/// on pipeline construction / legalization, and gives the maximum number of
+/// elements that may be transferred in a single time step.
+static constexpr llvm::StringLiteral kThrottleAttrName =
+    "dataflow_scheduler.throttle";
+
 /// Register LowerDataTransferPattern into the given pattern set.
-void populateDataTransferLoweringPatterns(
-    mlir::RewritePatternSet& patterns, const ResourceToUnits& components,
-    mlir::ktdf_arch::ResourceKinds& resource_kinds);
+void populateDataTransferLoweringPatterns(mlir::RewritePatternSet& patterns,
+                                          const ResourceToUnits& components);
 
 }  // namespace scheduler
 

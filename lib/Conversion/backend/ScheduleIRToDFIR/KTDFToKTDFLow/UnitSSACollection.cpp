@@ -18,6 +18,7 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/UnitSSACollection.h"
 
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Conversion/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
@@ -27,7 +28,6 @@
 #define DEBUG_TYPE "phase2-analysis"
 
 using namespace scheduler;
-using ResourceType = mlir::Attribute;
 
 mlir::LogicalResult collectUnitSSAValues(mlir::func::FuncOp func,
                                          StageToUnitsMap& stage_to_units,
@@ -84,7 +84,8 @@ mlir::LogicalResult collectUnitSSAValues(mlir::func::FuncOp func,
     if (!applicable_units) continue;
 
     for (auto component : applicable_units) {
-      if (auto queries = component_to_queries.find(component);
+      if (auto queries = component_to_queries.find(
+              llvm::dyn_cast<ResourceType>(component));
           queries != component_to_queries.end()) {
         for (auto query_op : queries->second) {
           stage_to_units.mapping[stage.getOperation()].push_back(

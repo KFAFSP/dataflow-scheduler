@@ -18,11 +18,16 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/DataTransferLowering.h"
 
+#include <llvm/Support/Casting.h>
+#include <mlir/IR/Operation.h>
+
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Analysis/Presburger/IntegerRelation.h"
@@ -40,6 +45,17 @@
 using namespace scheduler;
 
 namespace {
+
+/// Gets the value of the `dataflow_scheduler.throttle` attribute, if any.
+[[nodiscard]] auto getThrottle(mlir::Operation* op) -> std::optional<int64_t> {
+  if (const auto attr = llvm::dyn_cast_if_present<mlir::ktdf_arch::I64Attr>(
+          op->getDiscardableAttr(kThrottleAttrName));
+      attr) {
+    return attr.getValue();
+  }
+
+  return std::nullopt;
+}
 
 /// Create a vectorchain.shuffle that broadcasts src_vec (vector<src_elements x
 /// T>) to vector<dst_elements x T> using indices [0..src_elements-1] repeated
@@ -304,11 +320,8 @@ static void emitSelfSyncIndirect(
 struct LowerIndDataTransferPattern
     : public mlir::OpRewritePattern<mlir::ktdf::IndDataTransferOp> {
   LowerIndDataTransferPattern(mlir::MLIRContext* context,
-                              const ResourceToUnits& components,
-                              mlir::ktdf_arch::ResourceKinds& resource_kinds)
-      : OpRewritePattern(context),
-        components_(components),
-        resource_kinds_(resource_kinds) {}
+                              const ResourceToUnits& components)
+      : OpRewritePattern(context), components_(components) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::ktdf::IndDataTransferOp op,
@@ -354,20 +367,17 @@ struct LowerIndDataTransferPattern
 
     auto elem_type = dir_src_memref_type.getElementType();
 
-    auto compute = resource_kinds_.getDefaultCompute();
-    if (!compute) {
-      return op.emitError(
-          "ind_data_transfer lowering: cannot determine hardware vector "
-          "width; architecture declares no default compute resource");
+    const auto throttle = getThrottle(op);
+    if (!throttle) {
+      return rewriter.notifyMatchFailure(op, "unable to determine throttle");
     }
-    const auto lanes = getVectorLanes(elem_type, compute);
 
     const int64_t total_src = [&] {
       int64_t t = 1;
       for (int64_t s : src_sizes) t *= s;
       return t;
     }();
-    const int64_t iv_lanes = std::min(total_src, lanes);
+    const int64_t iv_lanes = std::min(total_src, *throttle);
     auto load_iv_type = mlir::VectorType::get({iv_lanes}, elem_type);
 
     // load_set / load_order: per-vector footprint on the dir_src side.
@@ -390,7 +400,8 @@ struct LowerIndDataTransferPattern
         mlir::AffineMap::getMultiDimIdentityMap(store_sizes.size(), ctx);
 
     // Time set / order / addr maps.
-    TransferTimeDims src_time_dims = describeTransferTimeDims(src_sizes, lanes);
+    TransferTimeDims src_time_dims =
+        describeTransferTimeDims(src_sizes, *throttle);
     llvm::SmallVector<int64_t> time_extents = src_time_dims.extents;
     if (time_extents.empty()) time_extents.push_back(1);
     const unsigned num_time_dims = time_extents.size();
@@ -430,7 +441,7 @@ struct LowerIndDataTransferPattern
     mlir::AffineMap store_direct_time_addr_map;
     if (!dst_is_fifo) {
       TransferTimeDims dst_time_dims =
-          describeTransferTimeDims(dst_sizes, lanes);
+          describeTransferTimeDims(dst_sizes, *throttle);
       store_direct_time_addr_map = mlir::AffineMap::get(
           num_time_dims, 0, dst_time_dims.offsets(ctx), ctx);
     } else {
@@ -610,18 +621,14 @@ struct LowerIndDataTransferPattern
 
  private:
   const ResourceToUnits& components_;
-  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
 };
 
 /// Pattern to lower ktdf.data_transfer operations
 struct LowerDataTransferPattern
     : public mlir::OpRewritePattern<mlir::ktdf::DataTransferOp> {
   LowerDataTransferPattern(mlir::MLIRContext* context,
-                           const ResourceToUnits& components,
-                           mlir::ktdf_arch::ResourceKinds& resource_kinds)
-      : OpRewritePattern(context),
-        components_(components),
-        resource_kinds_(resource_kinds) {}
+                           const ResourceToUnits& components)
+      : OpRewritePattern(context), components_(components) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::ktdf::DataTransferOp data_transfer_op,
@@ -768,7 +775,6 @@ struct LowerDataTransferPattern
 
  private:
   const ResourceToUnits& components_;
-  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
 
   /// Lower as CompositeLoadAndStore.
   ///
@@ -786,15 +792,11 @@ struct LowerDataTransferPattern
     auto* context = rewriter.getContext();
     const int64_t total = vector_type.getNumElements();
 
-    // FIXME: Discover compute from op.
-    auto compute = resource_kinds_.getDefaultCompute();
-    if (!compute) {
-      return data_transfer_op.emitError(
-          "cannot determine the hardware vector width: the architecture "
-          "declares no default compute resource");
+    const auto throttle = getThrottle(data_transfer_op);
+    if (!throttle) {
+      return rewriter.notifyMatchFailure(data_transfer_op,
+                                         "unable to determine throttle");
     }
-
-    const auto lanes = getVectorLanes(vector_type.getElementType(), compute);
 
     // Sizes describing the elements covered by one AGEN vector transfer, and
     // the dimensions (if any) walked over time to cover the rest. Narrowed
@@ -808,28 +810,28 @@ struct LowerDataTransferPattern
     // loop; see below.
     std::optional<unsigned> loop_time_dim;
 
-    if (total > lanes) {
+    if (total > *throttle) {
       if (src_static_sizes.empty() || dst_static_sizes.empty()) {
         data_transfer_op.emitError()
             << "data transfer of " << total
-            << " elements exceeds the hardware vector width of " << lanes
+            << " elements exceeds the throttle of " << *throttle
             << " but has no dimensions to split";
         return mlir::failure();
       }
 
-      if (src_static_sizes.back() % lanes != 0 ||
-          dst_static_sizes.back() % lanes != 0) {
+      if (src_static_sizes.back() % *throttle != 0 ||
+          dst_static_sizes.back() % *throttle != 0) {
         data_transfer_op.emitError()
             << "data transfer of " << total
-            << " elements exceeds the hardware vector width of " << lanes
+            << " elements exceeds the throttle of " << *throttle
             << "; splitting requires the innermost source and destination "
-               "sizes to be a multiple of the vector width, but they are "
+               "sizes to be a multiple of the throttle, but they are "
             << src_static_sizes.back() << " and " << dst_static_sizes.back();
         return mlir::failure();
       }
 
-      src_time_dims = describeTransferTimeDims(src_static_sizes, lanes);
-      dst_time_dims = describeTransferTimeDims(dst_static_sizes, lanes);
+      src_time_dims = describeTransferTimeDims(src_static_sizes, *throttle);
+      dst_time_dims = describeTransferTimeDims(dst_static_sizes, *throttle);
 
       // Only the extents are compared, not positions or coefficients: the
       // two sides may reach the same walk through different shapes, e.g.
@@ -843,11 +845,11 @@ struct LowerDataTransferPattern
       }
 
       load_iv_type =
-          mlir::VectorType::get({lanes}, vector_type.getElementType());
+          mlir::VectorType::get({*throttle}, vector_type.getElementType());
       load_sizes.assign(src_static_sizes.size(), 1);
-      load_sizes.back() = lanes;
+      load_sizes.back() = *throttle;
       store_sizes.assign(dst_static_sizes.size(), 1);
-      store_sizes.back() = lanes;
+      store_sizes.back() = *throttle;
 
       // A time dimension is one step count shared by both sides, so it is only
       // realizable when both sides move the same distance per step: one count
@@ -1074,10 +1076,7 @@ struct LowerDataTransferPattern
 }  // namespace
 
 void scheduler::populateDataTransferLoweringPatterns(
-    mlir::RewritePatternSet& patterns, const ResourceToUnits& components,
-    mlir::ktdf_arch::ResourceKinds& resource_kinds) {
-  patterns.add<LowerIndDataTransferPattern>(patterns.getContext(), components,
-                                            resource_kinds);
-  patterns.add<LowerDataTransferPattern>(patterns.getContext(), components,
-                                         resource_kinds);
+    mlir::RewritePatternSet& patterns, const ResourceToUnits& components) {
+  patterns.add<LowerIndDataTransferPattern>(patterns.getContext(), components);
+  patterns.add<LowerDataTransferPattern>(patterns.getContext(), components);
 }

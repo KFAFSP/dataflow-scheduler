@@ -1,4 +1,4 @@
-//===------------------------------------------------------------*- c++ -*-===//
+//===-- MappableExtensions.h ------------------------------------*- c++ -*-===//
 //
 // Part of the Dataflow Scheduler project.
 //
@@ -16,18 +16,18 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_LINALGLOWERING_H_
-#define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_LINALGLOWERING_H_
+#ifndef DATAFLOW_SCHEDULER_DIALECT_KTDF_MAPPABLEEXTENSIONS_H_
+#define DATAFLOW_SCHEDULER_DIALECT_KTDF_MAPPABLEEXTENSIONS_H_
 
-#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
-#include "mlir/IR/PatternMatch.h"
+namespace mlir {
+class DialectRegistry;
+}
 
-namespace scheduler {
+namespace mlir::ktdf {
 
-/// Register LowerLinalgGenericPattern into the given pattern set.
-void populateLinalgLoweringPatterns(mlir::RewritePatternSet& patterns,
-                                    SymbolAllocator& symbols);
+/// Registers KTDF's external models for mlir::ktdf_arch::Mappable.
+void registerMappableInterfaceExternalModels(DialectRegistry& registry);
 
-}  // namespace scheduler
+}  // namespace mlir::ktdf
 
-#endif  // DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_LINALGLOWERING_H_
+#endif  // DATAFLOW_SCHEDULER_DIALECT_KTDF_MAPPABLEEXTENSIONS_H_

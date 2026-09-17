@@ -18,6 +18,7 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/ComponentClassifier.h"
 
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/Utils.h"
 #include "llvm/Support/DebugLog.h"
 
@@ -44,12 +45,17 @@ mlir::LogicalResult ComponentClassifier::classify(
 
     // Process all components for this stage with cached parallel info
     for (mlir::Attribute component : units_attr.getValue()) {
+      const auto resource = llvm::dyn_cast<ResourceType>(component);
+      if (!resource) {
+        continue;
+      }
+
       if (in_parallel) {
         // Record component in this parallel operation
         assert(parallel_parent && "Parallel components must exist");
         auto& comps = result.parallel_components_map[parallel_parent];
-        comps.insert(component);
-        all_parallel_components.insert(component);
+        comps.insert(resource);
+        all_parallel_components.insert(resource);
 
         auto str_attr = mlir::dyn_cast<mlir::StringAttr>(component);
         LDBG(1) << "  Component "
@@ -57,7 +63,7 @@ mlir::LogicalResult ComponentClassifier::classify(
                 << " is parallel";
       } else {
         // Candidate for non-parallel (may be overridden if also in parallel)
-        temp_non_parallel_components.insert(component);
+        temp_non_parallel_components.insert(resource);
       }
     }
   }

@@ -19,14 +19,14 @@
 #ifndef DATAFLOW_SCHEDULER_CONVERSION_KTDFTOKTDFLOW_SCRATCHPADCONFLICTS_H_
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFTOKTDFLOW_SCRATCHPADCONFLICTS_H_
 
+#include <llvm/ADT/SmallVector.h>
+
 #include <map>
 
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/StageToUnitsMap.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/GlobalStageDAG.h"
-#include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
-#include "dataflow-scheduler/Utils/SchedulerExtContext.h"
-#include "llvm/ADT/SmallVector.h"
 
 namespace scheduler {
 

@@ -50,10 +50,11 @@
 #include "dataflow-scheduler/Dialect/Dataflow/DataflowDialect.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/Dataflow/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
-#include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
+#include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 
@@ -67,11 +68,8 @@ namespace {
 struct LowerReadFromFifoPattern
     : public mlir::OpRewritePattern<mlir::ktdf::ReadFromFifoOp> {
   LowerReadFromFifoPattern(mlir::MLIRContext* context,
-                           mlir::ktdf_arch::ResourceKinds& resource_kinds,
                            const ResourceToUnits& components)
-      : OpRewritePattern(context),
-        resource_kinds_(resource_kinds),
-        components_(components) {}
+      : OpRewritePattern(context), components_(components) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::ktdf::ReadFromFifoOp read_op,
@@ -80,24 +78,20 @@ struct LowerReadFromFifoPattern
     auto fifo_slot_type =
         llvm::cast<mlir::ktdf::FifoSlotType>(read_op.getFifoSlot().getType());
 
-    // FIXME: Discover compute from op.
-    auto compute = resource_kinds_.getDefaultCompute();
-    if (!compute) {
-      return llvm::failure();
-    }
-
-    // Convert result type (tensor or memref) to flattened vector type
-    auto vector_type = getFlattenedVectorType(read_op.getType(), compute);
+    // Convert result type (tensor or memref) to flattened vector type.
+    auto vector_type = getFlattenedVectorType(read_op.getType());
     if (!vector_type) {
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(read_op,
+                                         "vector does not have static shape");
     }
 
     // Find the enclosing program_unit
     auto program_unit =
         read_op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
     if (!program_unit) {
+      // FIXME: Patterns can only fail to apply, not fail the pass.
       read_op.emitError("read_from_fifo must be inside a program_unit");
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(read_op, "not inside a program_unit");
     }
 
     // Resolve the source unit from the FIFO src attribute
@@ -105,7 +99,8 @@ struct LowerReadFromFifoPattern
         fifo_slot_type.getSrc(), components_, rewriter, program_unit,
         read_op.getLoc(), read_op.getOperation());
     if (mlir::failed(queried_unit_result)) {
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(read_op,
+                                         "unable to determine source unit");
     }
     mlir::Value queried_unit = *queried_unit_result;
 
@@ -121,18 +116,14 @@ struct LowerReadFromFifoPattern
   }
 
  private:
-  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
   const ResourceToUnits& components_;
 };
 
 struct LowerWriteToFifoPattern
     : public mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
   LowerWriteToFifoPattern(mlir::MLIRContext* context,
-                          mlir::ktdf_arch::ResourceKinds& resource_kinds,
                           const ResourceToUnits& components)
-      : OpRewritePattern(context),
-        resource_kinds_(resource_kinds),
-        components_(components) {}
+      : OpRewritePattern(context), components_(components) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::ktdf::WriteToFifoOp write_op,
@@ -141,26 +132,20 @@ struct LowerWriteToFifoPattern
     auto fifo_slot_type =
         llvm::cast<mlir::ktdf::FifoSlotType>(write_op.getFifoSlot().getType());
 
-    // FIXME: Discover compute from op.
-    auto compute = resource_kinds_.getDefaultCompute();
-    if (!compute) {
-      return write_op.emitError(
-          "the architecture declares no default compute resource");
-    }
-
     // Convert data type (tensor or vector) to flattened vector type
-    auto vector_type =
-        getFlattenedVectorType(write_op.getData().getType(), compute);
+    auto vector_type = getFlattenedVectorType(write_op.getData().getType());
     if (!vector_type) {
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(write_op,
+                                         "vector does not have static shape");
     }
 
     // Find the enclosing program_unit
     auto program_unit =
         write_op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
     if (!program_unit) {
+      // FIXME: Patterns can only fail to apply, not fail the pass.
       write_op.emitError("write_to_fifo must be inside a program_unit");
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(write_op, "not inside a program_unit");
     }
 
     // Resolve the destination unit from the FIFO dest attribute
@@ -168,7 +153,8 @@ struct LowerWriteToFifoPattern
         fifo_slot_type.getDest(), components_, rewriter, program_unit,
         write_op.getLoc(), write_op.getOperation());
     if (mlir::failed(queried_unit_result)) {
-      return mlir::failure();
+      return rewriter.notifyMatchFailure(
+          write_op, "unable to determine destination unit");
     }
     mlir::Value queried_unit = *queried_unit_result;
 
@@ -191,7 +177,6 @@ struct LowerWriteToFifoPattern
   }
 
  private:
-  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
   const ResourceToUnits& components_;
 };
 
@@ -599,9 +584,7 @@ struct LowerSignalPattern
 /// Lowers the copy to agen.vector_store of the source value into the dest.
 struct LowerMemRefCopyFromFifoPattern
     : public mlir::OpRewritePattern<mlir::memref::CopyOp> {
-  LowerMemRefCopyFromFifoPattern(
-      mlir::MLIRContext* context,
-      mlir::ktdf_arch::ResourceKinds& /*resource_kinds*/)
+  explicit LowerMemRefCopyFromFifoPattern(mlir::MLIRContext* context)
       : OpRewritePattern(context, /*benefit=*/2) {}
 
   mlir::LogicalResult matchAndRewrite(
@@ -876,18 +859,15 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
 mlir::LogicalResult scheduler::runOperationLowerings(
     mlir::func::FuncOp func,
     const scheduler::SchedulerExtContext& scheduler_ctx,
-    const ResourceToUnits& components,
-    mlir::ktdf_arch::ResourceKinds& resource_kinds, SymbolAllocator& symbols) {
+    const ResourceToUnits& components, mlir::ktdf_arch::Mapping& mapping,
+    SymbolAllocator& symbols) {
   // Lower linalg.generic compute operations and FIFO operations
   mlir::RewritePatternSet patterns(func.getContext());
-  populateLinalgLoweringPatterns(patterns, resource_kinds, symbols);
-  patterns.add<LowerMemRefCopyFromFifoPattern>(func.getContext(),
-                                               resource_kinds);
-  patterns.add<LowerReadFromFifoPattern>(func.getContext(), resource_kinds,
-                                         components);
-  patterns.add<LowerWriteToFifoPattern>(func.getContext(), resource_kinds,
-                                        components);
-  populateDataTransferLoweringPatterns(patterns, components, resource_kinds);
+  populateLinalgLoweringPatterns(patterns, symbols);
+  patterns.add<LowerMemRefCopyFromFifoPattern>(func.getContext());
+  patterns.add<LowerReadFromFifoPattern>(func.getContext(), components);
+  patterns.add<LowerWriteToFifoPattern>(func.getContext(), components);
+  populateDataTransferLoweringPatterns(patterns, components);
   patterns.add<LowerSignalPattern>(func.getContext(), scheduler_ctx,
                                    components);
   patterns.add<LowerGetTileSizePattern>(func.getContext(), scheduler_ctx,
@@ -898,7 +878,7 @@ mlir::LogicalResult scheduler::runOperationLowerings(
   }
 
   // Clone loops for buffer phase tracking and replace operations
-  if (mlir::failed(lowerDoubleBuffering(func, components, resource_kinds))) {
+  if (mlir::failed(lowerDoubleBuffering(func, mapping))) {
     return mlir::failure();
   }
 

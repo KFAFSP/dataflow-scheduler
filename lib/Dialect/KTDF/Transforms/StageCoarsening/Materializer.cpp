@@ -29,7 +29,6 @@
 #define DEBUG_TYPE "stage-coarsening-materializer"
 
 using namespace mlir;
-using ResourceType = mlir::Attribute;
 using namespace mlir::ktdf;
 
 Operation* StageCoarseningMaterializer::materialize(
@@ -358,16 +357,16 @@ ktdf::StageOp StageCoarseningMaterializer::materializeStageNode(
   // stage to carry the attribute. Inner stages without the attribute are
   // skipped so legacy inputs still parse cleanly.
   if (!new_stage.getApplicableUnitsAttr()) {
-    llvm::SmallSetVector<ResourceType, 4> union_units;
+    llvm::SmallSetVector<mlir::Attribute, 4> union_units;
     new_stage.walk([&](ktdf::StageOp inner_stage) {
       if (inner_stage == new_stage) return;
       if (auto attr = inner_stage.getApplicableUnitsAttr()) {
-        for (ResourceType unit : attr.getValue()) union_units.insert(unit);
+        for (mlir::Attribute unit : attr.getValue()) union_units.insert(unit);
       }
     });
     if (!union_units.empty()) {
-      llvm::SmallVector<ResourceType> units(union_units.begin(),
-                                            union_units.end());
+      llvm::SmallVector<Attribute> units(union_units.begin(),
+                                         union_units.end());
       new_stage.setApplicableUnitsAttr(builder_.getArrayAttr(units));
     }
   }

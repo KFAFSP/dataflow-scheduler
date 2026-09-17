@@ -27,11 +27,10 @@
 
 using namespace mlir;
 using namespace mlir::ktdf;
-using ResourceType = mlir::Attribute;
 
 auto mlir::ktdf::collectPipelineApplicableUnits(PipelineOp pipeline)
-    -> llvm::SmallSetVector<ResourceType, 4> {
-  llvm::SmallSetVector<ResourceType, 4> result;
+    -> llvm::SmallSetVector<scheduler::ResourceType, 4> {
+  llvm::SmallSetVector<scheduler::ResourceType, 4> result;
 
   for (StageOp stage : pipeline.getStages()) {
     auto attr = stage.getApplicableUnitsAttr();
@@ -44,7 +43,16 @@ auto mlir::ktdf::collectPipelineApplicableUnits(PipelineOp pipeline)
       llvm::report_fatal_error(llvm::Twine(os.str()));
     }
     for (mlir::Attribute unit : attr.getValue()) {
-      result.insert(unit);
+      const auto resource = dyn_cast<scheduler::ResourceType>(unit);
+      if (!resource) {
+        std::string msg;
+        llvm::raw_string_ostream os(msg);
+        os << "ktdf.stage at " << stage.getLoc();
+        os << " has invalid `applicable_units` attribute "
+              "(needed by ktdf::common::collectPipelineApplicableUnits)";
+        llvm::report_fatal_error(llvm::Twine(os.str()));
+      }
+      result.insert(resource);
     }
   }
 

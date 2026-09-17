@@ -24,7 +24,7 @@
 
 #include <cstddef>
 
-#include "mlir/IR/Attributes.h"
+#include "dataflow-scheduler/Analysis/Mapping.h"
 
 namespace scheduler {
 
@@ -32,9 +32,6 @@ namespace scheduler {
 namespace arch_view {
 class MemoryTree;
 }
-
-// Type alias for resource representation
-using ResourceType = mlir::Attribute;
 
 /// @brief MemoryTracker manages buffer allocations for different memory spaces.
 /// It tracks the next available address for each memory space and validates

@@ -21,7 +21,7 @@
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/DenseMap.h"
@@ -154,8 +154,7 @@ mlir::LogicalResult replaceBufferPhaseAndSelectInClonedLoops(
 
 mlir::LogicalResult processOneBufferPhasePair(
     mlir::ktdf::BufferPhaseOp buffer_phase_op,
-    const ResourceToUnits& components,
-    mlir::ktdf_arch::ResourceKinds& resource_kinds) {
+    mlir::ktdf_arch::Mapping& mapping) {
   // Validate num_phases == 2
   auto num_phases_attr = buffer_phase_op.getNumPhasesAttr();
   if (!num_phases_attr || num_phases_attr.getInt() != 2) {
@@ -202,12 +201,7 @@ mlir::LogicalResult processOneBufferPhasePair(
   mlir::Value offset_1 = get_mem_view_1.getStartAddress();
 
   // Resolve mode from enclosing program_unit's resource type
-  mlir::ktdf_arch::Resource resource;
-  auto resource_opt =
-      getEnclosingProgramUnitResourceType(buffer_phase_op.getOperation());
-  if (resource_opt) {
-    resource = resource_kinds.getInstance(*resource_opt);
-  }
+  auto resource = mapping.resolve(buffer_phase_op);
   if (!resource) {
     buffer_phase_op.emitError(
         "lowerDoubleBuffering: could not resolve component type from "
@@ -316,8 +310,7 @@ mlir::LogicalResult processOneBufferPhasePair(
 }  // namespace
 
 mlir::LogicalResult scheduler::lowerDoubleBuffering(
-    mlir::func::FuncOp func, const ResourceToUnits& components,
-    mlir::ktdf_arch::ResourceKinds& resource_kinds) {
+    mlir::func::FuncOp func, mlir::ktdf_arch::Mapping& mapping) {
   while (true) {
     mlir::ktdf::BufferPhaseOp found = nullptr;
     func.walk([&](mlir::ktdf::BufferPhaseOp bp) {
@@ -325,8 +318,7 @@ mlir::LogicalResult scheduler::lowerDoubleBuffering(
       return mlir::WalkResult::interrupt();
     });
     if (!found) break;
-    if (mlir::failed(
-            processOneBufferPhasePair(found, components, resource_kinds)))
+    if (mlir::failed(processOneBufferPhasePair(found, mapping)))
       return mlir::failure();
   }
   return mlir::success();

@@ -1,4 +1,4 @@
-//===------------------------------------------------------------*- c++ -*-===//
+//===-- Mapping.h -----------------------------------------------*- c++ -*-===//
 //
 // Part of the Dataflow Scheduler project.
 //
@@ -16,18 +16,16 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_LINALGLOWERING_H_
-#define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_LINALGLOWERING_H_
+#ifndef DATAFLOW_SCHEDULER_ANALYSIS_MAPPING_H_
+#define DATAFLOW_SCHEDULER_ANALYSIS_MAPPING_H_
 
-#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
-#include "mlir/IR/PatternMatch.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 
 namespace scheduler {
 
-/// Register LowerLinalgGenericPattern into the given pattern set.
-void populateLinalgLoweringPatterns(mlir::RewritePatternSet& patterns,
-                                    SymbolAllocator& symbols);
+/// Type used to represent a resource kind in the scheduler.
+using ResourceType = mlir::ktdf_arch::KindAttr;
 
 }  // namespace scheduler
 
-#endif  // DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_LINALGLOWERING_H_
+#endif  // DATAFLOW_SCHEDULER_ANALYSIS_MAPPING_H_

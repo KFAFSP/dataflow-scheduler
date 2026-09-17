@@ -28,6 +28,7 @@
 
 #include <optional>
 
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/ApplicableUnits.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/PipelineScope.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/Utils.h"
@@ -117,7 +118,7 @@ struct Candidate {
 }
 
 [[nodiscard]] auto findEnclosingGroup(
-    llvm::ArrayRef<mlir::Attribute> resources,
+    llvm::ArrayRef<ResourceType> resources,
     const mlir::ktdf_arch::ResourceKinds& resource_kinds)
     -> mlir::ktdf_arch::GroupOp {
   if (resources.empty()) {

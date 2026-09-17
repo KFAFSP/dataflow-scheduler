@@ -29,7 +29,6 @@
 #define DEBUG_TYPE "ktdf-to-operand-lowering"
 
 using namespace scheduler;
-using ResourceType = mlir::Attribute;
 
 // Lowercase unit-type tag for the emitted dataflow.get_unit `type`/`name`
 // strings (DFIR code generation requires lowercase). Compute resource tokens

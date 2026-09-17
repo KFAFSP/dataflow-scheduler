@@ -127,8 +127,8 @@ std::optional<CandidateShape> checkBufferShape(
 
   // b. Memory-space eligibility: check if it's per-core scratchpad memory.
   auto mspace_attr = extractMemorySpace(memref_ty);
-  if (!mspace_attr.has_value() ||
-      !memory_tree.isPerCoreScratchPadMemory(*mspace_attr)) {
+  if (!mspace_attr.has_value() || !memory_tree.isPerCoreScratchPadMemory(
+                                      llvm::cast<ResourceType>(*mspace_attr))) {
     LDBG(1) << " slot " << slot << " skipped : memory space ineligible ";
     return std::nullopt;
   }

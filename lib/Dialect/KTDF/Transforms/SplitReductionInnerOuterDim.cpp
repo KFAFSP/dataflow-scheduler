@@ -23,7 +23,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
@@ -468,17 +468,19 @@ struct SplitReductionInnerOuterDimPass
 
     ModuleOp module = getOperation();
 
-    // Obtain the device manager and derive vector_length from the SIMD feature.
-    auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
-    auto* const device = device_manager.getOrImportDevice();
-    if (!device) {
-      module->emitError(PASS_NAME
-                        ": unable to import the device specification");
+    // Obtain the default device, emitting a diagnostic on failure.
+    const auto& default_device = getAnalysis<mlir::ktdf_arch::DefaultDevice>();
+    if (!default_device) {
       signalPassFailure();
       return;
     }
-    auto& resource_kinds =
-        device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
+    mlir::ktdf_arch::Mapping mapping(default_device.getRef());
+    if (!mapping.byKind().getDefaultCompute()) {
+      mapping.getDevice().getDeclaration().emitError(
+          "no (unambiguous) default compute resource");
+      signalPassFailure();
+      return;
+    }
 
     // Collect eligible linalg.generic ops: at least two reduction iterator
     // types, with one reduction dim mapping to the rightmost non-1 input dim.
@@ -493,19 +495,20 @@ struct SplitReductionInnerOuterDimPass
       return;
     }
 
-    // FIXME: Discover compute from op.
-    auto compute = resource_kinds.getDefaultCompute();
-    if (!compute) {
-      getOperation().emitError(
-          "cannot determine the hardware vector width: the architecture "
-          "declares no default compute resource");
-      signalPassFailure();
-      return;
-    }
-
-    auto simd_feature = compute.getFeature<mlir::ktdf_arch::feature::SIMD>();
-
     for (linalg::GenericOp generic_op : candidates) {
+      auto compute = mapping.getOrMap<mlir::ktdf_arch::ExecutionUnitOp>(
+          generic_op, mapping.byKind().getDefaultCompute().getKind());
+      if (!compute) {
+        generic_op.emitError(
+            "cannot determine the hardware vector width: no compute resource "
+            "is mapped");
+        signalPassFailure();
+        return;
+      }
+
+      const auto simd_feature =
+          compute.getFeature<mlir::ktdf_arch::feature::SIMD>();
+
       // Derive the element type from the first output (the accumulator).
       auto output_type =
           dyn_cast<ShapedType>(generic_op.getOutputs().front().getType());

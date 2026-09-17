@@ -19,17 +19,17 @@
 #ifndef DATAFLOW_SCHEDULER_CONVERSION_KTDFTOKTDFLOW_SIGNALINSERTION_H_
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFTOKTDFLOW_SIGNALINSERTION_H_
 
+#include <llvm/ADT/ArrayRef.h>
+#include <llvm/ADT/SmallVector.h>
+#include <mlir/Dialect/SCF/IR/SCF.h>
+#include <mlir/IR/Operation.h>
+
 #include <map>
 
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/StageToUnitsMap.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/GlobalStageDAG.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
-#include "dataflow-scheduler/Utils/SchedulerExtContext.h"
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallVector.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/Operation.h"
 
 namespace scheduler {
 

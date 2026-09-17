@@ -37,12 +37,10 @@
 
 #include <optional>
 
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 
 namespace scheduler {
-
-// Type alias for resource representation - mlir::Attribute
-using ResourceType = mlir::Attribute;
 
 namespace arch_view {
 

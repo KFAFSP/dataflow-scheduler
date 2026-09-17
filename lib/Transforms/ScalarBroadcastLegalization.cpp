@@ -31,6 +31,7 @@
 
 #include <memory>
 
+#include "dataflow-scheduler/Analysis/Mapping.h"
 #include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
@@ -66,37 +67,38 @@ static llvm::cl::opt<bool> DisableThisPass(
 namespace {
 
 [[nodiscard]]
-auto getResourceKind(mlir::Type type, bool is_source) -> mlir::Attribute {
-  return llvm::TypeSwitch<mlir::Type, mlir::Attribute>(type)
-      .Case([&](mlir::ktdf::FifoSlotType type) -> mlir::Attribute {
-        return is_source ? type.getDest() : type.getSrc();
+auto getResourceKind(mlir::Type type, bool is_source) -> ResourceType {
+  return llvm::TypeSwitch<mlir::Type, ResourceType>(type)
+      .Case([&](mlir::ktdf::FifoSlotType type) -> ResourceType {
+        return llvm::cast<ResourceType>(is_source ? type.getDest()
+                                                  : type.getSrc());
       })
-      .Case([&](mlir::MemRefType type) -> mlir::Attribute {
-        return type.getMemorySpace();
+      .Case([&](mlir::MemRefType type) -> ResourceType {
+        return llvm::cast<ResourceType>(type.getMemorySpace());
       })
       .Default(nullptr);
 }
 
 [[nodiscard]]
-auto getResourceKind(mlir::ktdf::StageOp stage) -> mlir::Attribute {
+auto getResourceKind(mlir::ktdf::StageOp stage) -> ResourceType {
   if (const auto maybe_units = stage.getApplicableUnits();
       maybe_units && maybe_units->size() == 1) {
-    return maybe_units->getValue().front();
+    return llvm::cast<ResourceType>(maybe_units->getValue().front());
   }
 
   return nullptr;
 }
 
 [[nodiscard]]
-auto getResourceKind(mlir::Value value, bool is_source) -> mlir::Attribute {
+auto getResourceKind(mlir::Value value, bool is_source) -> ResourceType {
   // Try to get the space from the type of the value.
-  if (auto kind = getResourceKind(value.getType(), is_source)) return kind;
+  if (const auto kind = getResourceKind(value.getType(), is_source); kind) {
+    return kind;
+  }
 
   // Infer the space from the stage transfer units.
   auto stage = value.getDefiningOp()->getParentOfType<mlir::ktdf::StageOp>();
-  if (stage) return getResourceKind(stage);
-
-  return nullptr;
+  return stage ? getResourceKind(stage) : nullptr;
 }
 
 struct Hop {
