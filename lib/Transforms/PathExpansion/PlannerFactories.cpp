@@ -242,6 +242,45 @@ TransferMaterializationInfo* TransferInfoFactory::createFromTemplateWithBuffer(
   return result;
 }
 
+TransferMaterializationInfo* TransferInfoFactory::createFromTemplateWithSlot(
+    mlir::Operation* template_op,
+    const scheduler::arch_view::RoutingGraph::EdgeInfo& edge,
+    ResourceType source_resource, ResourceType dest_resource,
+    bool slot_is_source, const PrivateResourceSpec* spec, size_t slot_index) {
+  assert((mlir::isa<mlir::ktdf::DataTransferOp>(template_op) ||
+          mlir::isa<mlir::ktdf::IndDataTransferOp>(template_op)) &&
+         "template_op must be a DataTransferOp or IndDataTransferOp");
+
+  auto sides = extractTemplateSides(template_op);
+
+  auto transfer = std::make_unique<TransferMaterializationInfo>();
+  transfer->template_op = template_op;
+  transfer->hop = edge;
+  transfer->source_resource = source_resource;
+  transfer->dest_resource = dest_resource;
+
+  // Both sides keep what the template said; only the bound side changes which
+  // resource it refers to.
+  transfer->source_indices = sides.src_indices;
+  transfer->source_sizes = sides.src_sizes;
+  transfer->source_map = sides.src_map;
+  transfer->dest_indices = sides.dst_indices;
+  transfer->dest_sizes = sides.dst_sizes;
+  transfer->dest_map = sides.dst_map;
+
+  if (slot_is_source) {
+    transfer->source_private_resource = spec;
+    transfer->source_slot_index = slot_index;
+  } else {
+    transfer->dest_private_resource = spec;
+    transfer->dest_slot_index = slot_index;
+  }
+
+  TransferMaterializationInfo* result = transfer.get();
+  transfers_.push_back(std::move(transfer));
+  return result;
+}
+
 TransferMaterializationInfo* TransferInfoFactory::createFromFifoOp(
     mlir::Operation* fifo_op,
     const scheduler::arch_view::RoutingGraph::EdgeInfo& edge,

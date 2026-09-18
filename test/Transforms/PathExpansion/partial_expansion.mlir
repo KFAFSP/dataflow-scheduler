@@ -54,11 +54,11 @@
 // CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[VAL_2:.*]]#6) {
 // CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_0]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[VAL_2]]#0{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]]] size [1, 64] : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
 // CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_1]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[VAL_2]]#1{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]]] size [1, 64] : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
-// CHECK-NEXT:           }
+// CHECK-NEXT:           } {applicable_units = ["MNILU"]}
 // CHECK-NEXT:           ktdf.stage depends_in(%[[VAL_3:.*]]#6) depends_out(%[[VAL_3]]#7) {
 // CHECK-NEXT:             ktdf.data_transfer from %[[VAL_3]]#0{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[VAL_3]]#2 size [64] : memref<1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
 // CHECK-NEXT:             ktdf.data_transfer from %[[VAL_3]]#1{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[VAL_3]]#3 size [64] : memref<1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
-// CHECK-NEXT:           }
+// CHECK-NEXT:           } {applicable_units = ["L1LU"]}
 // CHECK-NEXT:           ktdf.stage depends_in(%[[VAL_4:.*]]#7) depends_out(%[[VAL_4]]#8) {
 // CHECK-NEXT:             %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[VAL_4]]#2 : <"L1LU" -> "SFU", 64xf16> -> tensor<64xf16>
 // CHECK-NEXT:             %[[READ_FROM_FIFO_1:.*]] = ktdf.read_from_fifo %[[VAL_4]]#3 : <"L1LU" -> "SFU", 64xf16> -> tensor<64xf16>

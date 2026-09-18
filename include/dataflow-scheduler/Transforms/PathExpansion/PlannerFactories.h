@@ -139,6 +139,24 @@ class TransferInfoFactory {
       bool intermediate_is_source, const PrivateResourceSpec* buffer_spec,
       mlir::OpBuilder& builder);
 
+  /// Create transfer from template with one side bound to a resource slot.
+  /// Used when a transfer keeps both of its operands but one of them has to
+  /// move to a differently-typed private resource, e.g. a FIFO whose endpoint
+  /// the planner resolved to a load/store unit.
+  /// @param template_op The original transfer operation to adapt
+  /// @param edge The architecture edge this transfer implements
+  /// @param source_resource The source resource
+  /// @param dest_resource The destination resource
+  /// @param slot_is_source Whether the slot replaces the source or the dest
+  /// @param spec The resource spec the bound side refers to
+  /// @param slot_index The slot index within that spec
+  /// @return Pointer to created transfer info (owned by factory)
+  TransferMaterializationInfo* createFromTemplateWithSlot(
+      mlir::Operation* template_op,
+      const scheduler::arch_view::RoutingGraph::EdgeInfo& edge,
+      ResourceType source_resource, ResourceType dest_resource,
+      bool slot_is_source, const PrivateResourceSpec* spec, size_t slot_index);
+
   /// Create transfer for FIFO operation
   /// Used when adapting FIFO read/write operations to work with path expansion
   /// @param fifo_op The FIFO operation (read or write)

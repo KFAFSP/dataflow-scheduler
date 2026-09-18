@@ -18,6 +18,8 @@
 
 #include "dataflow-scheduler/Transforms/PathExpansion/Planner.h"
 
+#include <llvm/ADT/TypeSwitch.h>
+#include <llvm/Support/Casting.h>
 #include <llvm/Support/ErrorHandling.h>
 
 #include "dataflow-scheduler/Analysis/ArchViews/RoutingGraph.h"
@@ -40,6 +42,8 @@
 #define DEBUG_TYPE "path-expansion-planner"
 
 using namespace scheduler;
+
+using Slot = mlir::TypedValue<mlir::ktdf::FifoSlotType>;
 
 namespace scheduler {
 
@@ -301,6 +305,61 @@ static ResourceType memrefMemorySpace(mlir::Value val) {
   if (auto mt = mlir::dyn_cast<mlir::MemRefType>(val.getType()))
     return llvm::cast<ResourceType>(mt.getMemorySpace());
   return nullptr;
+}
+
+/// Whether @p fifo_type names a FIFO the device implements.
+///
+/// A FIFO is realized by a single link of the architecture, so its endpoints
+/// have to be the two ends of one routing-graph edge.  The frontend knows only
+/// the memory space the data lives in, so it names that memory rather than the
+/// load/store unit that moves the data -- <"L1" -> "SFU"> for what the hardware
+/// implements as <"L1LU" -> "SFU">.  Those endpoints are ours to resolve.
+static bool isRealizableFifo(
+    mlir::ktdf::FifoSlotType fifo_type,
+    const scheduler::arch_view::RoutingGraph& arch_graph) {
+  auto src = mlir::dyn_cast<ResourceType>(fifo_type.getSrc());
+  auto dest = mlir::dyn_cast<ResourceType>(fifo_type.getDest());
+  if (!src || !dest || !arch_graph.getNode(src) || !arch_graph.getNode(dest)) {
+    return false;
+  }
+  return arch_graph.getEdgeInfoForResources(src, dest).has_value();
+}
+
+/// Whether any FIFO @p stage_op reads, writes or transfers through names a FIFO
+/// the device does not implement, and so has to be moved onto a load/store
+/// unit.  Indirect transfers are left out: their FIFO side is replaced by a
+/// staging buffer instead.
+static bool hasUnrealizableFifo(
+    mlir::ktdf::StageOp stage_op,
+    const scheduler::arch_view::RoutingGraph& arch_graph) {
+  const auto visit = [&](mlir::Operation* op) {
+    const auto slot =
+        llvm::TypeSwitch<mlir::Operation*, Slot>(op)
+            .Case([](mlir::ktdf::DataTransferOp transfer) -> Slot {
+              if (auto slot = llvm::dyn_cast<Slot>(transfer.getSource());
+                  slot) {
+                return slot;
+              }
+              if (auto slot = llvm::dyn_cast<Slot>(transfer.getDestination());
+                  slot) {
+                return slot;
+              }
+              return nullptr;
+            })
+            .Case([](mlir::ktdf::ReadFromFifoOp read) {
+              return read.getFifoSlot();
+            })
+            .Case([](mlir::ktdf::WriteToFifoOp write) {
+              return write.getFifoSlot();
+            })
+            .Default(nullptr);
+    if (slot && !isRealizableFifo(slot.getType(), arch_graph)) {
+      return mlir::WalkResult::interrupt();
+    }
+
+    return mlir::WalkResult::advance();
+  };
+  return stage_op.walk(visit).wasInterrupted();
 }
 
 /// Return the {source, dest} memref memory-spaces from the first
@@ -751,6 +810,36 @@ static mlir::LogicalResult classifyOriginalStages(
   llvm::DenseMap<FifoKey, PrivateResourceSpec*> fifo_specs;
   llvm::DenseMap<FifoKey, size_t> fifo_next_slot;
 
+  // A FIFO is shared by the transfer stage that fills it and the compute stage
+  // that drains it, so both sides have to land on the same slot.
+  llvm::DenseMap<mlir::Value, std::pair<PrivateResourceSpec*, size_t>> slots;
+  const auto getOrCreateSlot =
+      [&](Slot orig_slot, ResourceType fifo_src,
+          ResourceType fifo_dest) -> std::pair<PrivateResourceSpec*, size_t> {
+    if (auto it = slots.find(orig_slot); it != slots.end()) {
+      return it->second;
+    }
+
+    const auto fifo_slot_type = orig_slot.getType();
+    assert(!fifo_slot_type.isDynamicNumElements() &&
+           "Dynamic FIFO sizes not supported in path expansion");
+    const int64_t num_elements = fifo_slot_type.getStaticNumElements();
+
+    const FifoKey fifo_key{fifo_src, fifo_dest};
+    if (auto it = fifo_specs.find(fifo_key); it == fifo_specs.end()) {
+      fifo_specs[fifo_key] = plan->resource_factory.createFifo(
+          fifo_src, fifo_dest, {num_elements}, fifo_slot_type.getElementType());
+      fifo_next_slot[fifo_key] = 0;
+    } else {
+      it->second->elements_per_slot.push_back(num_elements);
+    }
+
+    const size_t slot_idx = fifo_next_slot[fifo_key]++;
+    validateFifoSlotIndex(orig_slot, slot_idx, fifo_specs[fifo_key]);
+    slots[orig_slot] = {fifo_specs[fifo_key], slot_idx};
+    return slots[orig_slot];
+  };
+
   for (size_t i = 0; i < expanded_stages.size(); ++i) {
     StageNode* current_stage = expanded_stages[i];
     if (isIntermediateStage(current_stage)) continue;
@@ -764,10 +853,15 @@ static mlir::LogicalResult classifyOriginalStages(
     bool prev_is_intermediate = prev_stage && isIntermediateStage(prev_stage);
     bool next_is_intermediate = next_stage && isIntermediateStage(next_stage);
 
-    if (!prev_is_intermediate && !next_is_intermediate) continue;
-
     auto stage_op =
         mlir::cast<mlir::ktdf::StageOp>(current_stage->getOperation());
+
+    // A stage with no hop inserted next to it still has to be revisited when
+    // one of its FIFOs names an endpoint the device has no link for.
+    if (!prev_is_intermediate && !next_is_intermediate &&
+        !hasUnrealizableFifo(stage_op, arch_graph)) {
+      continue;
+    }
 
     // --- Transfer stage (kAdaptTransfer): memref/FIFO ↔ intermediate buffer
     // --- Shared helper: given a template op, its intermediate-buffer-side
@@ -822,6 +916,58 @@ static mlir::LogicalResult classifyOriginalStages(
       stage_info.kind = StageMaterializationInfo::Kind::kAdaptTransfer;
     };
 
+    // --- Transfer stage with no hop next to it (kAdaptTransfer): the transfer
+    // keeps both its operands and only its FIFO moves onto the unit this stage
+    // was resolved to. ---
+    const auto retypeTransferFifo = [&](mlir::ktdf::DataTransferOp transfer,
+                                        bool fifo_is_dest) {
+      using RK = scheduler::arch_view::RoutingGraph::ResourceNode::ResourceKind;
+
+      const auto fifo_side = llvm::cast<Slot>(
+          fifo_is_dest ? transfer.getDestination() : transfer.getSource());
+      if (isRealizableFifo(fifo_side.getType(), arch_graph)) {
+        return;
+      }
+
+      // The FIFO runs between this stage's load/store unit and the compute at
+      // its other end, so both have to be known before it can be named.
+      ResourceType unit = stage_info.applicable_unit.value_or(nullptr);
+      StageNode* compute_stage = fifo_is_dest ? next_stage : prev_stage;
+      if (!unit || !stage_info.stage_resource || !compute_stage) return;
+
+      ResourceType compute = plan->stage_info[compute_stage].stage_resource;
+      if (!compute) return;
+      auto compute_node = arch_graph.getNode(compute);
+      if (!compute_node || compute_node->kind != RK::Compute) return;
+
+      ResourceType fifo_src = fifo_is_dest ? unit : compute;
+      ResourceType fifo_dest = fifo_is_dest ? compute : unit;
+      auto [fifo_spec, slot_idx] =
+          getOrCreateSlot(fifo_side, fifo_src, fifo_dest);
+
+      // Use a dummy edge: this stage's memory and the compute are not adjacent
+      // in the routing graph, the load/store unit sits between them.
+      scheduler::arch_view::RoutingGraph::NodeId memory_node_id =
+          arch_graph.getNodeIdForResource(stage_info.stage_resource);
+      scheduler::arch_view::RoutingGraph::NodeId compute_node_id =
+          arch_graph.getNodeIdForResource(compute);
+      scheduler::arch_view::RoutingGraph::EdgeInfo edge{
+          fifo_is_dest ? memory_node_id : compute_node_id,
+          fifo_is_dest ? compute_node_id : memory_node_id, 1};
+
+      TransferMaterializationInfo* transfer_info =
+          plan->transfer_factory.createFromTemplateWithSlot(
+              transfer.getOperation(), edge, fifo_src, fifo_dest,
+              /*slot_is_source=*/!fifo_is_dest, fifo_spec, slot_idx);
+
+      stage_info.transfers.push_back(transfer_info);
+      stage_info.kind = StageMaterializationInfo::Kind::kAdaptTransfer;
+
+      LDBG(1) << "  Stage " << current_stage->getStageId()
+              << ": data_transfer - FIFO src=" << fifo_src
+              << ", dest=" << fifo_dest << ", slot " << slot_idx << "\n";
+    };
+
     // Indirect transfer: dir_dst (gather) or dir_src (scatter) is the FIFO
     // slot that gets replaced by the L1 staging buffer.
     // Run this walk first so the stage is classified before the DataTransferOp
@@ -860,6 +1006,11 @@ static mlir::LogicalResult classifyOriginalStages(
 
         if (src_is_memref == dest_is_memref) return mlir::WalkResult::advance();
 
+        if (!prev_is_intermediate && !next_is_intermediate) {
+          retypeTransferFifo(transfer, /*fifo_is_dest=*/src_is_memref);
+          return mlir::WalkResult::advance();
+        }
+
         mlir::MemRefType memref_type =
             src_is_memref ? mlir::cast<mlir::MemRefType>(src_type)
                           : mlir::cast<mlir::MemRefType>(dest_type);
@@ -881,16 +1032,21 @@ static mlir::LogicalResult classifyOriginalStages(
       if (!read_op && !write_op) return mlir::WalkResult::advance();
 
       bool is_read = (read_op != nullptr);
-      mlir::Value fifo_slot =
-          is_read ? read_op.getFifoSlot() : write_op.getFifoSlot();
-      auto fifo_slot_type =
-          mlir::cast<mlir::ktdf::FifoSlotType>(fifo_slot.getType());
+      const auto fifo_slot = llvm::cast<Slot>(is_read ? read_op.getFifoSlot()
+                                                      : write_op.getFifoSlot());
+      const auto fifo_slot_type = fifo_slot.getType();
 
       StageNode* adjacent_stage = is_read ? prev_stage : next_stage;
       bool adjacent_is_intermediate =
           is_read ? prev_is_intermediate : next_is_intermediate;
 
-      if (!adjacent_is_intermediate) return mlir::WalkResult::advance();
+      // A FIFO next to an original stage is left alone unless the device has no
+      // link for the endpoints it names, in which case it moves onto the unit
+      // that stage was resolved to.
+      if (!adjacent_is_intermediate &&
+          isRealizableFifo(fifo_slot_type, arch_graph)) {
+        return mlir::WalkResult::advance();
+      }
 
       // fifo_src = applicable_unit of the adjacent LS-unit stage (load side)
       // fifo_dest = applicable_unit of the adjacent LS-unit stage (store side)
@@ -912,26 +1068,16 @@ static mlir::LogicalResult classifyOriginalStages(
       ResourceType fifo_dest = is_read
                                    ? stage_info.stage_resource
                                    : adj_info.applicable_unit.value_or(nullptr);
-      assert(fifo_src && fifo_dest &&
-             "Expected valid FIFO endpoint attributes");
-
-      mlir::Type element_type = fifo_slot_type.getElementType();
-      assert(!fifo_slot_type.isDynamicNumElements() &&
-             "Dynamic FIFO sizes not supported in path expansion");
-      int64_t num_elements = fifo_slot_type.getStaticNumElements();
-
-      FifoKey fifo_key = {fifo_src, fifo_dest};
-      if (fifo_specs.find(fifo_key) == fifo_specs.end()) {
-        PrivateResourceSpec* spec = plan->resource_factory.createFifo(
-            fifo_src, fifo_dest, {num_elements}, element_type);
-        fifo_specs[fifo_key] = spec;
-        fifo_next_slot[fifo_key] = 0;
-      } else {
-        fifo_specs[fifo_key]->elements_per_slot.push_back(num_elements);
+      if (!fifo_src || !fifo_dest) {
+        // Nothing was resolved for the neighbour, so there is no endpoint to
+        // name; leave the FIFO to the legality checks downstream.
+        assert(!adjacent_is_intermediate &&
+               "Expected valid FIFO endpoint attributes");
+        return mlir::WalkResult::advance();
       }
 
-      size_t slot_idx = fifo_next_slot[fifo_key]++;
-      validateFifoSlotIndex(fifo_slot, slot_idx, fifo_specs[fifo_key]);
+      auto [fifo_spec, slot_idx] =
+          getOrCreateSlot(fifo_slot, fifo_src, fifo_dest);
 
       // Use a dummy edge since the routing graph has no direct edge between
       // stage_resource nodes (they go through LS-unit nodes).
@@ -945,8 +1091,7 @@ static mlir::LogicalResult classifyOriginalStages(
 
       TransferMaterializationInfo* transfer_info =
           plan->transfer_factory.createFromFifoOp(op, edge, fifo_src, fifo_dest,
-                                                  fifo_specs[fifo_key],
-                                                  slot_idx, is_read);
+                                                  fifo_spec, slot_idx, is_read);
 
       stage_info.transfers.push_back(transfer_info);
       stage_info.kind = StageMaterializationInfo::Kind::kAdaptFifoKinds;
@@ -954,7 +1099,8 @@ static mlir::LogicalResult classifyOriginalStages(
       LDBG(1) << "  Stage " << current_stage->getStageId() << ": "
               << (is_read ? "read_from_fifo" : "write_to_fifo")
               << " - FIFO src=" << fifo_src << ", dest=" << fifo_dest
-              << ", slot " << slot_idx << ", elements=" << num_elements << "\n";
+              << ", slot " << slot_idx
+              << ", elements=" << fifo_slot_type.getStaticNumElements() << "\n";
 
       return mlir::WalkResult::advance();
     });
@@ -1120,9 +1266,18 @@ static llvm::SmallVector<ResourceType> collectOriginalStageResourcePath(
 }
 
 static bool needsExpansion(
+    llvm::ArrayRef<StageNode*> sorted_stages,
     llvm::ArrayRef<ResourceType> endpoint_path,
     const scheduler::arch_view::RoutingGraph::Path& full_path,
     const scheduler::arch_view::RoutingGraph& arch_graph) {
+  // A FIFO the device does not implement has to be moved onto a load/store
+  // unit, even where the memory endpoints already line up.
+  for (StageNode* stage : sorted_stages) {
+    auto stage_op =
+        mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
+    if (stage_op && hasUnrealizableFifo(stage_op, arch_graph)) return true;
+  }
+
   llvm::SmallVector<ResourceType> full_path_no_ls;
   for (auto node_id : full_path) {
     auto node_opt = arch_graph.getNode(node_id);
@@ -1243,12 +1398,12 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
     LDBG(1) << "No resource path found\n";
     return nullptr;
   }
-  scheduler::arch_view::RoutingGraph::Path full_path = *full_path_opt;
 
-  LLVM_DEBUG(debugPrintFullPath(full_path));
+  LLVM_DEBUG(debugPrintFullPath(*full_path_opt));
 
   // PREP 5: Check whether path expansion is needed
-  if (!needsExpansion(endpoint_path, full_path, arch_graph)) {
+  if (!needsExpansion(sorted_stages, endpoint_path, *full_path_opt,
+                      arch_graph)) {
     plan->changed = false;
     LDBG(1) << "Pipeline already legal";
     return plan;
@@ -1257,8 +1412,9 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   plan->changed = true;
 
   int next_stage_id = static_cast<int>(sorted_stages.size());
-  if (mlir::failed(applyPathExpansion(tree, pipeline, full_path, sorted_stages,
-                                      arch_graph, plan.get(), next_stage_id))) {
+  if (mlir::failed(applyPathExpansion(tree, pipeline, *full_path_opt,
+                                      sorted_stages, arch_graph, plan.get(),
+                                      next_stage_id))) {
     return nullptr;
   }
 
