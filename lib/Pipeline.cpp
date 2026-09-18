@@ -37,7 +37,7 @@
 using namespace scheduler;
 
 void scheduler::buildKTIRFrontendPipeline(
-    mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
+    mlir::OpPassManager& pm, const SchedulerExtContext& /*scheduler_ctx*/) {
   // Checkpoint 'pre_mapping':
   //   - The input is legal KTIR, but not necessarily scheduler-legal.
   //   - The scheduler has not made any mapping / scheduling decisions yet.
@@ -48,7 +48,7 @@ void scheduler::buildKTIRFrontendPipeline(
 
   pm.addPass(createKTIRLegalityCheckPass());
   pm.addPass(createComputeGroupExtractionPass());
-  pm.addPass(createConstructThreeStagePipelinePass(scheduler_ctx));
+  pm.addPass(createConstructThreeStagePipelinePass());
 }
 
 void scheduler::buildSchedulerOptimizationPipeline(

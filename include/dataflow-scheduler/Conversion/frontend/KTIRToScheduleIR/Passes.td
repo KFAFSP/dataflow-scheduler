@@ -38,7 +38,6 @@ def ConstructThreeStagePipelinePass : Pass<"construct-three-stage-pipeline", "ml
   let description = [{
     This pass constructs a three-stage pipeline.
   }];
-  let constructor = "::scheduler::createConstructThreeStagePipelinePass()";
   let dependentDialects = [
     "mlir::arith::ArithDialect",
     "mlir::ktdf::KTDFDialect",

@@ -47,12 +47,13 @@
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/Value.h>
+#include <mlir/Interfaces/ViewLikeInterface.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Support/LLVM.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/DataTransferLowering.h"
-#include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
+#include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDFTypes.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
@@ -60,7 +61,6 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Transforms/Utils/CustomLinalgTiling.h"
-#include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 #include "ktir/Dialect/KTDP/KTDPTypes.h"
 
@@ -100,6 +100,7 @@ auto maxOrDefault(llvm::ArrayRef<T> items) -> T {
   return result;
 }
 
+/// Gets the memory space associated with @p memref .
 [[nodiscard]] auto getMemorySpace(mlir::TypedValue<mlir::MemRefType> memref)
     -> mlir::Attribute {
   if (const auto space = memref.getType().getMemorySpace(); space) {
@@ -116,6 +117,7 @@ auto maxOrDefault(llvm::ArrayRef<T> items) -> T {
   return nullptr;
 }
 
+/// Gets the memory space associated with @p access_tile .
 [[nodiscard]] auto getMemorySpace(
     mlir::TypedValue<mlir::ktdp::AccessTileType> access_tile)
     -> mlir::Attribute {
@@ -142,20 +144,12 @@ namespace {
 struct ConstructThreeStagePipelinePass
     : public impl::ConstructThreeStagePipelinePassBase<
           ConstructThreeStagePipelinePass> {
-  ConstructThreeStagePipelinePass(const SchedulerExtContext& scheduler_ctx)
-      : scheduler_ctx_(scheduler_ctx) {}
-
-  void getDependentDialects(mlir::DialectRegistry& registry) const override {
-    ConstructThreeStagePipelinePassBase::getDependentDialects(registry);
-  }
+  using ConstructThreeStagePipelinePassBase::
+      ConstructThreeStagePipelinePassBase;
 
   void runOnOperation() final;
 
  private:
-  const SchedulerExtContext& schedulerExtContext() const {
-    return scheduler_ctx_;
-  }
-
   // Process a single function
   void runOnFunc(mlir::func::FuncOp func_op);
 
@@ -170,7 +164,7 @@ struct ConstructThreeStagePipelinePass
 
   // Determine tile sizes based on vector_length from linalg operation
   llvm::SmallVector<int64_t> determineTileSizes(
-      mlir::linalg::LinalgOp linalgOp);
+      mlir::linalg::LinalgOp linalg_op);
 
   // Create loops from linalg operations by tiling
   void createLoopsFromLinalg(
@@ -230,9 +224,7 @@ struct ConstructThreeStagePipelinePass
   void cleanupOperations();
 
   // Member variables
-  const SchedulerExtContext& scheduler_ctx_;
-
-  mlir::ktdf_arch::Mapping* mapping_;
+  mlir::ktdf_arch::Mapping* mapping_ = nullptr;
   llvm::DenseMap<mlir::Attribute, mlir::Attribute> mem_space_map_;
 
   // Collected ktdp.load and ktdp.store operations
@@ -1268,48 +1260,51 @@ mlir::Value ConstructThreeStagePipelinePass::computeReinterpretCastOffset(
 
 void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     mlir::func::FuncOp func_op) {
+  // Hoist the ktdp.construct_memory_view and ktdp.construct_access_tile ops
+  // before the outermost tiled loop (or the return if no loops exist).
+  //
+  // FIXME: Hoisting in this pass is generally unsafe because we don't check
+  //        SSA dominance is upheld for operands that aren't memrefs.
+  //        In fact, it is entirely unnecessary and only becomes a problem
+  //        because our linalg loop tiling is not a valid transform.
   llvm::SmallVector<mlir::ktdp::ConstructAccessTilesOp> access_tiles;
-  func_op.walk([&](mlir::ktdp::ConstructAccessTilesOp access_tile) {
-    access_tiles.push_back(access_tile);
-  });
-
-  if (access_tiles.empty()) {
-    return;
-  }
-
-  // Hoist construct_memory_view and construct_access_tile ops to just before
-  // the outermost tiled loop (or the func terminator if no loops exist).
-  // This ensures both the memory views and the access tiles — and therefore the
-  // memory_space_cast / reinterpret_cast we are about to emit in their place —
-  // all precede the pipeline that consumes them.
-  // We use the outermost tiled loop as the insertion anchor because that is
-  // where the pipeline lives; everything hoisted before it will dominate all
-  // uses inside the loop body.
-  mlir::Operation* hoist_before = tiled_loops_.empty()
-                                      ? func_op.front().getTerminator()
-                                      : tiled_loops_.front();
   {
-    // Hoist memory views first (access tiles depend on them).
-    llvm::SmallVector<mlir::ktdp::ConstructMemoryViewOp> mem_views;
-    func_op.walk(
-        [&](mlir::ktdp::ConstructMemoryViewOp mv) { mem_views.push_back(mv); });
-    for (auto mv : mem_views) {
-      mv->moveBefore(hoist_before);
-    }
-  }
-  // Hoist access tiles themselves so that inserting the casts before each
-  // access tile (below) also lands before the pipeline.
-  for (auto at : access_tiles) {
-    at->moveBefore(hoist_before);
+    auto* const hoist_before = tiled_loops_.empty()
+                                   ? func_op.front().getTerminator()
+                                   : tiled_loops_.front();
+    llvm::DenseSet<mlir::Operation*> hoisted;
+    const auto visit = [&](mlir::ktdp::ConstructAccessTilesOp access_tile) {
+      if (!hoisted.insert(access_tile).second) {
+        return;
+      }
+      access_tiles.push_back(access_tile);
+      access_tile->moveBefore(hoist_before);
+      mlir::Operation* last_user = access_tile;
+
+      for (auto addr = llvm::dyn_cast<mlir::TypedValue<mlir::MemRefType>>(
+               access_tile.getBase());
+           addr;) {
+        auto view = addr.getDefiningOp<mlir::ViewLikeOpInterface>();
+        if (!view) {
+          break;
+        }
+        if (hoisted.insert(view).second) {
+          view->moveBefore(last_user);
+        }
+        last_user = view;
+        addr = llvm::dyn_cast<mlir::TypedValue<mlir::MemRefType>>(
+            view.getViewSource());
+      }
+    };
+    func_op.walk(visit);
   }
 
   mlir::OpBuilder builder(&getContext());
 
   for (mlir::ktdp::ConstructAccessTilesOp access_tile : access_tiles) {
-    // Get the memory view (source memref) - first operand
-    const auto memory_view = llvm::dyn_cast<mlir::TypedValue<mlir::MemRefType>>(
+    const auto base = llvm::dyn_cast<mlir::TypedValue<mlir::MemRefType>>(
         access_tile.getBase());
-    if (!memory_view) {
+    if (!base) {
       access_tile.emitError("Memory view is not a memref type");
       signalPassFailure();
       return;
@@ -1317,7 +1312,8 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
 
     // Get the access tile indices and base_map. base_map projects the index
     // operands onto the per-dimension coordinates of the source memref, so
-    // indices.size() == base_map.getNumInputs() and base_map.getNumResults()
+    // indices.size() == base_map.getNumInputs() and
+    // base_map.getNumResults()
     // == memref rank. For the common case base_map is identity.
     llvm::SmallVector<mlir::Value> raw_indices = access_tile.getIndices();
     mlir::AffineMap base_map = access_tile.getBaseMap();
@@ -1338,15 +1334,15 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     // Get strides from memory view type
     llvm::SmallVector<int64_t> strides;
     if (auto strided_layout = mlir::dyn_cast<mlir::StridedLayoutAttr>(
-            memory_view.getType().getLayout())) {
+            base.getType().getLayout())) {
       strides.assign(strided_layout.getStrides().begin(),
                      strided_layout.getStrides().end());
     } else {
       // Default strides for row-major layout
       int64_t stride = 1;
-      for (int i = memory_view.getType().getRank() - 1; i >= 0; --i) {
+      for (int i = base.getType().getRank() - 1; i >= 0; --i) {
         strides.insert(strides.begin(), stride);
-        stride *= memory_view.getType().getShape()[i];
+        stride *= base.getType().getShape()[i];
       }
     }
 
@@ -1358,8 +1354,8 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     mlir::Location loc = access_tile.getLoc();
 
     // Apply base_map to materialize one index per source-memref dimension.
-    // Operands to expandAffineMap are dim-values followed by symbol-values; the
-    // op's symbol_operands feed both base_map symbols (if any) and the
+    // Operands to expandAffineMap are dim-values followed by symbol-values;
+    // the op's symbol_operands feed both base_map symbols (if any) and the
     // access_tile_set, so they are appended after the raw indices.
     llvm::SmallVector<mlir::Value> expand_operands(raw_indices.begin(),
                                                    raw_indices.end());
@@ -1377,7 +1373,8 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     llvm::SmallVector<mlir::Value> indices(per_dim_indices->begin(),
                                            per_dim_indices->end());
 
-    // After base_map expansion, indices.size() == memref rank == strides.size()
+    // After base_map expansion, indices.size() == memref rank ==
+    // strides.size()
     if (indices.size() != strides.size()) {
       access_tile.emitError("Number of indices (")
           << indices.size() << ") does not match number of strides ("
@@ -1402,22 +1399,22 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
       reinterpret_strides.push_back(builder.getIndexAttr(stride));
     }
 
-    // Map the ktdp memory space to the device namespace using mem_space_mapping
-    const auto memory_space = mapMemorySpace(getMemorySpace(memory_view));
+    // Map the ktdp memory space to the device namespace using
+    // mem_space_mapping
+    const auto memory_space = mapMemorySpace(getMemorySpace(base));
     // This propagates the mapped memory space to the reinterpret_cast
-    const auto cast_source_type =
-        mlir::MemRefType::get(memory_view.getType().getShape(),
-                              memory_view.getType().getElementType(),
-                              memory_view.getType().getLayout(), memory_space);
+    const auto cast_source_type = mlir::MemRefType::get(
+        base.getType().getShape(), base.getType().getElementType(),
+        base.getType().getLayout(), memory_space);
     auto memory_space_cast = mlir::memref::MemorySpaceCastOp::create(
-        builder, loc, cast_source_type, memory_view);
+        builder, loc, cast_source_type, base);
 
     llvm::SmallVector<int64_t> result_shape(tile_dims.begin(), tile_dims.end());
     mlir::StridedLayoutAttr strided_layout = mlir::StridedLayoutAttr::get(
         builder.getContext(), mlir::ShapedType::kDynamic, strides);
-    const auto result_type = mlir::MemRefType::get(
-        result_shape, memory_view.getType().getElementType(), strided_layout,
-        memory_space);
+    const auto result_type =
+        mlir::MemRefType::get(result_shape, base.getType().getElementType(),
+                              strided_layout, memory_space);
 
     mlir::OpFoldResult offset_fold_result(offset);
     auto cast_op = mlir::memref::ReinterpretCastOp::create(
@@ -1430,13 +1427,15 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
 }
 
 void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
+  if (func_op.empty()) {
+    return;
+  }
+
   LDBG(1) << "Processing function: " << func_op.getName() << "";
 
   // Initialize const_builder_ at start of function
-  if (!func_op.empty()) {
-    const_builder_.emplace(&getContext());
-    const_builder_->setInsertionPointToStart(&func_op.front());
-  }
+  const_builder_.emplace(&getContext());
+  const_builder_->setInsertionPointToStart(&func_op.front());
 
   // Step 1: Generalize named linalg operations and arith/math operations to
   // linalg.generic
@@ -1503,7 +1502,8 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
 
   LDBG(1) << "After pipeline created:\n" << func_op << "\n";
 
-  // Step 5: Replace access tiles with reinterpret_cast after pipeline creation
+  // Step 5: Replace access tiles with reinterpret_cast after pipeline
+  // creation
   replaceAccessTilesWithReinterpretCast(func_op);
 
   // Step 6: Cleanup operations (removes original load/store/compute ops)
@@ -1524,7 +1524,8 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
     return;
   }
 
-  // Construct a mapping adapter and ensure we have a default compute resource.
+  // Construct a mapping adapter and ensure we have a default compute
+  // resource.
   mlir::ktdf_arch::Mapping mapping(default_device.getRef());
   if (!mapping.byKind().getDefaultCompute()) {
     mapping.getDevice().getDeclaration().emitError(
@@ -1549,14 +1550,4 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
     resetState();
     runOnFunc(func_op);
   });
-}
-
-std::unique_ptr<mlir::Pass> scheduler::createConstructThreeStagePipelinePass(
-    const SchedulerExtContext& scheduler_ctx) {
-  return std::make_unique<ConstructThreeStagePipelinePass>(scheduler_ctx);
-}
-
-std::unique_ptr<mlir::Pass> scheduler::createConstructThreeStagePipelinePass() {
-  return std::make_unique<ConstructThreeStagePipelinePass>(
-      SchedulerExtContext::dummyContext());
 }
