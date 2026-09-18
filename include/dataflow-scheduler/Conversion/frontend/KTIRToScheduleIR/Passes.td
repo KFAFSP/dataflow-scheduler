@@ -61,7 +61,7 @@ def KTIRLegalityCheckPass : Pass<"ktir-legality-check", "mlir::ModuleOp"> {
   ];
 }
 
-def FuseLinalgPass : Pass<"fuse-linalg", "mlir::func::FuncOp"> {
+def FuseLinalgPass : Pass<"fuse-linalg", ""> {
   let summary = "Fuses `linalg.generic` operations";
   let description = [{
     Performs mapping-aware fusion of `linalg.generic` operations. Currently,
