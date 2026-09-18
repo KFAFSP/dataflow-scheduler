@@ -43,8 +43,11 @@
 //      - tensor.empty is emitted before the outermost loop (accumulator init).
 //      - Each loop level carries the accumulator as iter_args; the value
 //        threads down to the innermost loop where linalg.generic runs.
-//      - write_to_fifo is wrapped in scf.if (all ivs == last) in the
-//        innermost loop body.
+//      - When the generic writes to a FIFO directly, write_to_fifo is wrapped
+//        in scf.if (all ivs == last) in the innermost loop body.
+//      - When the generic feeds downstream ops (e.g. an inner-dim reduction
+//        after SplitReductionInnerOuterDim), uses of the original generic are
+//        replaced with the outermost loop results.
 //      - The outermost loop is tagged {loop_type = reduction_loop}.
 //   9. Find the conditional-store stage via StageFactory::findStoreStage
 //      (downstream of compute via depends_out/depends_in token chain).
@@ -878,16 +881,11 @@ struct ReductionLoopExposurePass
   // Rewrite the compute stage with N nested scf.for loops (one per
   // reduction dim), each carrying the accumulator tensor as iter_arg.
   //
-  // The accumulator seed is determined before the outermost loop:
-  //   - On the first chunk (is_first_chunk == true): tensor.empty (zero init).
-  //   - On subsequent chunks: read the previous partial result from
-  //     fifo_in_partial.
+  // The accumulator is always seeded with tensor.empty before the outermost
+  // loop.  Cross-chunk partial accumulation is the responsibility of the
+  // combine scf.if already present in the stage body.
   //
-  //   %seed = scf.if %is_first -> tensor<...> {
-  //     %e = tensor.empty(); scf.yield %e
-  //   } else {
-  //     %p = ktdf.read_from_fifo fifo_in_partial; scf.yield %p
-  //   }
+  //   %seed = tensor.empty()
   //   scf.for %r0 = 0 to D0 iter_args(%a0 = %seed) {loop_type = reduction}
   //     ...
   //       %slice = ktdf.read_from_fifo fifo_in
@@ -917,49 +915,15 @@ struct ReductionLoopExposurePass
     // already in front of the loops, and what reads its result is behind them.
     rewriter.setInsertionPoint(generic_op);
 
-    // Accumulator seed: when a partial FIFO path exists, on the first chunk
-    // zero-init via tensor.empty; on subsequent chunks read the previous
-    // partial result from fifo_in_partial.  When there is no partial path
-    // (pipeline has no accumulator feedback), always use tensor.empty.
+    // Accumulator seed: always initialize with tensor.empty.
     const unsigned results = static_cast<unsigned>(generic_op.getNumResults());
 
     SmallVector<Value> seeds;
-    if (fifo_in_partial && is_first_chunk) {
-      if (results != 1) {
-        return generic_op.emitError(
-            PASS_NAME
-            ": a compute with more than one accumulator has no partial fifo "
-            "per accumulator to read the previous chunk from");
-      }
-      // Build the seed scf.if with an else region.  The regions start empty,
-      // so we use OpBuilder::atBlockBegin (not getTerminator()) to populate
-      // them before inserting the scf.yield terminator.
-      auto seed_if =
-          scf::IfOp::create(rewriter, loc, TypeRange{output_tensor_type},
-                            is_first_chunk, /*withElseRegion=*/true);
-      {
-        Block& then_block = seed_if.getThenRegion().front();
-        OpBuilder then_b = OpBuilder::atBlockBegin(&then_block);
-        auto empty =
-            tensor::EmptyOp::create(then_b, loc, output_tensor_type.getShape(),
-                                    output_tensor_type.getElementType());
-        scf::YieldOp::create(then_b, loc, ValueRange{empty.getResult()});
-      }
-      {
-        Block& else_block = seed_if.getElseRegion().front();
-        OpBuilder else_b = OpBuilder::atBlockBegin(&else_block);
-        auto partial_read = ktdf::ReadFromFifoOp::create(
-            else_b, loc, output_tensor_type, fifo_in_partial);
-        scf::YieldOp::create(else_b, loc, ValueRange{partial_read.getResult()});
-      }
-      seeds.push_back(seed_if.getResult(0));
-    } else {
-      for (unsigned r = 0; r < results; ++r) {
-        seeds.push_back(tensor::EmptyOp::create(
-                            rewriter, loc, output_tensor_type.getShape(),
-                            output_tensor_type.getElementType())
-                            .getResult());
-      }
+    for (unsigned r = 0; r < results; ++r) {
+      seeds.push_back(
+          tensor::EmptyOp::create(rewriter, loc, output_tensor_type.getShape(),
+                                  output_tensor_type.getElementType())
+              .getResult());
     }
 
     // Build the nested loops, threading each accumulator through every level.
@@ -989,36 +953,40 @@ struct ReductionLoopExposurePass
         body_builder.clone(*generic_op.getOperation(), mapping));
     ValueRange updated = new_generic.getResults();
 
+    // Replace the placeholder yield in the innermost loop with the real one.
+    for (unsigned r = 0; r < results; ++r) {
+      inner_yield->setOperand(r, updated[r]);
+    }
+
+    rewriter.setInsertionPointAfter(nested.outermost_loop);
+
+    SmallVector<Value> final_results;
+    for (unsigned r = 0; r < results; ++r)
+      final_results.push_back(nested.outermost_loop.getResult(r));
+
     if (fifo_outs.front()) {
-      // Each result feeds a write_to_fifo directly.  Emit the guarded writes on
-      // the last iteration and drop the original write ops.
+      // Emit the guarded writes on the last iteration inside the innermost
+      // loop.
       Value is_last = buildAllLast(body_builder, loc, nested.ivs, last_vals);
-      auto if_op = scf::IfOp::create(body_builder, loc, TypeRange{}, is_last,
-                                     /*withElseRegion=*/false);
-      OpBuilder then_builder(if_op.getThenRegion().front().getTerminator());
+      auto last_if = scf::IfOp::create(body_builder, loc, TypeRange{}, is_last,
+                                       /*withElseRegion=*/false);
+      OpBuilder then_builder(last_if.getThenRegion().front().getTerminator());
       for (unsigned r = 0; r < results; ++r) {
         ktdf::WriteToFifoOp::create(then_builder, loc, updated[r],
                                     fifo_outs[r]);
       }
     } else {
       // The generic's result feeds other ops (e.g. a downstream inner-dim
-      // reduction).  Replace all uses of the original generic with the
-      // outermost loop result so those ops pick up the fully-accumulated
-      // tensor after the loop completes.
+      // reduction). Replace all uses of the original generic with the
+      // final results.
       for (unsigned r = 0; r < results; ++r) {
-        generic_op.getResult(r).replaceAllUsesWith(
-            nested.outermost_loop.getResult(r));
+        generic_op.getResult(r).replaceAllUsesWith(final_results[r]);
       }
       // write_to_fifo has no results so use_empty() is always true; exclude
       // it from the erase list so it is preserved together with the ops that
       // feed it (G2 etc).
       llvm::erase_if(
           to_erase, [](Operation* op) { return isa<ktdf::WriteToFifoOp>(op); });
-    }
-
-    // Replace the placeholder yield in the innermost loop with the real one.
-    for (unsigned r = 0; r < results; ++r) {
-      inner_yield->setOperand(r, updated[r]);
     }
 
     // Erase original body ops (reverse order, only if unused).

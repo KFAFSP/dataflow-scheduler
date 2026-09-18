@@ -76,17 +76,11 @@
 // CHECK-NEXT:                     } {loop_type = #ktdf.loop_type<reduction_loop>}
 // CHECK-NEXT:                   } {applicable_units = ["L1LU"]}
 // CHECK-NEXT:                   ktdf.stage depends_in(%[[VAL_8:.*]]#3) depends_out(%[[VAL_8]]#4) {
-// CHECK-NEXT:                     %[[IF_0:.*]] = scf.if %[[ANDI_0]] -> (tensor<64xf16>) {
-// CHECK-NEXT:                       %[[EMPTY_0:.*]] = tensor.empty() : tensor<64xf16>
-// CHECK-NEXT:                       scf.yield %[[EMPTY_0]] : tensor<64xf16>
-// CHECK-NEXT:                     } else {
-// CHECK-NEXT:                       %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[VAL_8]]#1 : <"L1LU" -> "SFU", 64xf16> -> tensor<64xf16>
-// CHECK-NEXT:                       scf.yield %[[READ_FROM_FIFO_0]] : tensor<64xf16>
-// CHECK-NEXT:                     }
+// CHECK-NEXT:                     %[[EMPTY_0:.*]] = tensor.empty() : tensor<64xf16>
 // CHECK-NEXT:                     %[[CONSTANT_11:.*]] = arith.constant 64 : index
-// CHECK-NEXT:                     %[[FOR_0:.*]] = scf.for %[[VAL_9:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_11]] step %[[CONSTANT_8]] iter_args(%[[VAL_10:.*]] = %[[IF_0]]) -> (tensor<64xf16>) {
-// CHECK-NEXT:                       %[[READ_FROM_FIFO_1:.*]] = ktdf.read_from_fifo %[[VAL_8]]#0 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x1x64xf16>
-// CHECK-NEXT:                       %[[GENERIC_0:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_0]], #[[$ATTR_1]]], iterator_types = ["reduction", "reduction", "parallel"]} ins(%[[READ_FROM_FIFO_1]] : tensor<1x1x64xf16>) outs(%[[VAL_10]] : tensor<64xf16>) {
+// CHECK-NEXT:                     %[[FOR_0:.*]] = scf.for %[[VAL_9:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_11]] step %[[CONSTANT_8]] iter_args(%[[VAL_10:.*]] = %[[EMPTY_0]]) -> (tensor<64xf16>) {
+// CHECK-NEXT:                       %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[VAL_8]]#0 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x1x64xf16>
+// CHECK-NEXT:                       %[[GENERIC_0:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_0]], #[[$ATTR_1]]], iterator_types = ["reduction", "reduction", "parallel"]} ins(%[[READ_FROM_FIFO_0]] : tensor<1x1x64xf16>) outs(%[[VAL_10]] : tensor<64xf16>) {
 // CHECK-NEXT:                       ^bb0(%[[VAL_11:.*]]: f16, %[[VAL_12:.*]]: f16):
 // CHECK-NEXT:                         %[[ADDF_0:.*]] = arith.addf %[[VAL_11]], %[[VAL_12]] : f16
 // CHECK-NEXT:                         linalg.yield %[[ADDF_0]] : f16

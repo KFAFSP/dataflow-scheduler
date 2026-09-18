@@ -18,6 +18,8 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/ReductionChunkAnalysis.h"
 
+#include <numeric>
+
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -85,18 +87,10 @@ std::optional<ReductionChunkResult> mlir::ktdf::analyzeReductionChunks(
   int64_t max_n = 1;
   for (int64_t sz : red_dim_sizes) max_n *= sz;
 
-  // Find the smallest N ≥ 1 that meets the byte budget and divides every
-  // reduction-dimension size evenly.
+  // Find the smallest N ≥ 1 that brings the per-chunk byte count within the
+  // threshold.
   unsigned inferred_n = 0;
   for (int64_t n = 1; n <= max_n; ++n) {
-    bool divides_all = true;
-    for (int64_t sz : red_dim_sizes)
-      if (sz % n != 0) {
-        divides_all = false;
-        break;
-      }
-    if (!divides_all) continue;
-
     if (total_bytes / n <= chunk_size_threshold) {
       inferred_n = static_cast<unsigned>(n);
       break;
@@ -114,12 +108,31 @@ std::optional<ReductionChunkResult> mlir::ktdf::analyzeReductionChunks(
           << " (total_bytes=" << total_bytes
           << ", threshold=" << chunk_size_threshold << ")";
 
-  // Build per-dim chunk sizes.
-  SmallVector<int64_t> chunk_sizes;
-  chunk_sizes.reserve(reduction_dims.size());
-  for (int64_t sz : red_dim_sizes)
-    chunk_sizes.push_back(sz / static_cast<int64_t>(inferred_n));
-
-  return ReductionChunkResult{inferred_n, std::move(chunk_sizes),
+  return ReductionChunkResult{inferred_n, /*chunk_sizes=*/{},
                               std::move(reduction_dims)};
+}
+
+std::optional<llvm::SmallVector<int64_t>> mlir::ktdf::computeChunkDims(
+    llvm::ArrayRef<int64_t> red_dim_sizes, int64_t chunk_size) {
+  assert(chunk_size >= 1 && "chunk_size must be >= 1");
+
+  llvm::SmallVector<int64_t> new_sizes(red_dim_sizes.begin(),
+                                       red_dim_sizes.end());
+  int64_t remaining = chunk_size;
+  const size_t n = red_dim_sizes.size();
+
+  for (size_t i = 0; i < n && remaining > 1; ++i) {
+    int64_t dim_size = red_dim_sizes[i];
+
+    // Skip dimensions with a symbolic (dynamic) size.
+    if (dim_size == mlir::ShapedType::kDynamic) continue;
+
+    int64_t g = std::gcd(dim_size, remaining);
+    new_sizes[i] = dim_size / g;
+    remaining /= g;
+  }
+
+  if (remaining > 1) return std::nullopt;
+
+  return new_sizes;
 }

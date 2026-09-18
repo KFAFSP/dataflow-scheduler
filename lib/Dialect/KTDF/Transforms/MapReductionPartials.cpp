@@ -571,6 +571,167 @@ static LogicalResult rewriteGeneric(
 }
 
 // ---------------------------------------------------------------------------
+// Find the "combine-with-partial" scf.if that ReductionDimChunking wrapped
+// around `value`.  On the first chunk the IfOp passes `value` straight through,
+// so `value` is an operand of the then-branch yield:
+//
+//   %combined:N = scf.if %is_first -> (tensor<...>, ...) {
+//     scf.yield %value, ...        // first chunk: nothing to combine with
+//   } else {
+//     %p0, ... = ktdf.read_from_fifo ...
+//     %g:N = linalg.generic(parallel) ins(%p0, ...) outs(%value, ...)
+//     scf.yield %g#0, ...
+//   }
+//
+// The IfOp is therefore never a direct user of `value` — the then-branch yield
+// is.  Returns a null IfOp when `value` has no such user.
+// ---------------------------------------------------------------------------
+static scf::IfOp findCombineIf(Value value) {
+  for (Operation* user : value.getUsers()) {
+    auto yield = dyn_cast<scf::YieldOp>(user);
+    if (!yield) continue;
+    auto if_op = dyn_cast<scf::IfOp>(yield->getParentOp());
+    if (!if_op) continue;
+    if (yield->getParentRegion() != &if_op.getThenRegion()) continue;
+    return if_op;
+  }
+  return {};
+}
+
+// ---------------------------------------------------------------------------
+// The outermost scf.for enclosing `op` without leaving its ktdf.stage — the
+// head of the reduction loop nest ReductionLoopExposure built, whose results
+// carry the accumulators out of the nest.  Null when `op` is not in a loop.
+// ---------------------------------------------------------------------------
+static scf::ForOp outermostForInStage(Operation* op) {
+  auto stage = op->getParentOfType<ktdf::StageOp>();
+  scf::ForOp outermost;
+  for (auto for_op = op->getParentOfType<scf::ForOp>(); for_op;
+       for_op = for_op->getParentOfType<scf::ForOp>()) {
+    if (for_op->getParentOfType<ktdf::StageOp>() != stage) break;
+    outermost = for_op;
+  }
+  return outermost;
+}
+
+// ---------------------------------------------------------------------------
+// Lower a "combine-with-partial" scf.if to a result-less scf.if that combines
+// each previous chunk's partial straight into its accumulator destination.
+//
+// By the time this runs, the bypass rewrite has RAUW'd each result of the if
+// to the then-branch yield operand at the same index, and the reduction rewrite
+// has turned those yield operands into the memref(s) backing the
+// accumulator(s). Each else-branch yield operand is a linalg.generic whose outs
+// already point at the same memref.  We iterate over all results:
+//
+//   scf.if %is_first {
+//     // nothing — each dest already holds this chunk's result
+//   } else {
+//     %p0 = ktdf.read_from_fifo %partial_slot_0 -> memref<...>
+//     linalg.generic(parallel) ins(%p0) outs(%dest0)
+//     // ... one per result ...
+//   }
+//
+// The original scf.if is left in place; the caller erases it once nothing uses
+// its results.
+// ---------------------------------------------------------------------------
+static LogicalResult lowerCombineIfToMemref(scf::IfOp if_op) {
+  // ── Emit the lowered result-less scf.if ──────────────────────────────────
+  OpBuilder builder(if_op);
+  Location loc = if_op.getLoc();
+  auto new_if =
+      scf::IfOp::create(builder, loc, /*resultTypes=*/TypeRange{},
+                        if_op.getCondition(), /*withElseRegion=*/true);
+
+  // then-branch: empty — dest already holds the correct data.
+  // (The default result-less scf.yield terminator is already present.)
+
+  // else-branch: one buffer-semantics generic mirroring the combine generic.
+  // The combine generic has N inputs (one partial read per accumulator) and N
+  // outputs (one per result); we emit one memref read per input and collect all
+  // dests from the then-branch yield at the matching indices.
+  {
+    Block& new_else = new_if.getElseRegion().front();
+    OpBuilder else_b = OpBuilder::atBlockBegin(&new_else);
+
+    Operation* then_yield = if_op.getThenRegion().front().getTerminator();
+    auto else_yield =
+        cast<scf::YieldOp>(if_op.getElseRegion().front().getTerminator());
+
+    // All else-yield operands are results of the same combine generic.
+    auto combine_generic =
+        else_yield.getOperand(0).getDefiningOp<linalg::GenericOp>();
+    if (!combine_generic)
+      return if_op.emitError(
+          "lowerCombineIfToMemref: else-branch yield is not a linalg.generic "
+          "result");
+
+    // Collect memref-typed partials (one per input of the combine generic).
+    SmallVector<Value> partials;
+    for (Value tensor_read : combine_generic.getInputs()) {
+      auto read_op = tensor_read.getDefiningOp<ktdf::ReadFromFifoOp>();
+      if (!read_op)
+        return if_op.emitError(
+            "lowerCombineIfToMemref: combine generic input is not a "
+            "ktdf.read_from_fifo");
+      auto tensor_type = cast<RankedTensorType>(tensor_read.getType());
+      auto memref_type =
+          MemRefType::get(tensor_type.getShape(), tensor_type.getElementType());
+      partials.push_back(ktdf::ReadFromFifoOp::create(else_b, loc, memref_type,
+                                                      read_op.getFifoSlot())
+                             .getResult());
+    }
+
+    // Collect dests from the then-branch yield (one per result).
+    SmallVector<Value> dests;
+    for (Value then_operand : then_yield->getOperands()) {
+      Value dest = then_operand;
+      if (auto subview = dest.getDefiningOp<memref::SubViewOp>())
+        dest = subview.getSource();
+      if (!isa<MemRefType>(dest.getType()))
+        return if_op.emitError(
+            "lowerCombineIfToMemref: the combine destination is not a memref");
+      dests.push_back(dest);
+    }
+
+    // Buffer-semantics generic: ins = partials, outs = dests, no result.
+    auto buf_generic = linalg::GenericOp::create(
+        else_b, loc, /*resultTensorTypes=*/TypeRange{},
+        /*inputs=*/partials, /*outputs=*/dests,
+        combine_generic.getIndexingMapsAttr(),
+        combine_generic.getIteratorTypesAttr(),
+        /*doc=*/StringAttr{}, /*library_call=*/StringAttr{});
+    IRMapping mapping;
+    combine_generic.getRegion().cloneInto(&buf_generic.getRegion(), mapping);
+    Block& placeholder = buf_generic.getRegion().front();
+    if (&placeholder != &buf_generic.getRegion().back()) placeholder.erase();
+    // Terminator (result-less scf.yield) is already present in new_else.
+  }
+
+  return success();
+}
+
+// ---------------------------------------------------------------------------
+// Lower a combine previously bypassed (results RAUW'd to then-branch yield
+// operands), and erase the original.  No-op when there is no combine.
+//
+// The bypass rewrite turned each then-branch yield operand into the memref
+// backing its accumulator, so lowerCombineIfToMemref reads destinations from
+// there.  The combine is lowered in place, keeping its order relative to the
+// rest of the stage.
+//
+// When an accumulator memref is a subview of a larger buffer — the subview an
+// inner-dim reduction reduces into — the combine still runs at the buffer's
+// full width, because the chunk pipeline sends and receives the buffer entire.
+// ---------------------------------------------------------------------------
+static LogicalResult lowerAndEraseCombineIf(scf::IfOp if_op) {
+  if (!if_op) return success();
+  if (failed(lowerCombineIfToMemref(if_op))) return failure();
+  if_op.erase();
+  return success();
+}
+
+// ---------------------------------------------------------------------------
 // Set `new_type` on a PrivateOp result and its corresponding inner value
 // (the private_yield operand at the same index).
 //
@@ -894,7 +1055,29 @@ struct MapReductionPartialsPass
     });
 
     for (auto generic_op : loop_exposed) {
+      // Find the combine before rewriteGeneric rebuilds the loop nest.  It
+      // hangs off the nest's result, not the generic's — the generic only
+      // feeds the innermost yield.  This is where the chunk pipeline puts it:
+      // after the outer-dim reduction and ahead of the inner-dim one, so an
+      // inner-dim generic in the same stage consumes the combined accumulator.
+      scf::IfOp combine_if;
+      if (auto outermost_for = outermostForInStage(generic_op))
+        combine_if = findCombineIf(outermost_for.getResult(0));
+      if (combine_if) {
+        Operation* then_yield =
+            combine_if.getThenRegion().front().getTerminator();
+        for (auto [res, operand] :
+             llvm::zip(combine_if.getResults(), then_yield->getOperands()))
+          res.replaceAllUsesWith(operand);
+      }
+
       if (failed(rewriteGeneric(generic_op, group_local_mem))) {
+        signalPassFailure();
+        return;
+      }
+      // By now the then-branch yields the accumulator memref (RAUW'd by
+      // rewriteGeneric).
+      if (failed(lowerAndEraseCombineIf(combine_if))) {
         signalPassFailure();
         return;
       }
@@ -911,6 +1094,25 @@ struct MapReductionPartialsPass
         Value new_read = convertInputToMemref(builder, generic_op);
         generic_op.getInputsMutable().assign(new_read);
       }
+      // Find the combine before rewriteInnerDimGeneric erases generic_op.
+      // With an outer-dim reduction in the stage the combine sits ahead of this
+      // generic and the loop above already lowered it; one here belongs to a
+      // stage whose only reduction is this inner-dim one, so there was no
+      // accumulator to combine against any earlier.
+      scf::IfOp combine_if = findCombineIf(generic_op.getResult(0));
+
+      // Take it out of the reduction's dataflow up front, so
+      // rewriteInnerDimGeneric sees the write_to_fifo downstream of it as a
+      // user of the generic and retargets it onto the whole accumulator (and
+      // widens its FIFO slot to match).
+      if (combine_if) {
+        Operation* then_yield =
+            combine_if.getThenRegion().front().getTerminator();
+        for (auto [res, operand] :
+             llvm::zip(combine_if.getResults(), then_yield->getOperands()))
+          res.replaceAllUsesWith(operand);
+      }
+
       // Transform inner-dim generic into memref-typed generic.
       if (failed(rewriteInnerDimGeneric(generic_op, group_local_mem))) {
         signalPassFailure();
@@ -918,6 +1120,13 @@ struct MapReductionPartialsPass
       }
       if (stale_tensor_read && stale_tensor_read->use_empty())
         stale_tensor_read->erase();
+      // By now the then-branch yields the subview (RAUW'd by
+      // rewriteInnerDimGeneric), which lowerAndEraseCombineIf resolves back to
+      // the buffer it slices.
+      if (failed(lowerAndEraseCombineIf(combine_if))) {
+        signalPassFailure();
+        return;
+      }
     }
   }
 };

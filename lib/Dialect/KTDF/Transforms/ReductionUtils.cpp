@@ -242,20 +242,38 @@ void StageFactory::buildComputeStage(Value condition,
 
   OpBuilder b(stage.getBody(), stage.getBody()->end());
 
+  // Read the input chunk unconditionally.
   auto in_tensor = ktdf::ReadFromFifoOp::create(
       b, loc_, chunk_input_tensor_type, slots_.inSlot(0));
 
-  // Select the initial output tensor for linalg.generic:
-  //   first iteration  → tensor.empty (no prior partial result)
-  //   later iterations → partial result read from fifo_partial[0]
+  // First linalg.generic: reduce the input chunk into a fresh tensor.empty.
+  // This is always computed; the conditional below determines whether to
+  // accumulate it against a prior partial result.
+  Value empty_tensor =
+      tensor::EmptyOp::create(b, loc_, output_tensor_type.getShape(),
+                              output_tensor_type.getElementType());
+  {
+    IRMapping mapping;
+    mapping.map(generic_op.getInputs().front(), in_tensor.getResult());
+    mapping.map(generic_op.getOutputs().front(), empty_tensor);
+    empty_tensor =
+        cast<linalg::GenericOp>(b.clone(*generic_op.getOperation(), mapping))
+            .getResult(0);
+  }
+
+  // Guard: on the first iteration (condition == true) the first generic result
+  // is the final result.  On subsequent iterations it is combined with the
+  // running partial accumulator read back from fifo_partial[0].
+  //
+  //   then: yield first_generic_result                   (no prior partial)
+  //   else: partial ← read_from_fifo(fifo_partial[0])
+  //         second_generic ← linalg.generic(partial, first_generic_result)
+  //         yield second_generic_result
   auto if_op = scf::IfOp::create(b, loc_, TypeRange{output_tensor_type},
                                  condition, /*withElseRegion=*/true);
   {
     OpBuilder then_bldr =
         OpBuilder::atBlockBegin(&if_op.getThenRegion().front());
-    Value empty_tensor =
-        tensor::EmptyOp::create(then_bldr, loc_, output_tensor_type.getShape(),
-                                output_tensor_type.getElementType());
     scf::YieldOp::create(then_bldr, loc_, empty_tensor);
   }
   {
@@ -263,17 +281,42 @@ void StageFactory::buildComputeStage(Value condition,
         OpBuilder::atBlockBegin(&if_op.getElseRegion().front());
     Value partial_tensor = ktdf::ReadFromFifoOp::create(
         else_bldr, loc_, output_tensor_type, slots_.partialSlot(0));
-    scf::YieldOp::create(else_bldr, loc_, partial_tensor);
+
+    // The second generic combines partial_tensor (ins) with the first generic
+    // result (outs).  Both are output_tensor_type, so we need identity maps
+    // for both operands and all-parallel iterators — the original generic_op
+    // has a higher-rank input map and cannot be cloned directly here.
+    int64_t out_rank = output_tensor_type.getRank();
+    AffineMap id_map =
+        AffineMap::getMultiDimIdentityMap(out_rank, else_bldr.getContext());
+    SmallVector<utils::IteratorType> parallel_iters(
+        static_cast<size_t>(out_rank), utils::IteratorType::parallel);
+    SmallVector<AffineMap> indexing_maps = {id_map, id_map};
+    auto combine_generic = linalg::GenericOp::create(
+        else_bldr, loc_,
+        /*resultTensorTypes=*/TypeRange{output_tensor_type},
+        /*inputs=*/ValueRange{partial_tensor},
+        /*outputs=*/ValueRange{empty_tensor},
+        /*indexingMaps=*/indexing_maps,
+        /*iteratorTypes=*/parallel_iters);
+    Type elem_type = output_tensor_type.getElementType();
+    Block* new_body = &combine_generic.getRegion().emplaceBlock();
+    new_body->addArgument(elem_type, loc_);  // ins[0] element
+    new_body->addArgument(elem_type, loc_);  // outs[0] element
+
+    // Clone the scalar body ops from the original generic, remapping its block
+    // args to the new block args.
+    IRMapping body_map;
+    Block* orig_body = generic_op.getBody();
+    body_map.map(orig_body->getArgument(0), new_body->getArgument(0));
+    body_map.map(orig_body->getArgument(1), new_body->getArgument(1));
+    OpBuilder body_bldr = OpBuilder::atBlockBegin(new_body);
+    for (auto& op : *orig_body) body_bldr.clone(op, body_map);
+
+    scf::YieldOp::create(else_bldr, loc_, combine_generic.getResult(0));
   }
 
-  IRMapping mapping;
-  mapping.map(generic_op.getInputs().front(), in_tensor.getResult());
-  mapping.map(generic_op.getOutputs().front(), if_op.getResult(0));
-  auto new_generic =
-      cast<linalg::GenericOp>(b.clone(*generic_op.getOperation(), mapping));
-
-  ktdf::WriteToFifoOp::create(b, loc_, new_generic.getResult(0),
-                              slots_.outSlot(0));
+  ktdf::WriteToFifoOp::create(b, loc_, if_op.getResult(0), slots_.outSlot(0));
 }
 
 void StageFactory::buildStoreStage(Value partial_memref,

@@ -22,8 +22,7 @@
 //
 // The analysis inspects the static element type and shape of the first input
 // tensor.  It finds the smallest integer N ≥ 1 such that:
-//   1. (total_input_bytes / N) ≤ chunk_size_threshold
-//   2. N evenly divides every reduction-dimension size
+//   (total_input_bytes / N) ≤ chunk_size_threshold
 //
 // If no such N exists (e.g. the tensor has dynamic dimensions, or the
 // threshold is smaller than a single-element chunk) the result is
@@ -44,6 +43,7 @@
 
 #include <optional>
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 
@@ -76,6 +76,31 @@ struct ReductionChunkResult {
 /// \param chunk_size_threshold  Per-chunk budget in bytes (default 1 MiB).
 std::optional<ReductionChunkResult> analyzeReductionChunks(
     linalg::GenericOp generic_op, int64_t chunk_size_threshold = 1 << 20);
+
+/// Distribute `chunk_size` across dimensions using a GCD-based outer-to-inner
+/// strategy.
+///
+/// Starting from the outermost dimension (index 0 in `red_dim_sizes`) and
+/// working inward, each step computes:
+///
+///   g                = gcd(dim_size, remaining_chunk_size)
+///   new_dim_size     = dim_size / g
+///   remaining_chunk_size /= g
+///
+/// Dimensions whose size is `ShapedType::kDynamic` are skipped without
+/// consuming budget.  Iteration stops once `remaining_chunk_size` reaches 1.
+///
+/// The caller is responsible for not passing the innermost overall loop
+/// dimension — it is the pass's job to exclude that dim before calling here.
+///
+/// Returns std::nullopt if `remaining_chunk_size` is still > 1 after all
+/// dimensions have been visited (budget could not be fully distributed).
+///
+/// \param red_dim_sizes  Chunkable dimension sizes, outermost first.
+///                       Dynamic dimensions as `ShapedType::kDynamic`.
+/// \param chunk_size     The chunk count to distribute (must be ≥ 1).
+std::optional<llvm::SmallVector<int64_t>> computeChunkDims(
+    llvm::ArrayRef<int64_t> red_dim_sizes, int64_t chunk_size);
 
 }  // namespace mlir::ktdf
 

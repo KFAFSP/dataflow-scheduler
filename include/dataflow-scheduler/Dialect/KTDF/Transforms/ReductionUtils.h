@@ -213,12 +213,19 @@ class StageFactory {
   // -------------------------------------------------------------------------
   // Emit the Compute stage inside a chunk pipeline.
   //
-  // Reads the input chunk from fifo_in[0] (unconditional).
-  // Selects the initial output tensor via a runtime branch on condition:
-  //   - condition == true  (first iteration): tensor.empty
-  //   - condition == false (subsequent)     : read from fifo_partial[0]
-  // Runs the cloned linalg.generic, then writes the result to
-  // fifo_out[0] (unconditional).
+  // Reads the input chunk from fifo_in[0] unconditionally, then runs a first
+  // cloned linalg.generic against a fresh tensor.empty to produce an
+  // intermediate partial result.
+  //
+  // A runtime branch on condition then selects the final output:
+  //   - condition == true  (first iteration):
+  //       yield the first generic result directly (no prior partial).
+  //   - condition == false (subsequent iterations):
+  //       read the running partial from fifo_partial[0], run a second cloned
+  //       linalg.generic with input=partial and output=first generic result,
+  //       and yield the second generic result.
+  //
+  // The conditional result is written to fifo_out[0] (unconditional).
   //
   // Token assignment follows the ChunkPipelineConfig convention:
   //   token 0             : Load → Compute (depends_in).

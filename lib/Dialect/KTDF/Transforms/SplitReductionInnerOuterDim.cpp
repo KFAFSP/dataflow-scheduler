@@ -28,6 +28,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
@@ -426,6 +427,27 @@ static LogicalResult splitDim(CandidateInfo& info) {
                                       g1_iter_types);
   cloneGenericBody(generic_op, g1);
 
+  // If any user of the original generic_op result lives inside a scf.if
+  // (i.e. the combine-if from ReductionDimChunking), insert G2 after that
+  // scf.if and feed it the scf.if result instead of G1's result.
+  // Otherwise G2 is inserted immediately after G1 and fed G1's result.
+  scf::IfOp combine_if;
+  for (Operation* user : generic_op.getResult(0).getUsers()) {
+    if (auto if_op = dyn_cast<scf::IfOp>(user->getParentOp())) {
+      combine_if = if_op;
+      break;
+    }
+  }
+
+  SmallVector<Value> g2_inputs;
+  if (combine_if) {
+    builder.setInsertionPointAfter(combine_if);
+    for (unsigned r = 0; r < results; ++r)
+      g2_inputs.push_back(combine_if.getResult(r));
+  } else {
+    for (unsigned r = 0; r < results; ++r) g2_inputs.push_back(g1.getResult(r));
+  }
+
   SmallVector<Type> out_types(results, output_type);
   SmallVector<Value> out_inits;
   for (unsigned r = 0; r < results; ++r) {
@@ -436,16 +458,29 @@ static LogicalResult splitDim(CandidateInfo& info) {
 
   SmallVector<AffineMap> g2_maps(results, g2_in_map);
   g2_maps.append(results, g2_out_map);
-  auto g2 =
-      linalg::GenericOp::create(builder, loc,
-                                /*resultTensorTypes=*/out_types,
-                                /*inputs=*/g1.getResults(),
-                                /*outputs=*/out_inits, g2_maps, g2_iter_types);
+  auto g2 = linalg::GenericOp::create(builder, loc,
+                                      /*resultTensorTypes=*/out_types,
+                                      /*inputs=*/g2_inputs, out_inits, g2_maps,
+                                      g2_iter_types);
   if (failed(buildCombinerBody(generic_op, g2))) return failure();
 
   // ── Replace and erase original generic and its now-dead output inits ─────
+  // Transformation:
+  //   before: generic_op  [combine_if]  write_to_fifo
+  //   after:  g1          [combine_if]  g2  write_to_fifo
+  //
+  // With combine_if: replace generic_op results with g1 results, then replace
+  // combine_if results (outside g2) with g2 results (so write_to_fifo sees g2).
+  // Without combine_if: replace generic_op results with g2 results directly.
   for (unsigned r = 0; r < results; ++r) {
-    generic_op.getResult(r).replaceAllUsesWith(g2.getResult(r));
+    if (combine_if) {
+      generic_op.getResult(r).replaceAllUsesWith(g1.getResult(r));
+      combine_if.getResult(r).replaceUsesWithIf(
+          g2.getResult(r),
+          [&](OpOperand& use) { return use.getOwner() != g2.getOperation(); });
+    } else {
+      generic_op.getResult(r).replaceAllUsesWith(g2.getResult(r));
+    }
   }
   SmallVector<Value> orig_inits(generic_op.getOutputs());
   generic_op.erase();
