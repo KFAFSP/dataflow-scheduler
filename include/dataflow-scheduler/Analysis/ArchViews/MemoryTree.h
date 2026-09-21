@@ -61,11 +61,22 @@ class MemoryTree : public mlir::ktdf_arch::DeviceView {
   /// Construct a MemoryTree for @p device .
   explicit MemoryTree(const mlir::ktdf_arch::Device& device);
 
+  /// Iteration order is unspecified (it follows the underlying node
+  /// storage, not parent/child order) — use this to visit every node
+  /// without caring about tree structure.
+  auto begin() const { return llvm::make_second_range(nodes_).begin(); }
+  auto end() const { return llvm::make_second_range(nodes_).end(); }
+
   /// Get a memory node by its ID
   std::optional<MemoryNode> getNode(NodeId node_id) const;
 
   /// Get a memory node by its resource attribute
   std::optional<MemoryNode> getNode(ResourceType memory_resource) const;
+
+  /// Climbs from @p node up through its ancestors and returns the root node
+  /// (the ancestor with no parent). Returns a copy of @p node if it is itself
+  /// a root.
+  MemoryNode getRootOf(const MemoryNode& node) const;
 
   /// Get the node ID for a given memory resource
   std::optional<NodeId> getNodeIdForResource(
