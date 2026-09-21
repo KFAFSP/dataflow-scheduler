@@ -1589,9 +1589,12 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
   mapping_ = &mapping;
   {
     mem_space_map_.clear();
-    mem_space_map_.insert_range(
-        mapping_->getDevice().getAttrOfType<mlir::ktdf_arch::MapAttr>(
-            "mem_space_mapping"));
+    if (const auto mapping =
+            mapping_->getDevice().getAttrOfType<mlir::ktdf_arch::MapAttr>(
+                "mem_space_mapping");
+        mapping) {
+      mem_space_map_.insert_range(mapping);
+    }
   }
 
   LDBG(1) << "Starting ConstructThreeStagePipeline transformation";
