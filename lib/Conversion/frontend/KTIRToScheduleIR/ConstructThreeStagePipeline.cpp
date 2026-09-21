@@ -166,7 +166,7 @@ struct ConstructThreeStagePipelinePass
 
   // Create loops from linalg operations by tiling
   void createLoopsFromLinalg(
-      llvm::SmallVectorImpl<mlir::linalg::LinalgOp>& linalg_ops);
+      llvm::SmallVectorImpl<mlir::linalg::GenericOp>& linalg_ops);
 
   // Create a 3-stage pipeline inside innermost_loop, with one stage for loads,
   // computes, stores.
@@ -412,14 +412,14 @@ void ConstructThreeStagePipelinePass::annotateLoopsWithIteratorTypes(
 }
 
 void ConstructThreeStagePipelinePass::createLoopsFromLinalg(
-    llvm::SmallVectorImpl<mlir::linalg::LinalgOp>& linalg_ops) {
+    llvm::SmallVectorImpl<mlir::linalg::GenericOp>& linalg_ops) {
   LDBG(1) << "Creating SCF loops from linalg.generic operations";
 
   assert(linalg_ops.size() <= 1 &&
          "Currently only supporting one linalg.generic operation after fusion");
 
   mlir::IRRewriter rewriter(&getContext());
-  for (mlir::linalg::LinalgOp& linalg_op : linalg_ops) {
+  for (auto& linalg_op : linalg_ops) {
     LDBG(1) << "  Processing: " << linalg_op->getName() << "";
 
     rewriter.setInsertionPoint(linalg_op);
@@ -466,12 +466,12 @@ void ConstructThreeStagePipelinePass::createLoopsFromLinalg(
     // Erase the original linalg operation. It has been replaced by a loop nest
     // containing the tiled linalg operation.
     rewriter.eraseOp(linalg_op);
+    linalg_op =
+        mlir::cast<mlir::linalg::GenericOp>(tiled_result->op.getOperation());
 
     // Annotate loops with loop_type attributes based on iterator types
     if (!tiled_result->loops.empty()) {
-      auto generic_op =
-          mlir::cast<mlir::linalg::GenericOp>(tiled_result->op.getOperation());
-      annotateLoopsWithIteratorTypes(tiled_result->loops, generic_op);
+      annotateLoopsWithIteratorTypes(tiled_result->loops, linalg_op);
     }
 
     LDBG(1) << "  Successfully tiled linalg operation";
@@ -481,8 +481,6 @@ void ConstructThreeStagePipelinePass::createLoopsFromLinalg(
       tiled_loops_.assign(tiled_result->loops.begin(),
                           tiled_result->loops.end());
     }
-
-    linalg_op = tiled_result->op;
   }
 }
 
@@ -1307,7 +1305,7 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
   }
 
   // Collect ktdp load/store operations and linalg operations
-  llvm::SmallVector<mlir::linalg::LinalgOp> linalg_ops;
+  llvm::SmallVector<mlir::linalg::GenericOp> linalg_ops;
   func_op.walk([&](mlir::Operation* op) {
     if (auto load_op = mlir::dyn_cast<mlir::ktdp::LoadOp>(op)) {
       load_ops_.push_back(load_op);
@@ -1315,7 +1313,7 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
     } else if (auto store_op = mlir::dyn_cast<mlir::ktdp::StoreOp>(op)) {
       store_ops_.push_back(store_op);
       ops_to_delete_.push_back(op);
-    } else if (auto linalg_op = mlir::dyn_cast<mlir::linalg::LinalgOp>(op)) {
+    } else if (auto linalg_op = mlir::dyn_cast<mlir::linalg::GenericOp>(op)) {
       linalg_ops.push_back(linalg_op);
     }
   });
