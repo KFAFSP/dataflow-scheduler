@@ -27,6 +27,7 @@
 #ifndef DATAFLOW_SCHEDULER_ANALYSIS_ARCHVIEWS_ROUTINGGRAPH_H_
 #define DATAFLOW_SCHEDULER_ANALYSIS_ARCHVIEWS_ROUTINGGRAPH_H_
 
+#include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/MapVector.h>
 #include <llvm/ADT/SmallVector.h>
@@ -94,7 +95,14 @@ class RoutingGraph : public mlir::ktdf_arch::DeviceView {
   std::optional<Path> findShortestPath(NodeId source, NodeId target) const;
 
   /// Get the node ID for a given resource attribute.
+  /// Precondition: exactly one node carries \p resource. Use
+  /// getNodeIdsForResource when a resource may map to multiple nodes
+  /// (e.g. deduplicated group kinds).
   NodeId getNodeIdForResource(ResourceType resource) const;
+
+  /// All node IDs whose resource attribute equals \p resource.
+  /// Returns an empty span when the resource is not in the graph.
+  llvm::ArrayRef<NodeId> getNodeIdsForResource(ResourceType resource) const;
 
   /// Get the total capacity in bytes for a resource (if applicable)
   std::optional<size_t> getResourceCapacity(ResourceType resource) const;
@@ -122,6 +130,7 @@ class RoutingGraph : public mlir::ktdf_arch::DeviceView {
   NodeId next_node_id_ = 0;
   llvm::MapVector<NodeId, ResourceNode> nodes_;
   llvm::DenseMap<NodeId, EdgeList> adjacency_;
+  llvm::DenseMap<ResourceType, llvm::SmallVector<NodeId>> resource_index_;
 };
 
 }  // namespace arch_view

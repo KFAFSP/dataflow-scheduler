@@ -166,7 +166,7 @@ MemoryTree::MemoryNode MemoryTree::getRootOf(const MemoryNode& node) const {
   return current;
 }
 
-std::optional<MemoryTree::NodeId> MemoryTree::getNodeIdForResource(
+std::optional<MemoryTree::NodeId> MemoryTree::getNodeIdForMemory(
     ResourceType memory_resource) const {
   // First check direct mapping (canonical resource)
   auto it = resource_to_node_.find(memory_resource);
@@ -268,8 +268,8 @@ llvm::SmallVector<MemoryTree::NodeId> MemoryTree::getPath(NodeId source,
 
 llvm::SmallVector<MemoryTree::NodeId> MemoryTree::getPath(
     ResourceType source, ResourceType target) const {
-  auto source_id = getNodeIdForResource(source);
-  auto target_id = getNodeIdForResource(target);
+  auto source_id = getNodeIdForMemory(source);
+  auto target_id = getNodeIdForMemory(target);
 
   if (!source_id || !target_id) {
     return llvm::SmallVector<NodeId>();
@@ -334,8 +334,8 @@ bool MemoryTree::isDescendantOf(NodeId descendant, NodeId ancestor) const {
 
 bool MemoryTree::isDescendantOf(ResourceType descendant,
                                 ResourceType ancestor) const {
-  auto descendant_id = getNodeIdForResource(descendant);
-  auto ancestor_id = getNodeIdForResource(ancestor);
+  auto descendant_id = getNodeIdForMemory(descendant);
+  auto ancestor_id = getNodeIdForMemory(ancestor);
 
   if (!descendant_id || !ancestor_id) {
     return false;
@@ -463,8 +463,8 @@ bool MemoryTree::areAliases(ResourceType resource1,
   }
 
   // Check if both resources map to the same node
-  auto node1_id = getNodeIdForResource(resource1);
-  auto node2_id = getNodeIdForResource(resource2);
+  auto node1_id = getNodeIdForMemory(resource1);
+  auto node2_id = getNodeIdForMemory(resource2);
 
   if (!node1_id || !node2_id) {
     return false;
@@ -477,7 +477,7 @@ llvm::SmallVector<ResourceType> MemoryTree::getAliases(
     ResourceType resource) const {
   llvm::SmallVector<ResourceType> aliases;
 
-  auto node_id = getNodeIdForResource(resource);
+  auto node_id = getNodeIdForMemory(resource);
   if (!node_id) {
     // Resource not found, return just the resource itself
     aliases.push_back(resource);
@@ -562,7 +562,7 @@ bool MemoryTree::isBelowScratchPad(ResourceType memory_resource) const {
   auto depth1_nodes = getNodesAtDepth(1);
 
   // Get the node for the query resource
-  auto resource_node_id = getNodeIdForResource(memory_resource);
+  auto resource_node_id = getNodeIdForMemory(memory_resource);
   if (!resource_node_id) {
     return false;
   }

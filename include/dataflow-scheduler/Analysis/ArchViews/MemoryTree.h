@@ -79,8 +79,7 @@ class MemoryTree : public mlir::ktdf_arch::DeviceView {
   MemoryNode getRootOf(const MemoryNode& node) const;
 
   /// Get the node ID for a given memory resource
-  std::optional<NodeId> getNodeIdForResource(
-      ResourceType memory_resource) const;
+  std::optional<NodeId> getNodeIdForMemory(ResourceType memory_resource) const;
 
   /// Get all root nodes (memories with no parent)
   llvm::SmallVector<NodeId> getRootNodes() const;

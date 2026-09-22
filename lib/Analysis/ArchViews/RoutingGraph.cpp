@@ -234,6 +234,7 @@ RoutingGraph::NodeId RoutingGraph::addNode(ResourceType resource,
 
   nodes_.insert(
       {node_id, {node_id, resource, kind, std::nullopt, std::nullopt}});
+  resource_index_[resource].push_back(node_id);
   return node_id;
 }
 
@@ -326,14 +327,18 @@ std::optional<RoutingGraph::Path> RoutingGraph::findShortestPath(
 
 RoutingGraph::NodeId RoutingGraph::getNodeIdForResource(
     ResourceType resource) const {
-  // Search through nodes to find the one with matching resource
-  // Attributes are uniqued, so we can use direct equality comparison
-  for (const auto& [node_id, node] : nodes_) {
-    if (node.resource == resource) {
-      return node_id;
-    }
-  }
-  llvm_unreachable("resource not found in graph");
+  auto it = resource_index_.find(resource);
+  assert(it != resource_index_.end() && "resource not found in graph");
+  assert(it->second.size() == 1 &&
+         "resource maps to multiple nodes; use getNodeIdsForResource");
+  return it->second.front();
+}
+
+llvm::ArrayRef<RoutingGraph::NodeId> RoutingGraph::getNodeIdsForResource(
+    ResourceType resource) const {
+  auto it = resource_index_.find(resource);
+  if (it == resource_index_.end()) return {};
+  return it->second;
 }
 
 std::optional<RoutingGraph::EdgeInfo> RoutingGraph::getEdgeInfoForResources(

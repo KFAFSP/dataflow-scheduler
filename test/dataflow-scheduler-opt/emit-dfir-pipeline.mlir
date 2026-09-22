@@ -35,6 +35,7 @@
 // CHECK-NEXT:   )
 // CHECK-NEXT:   )
 // CHECK-NEXT:   path-expansion
+// CHECK-NEXT:   indirect-addr-buf-fill-legalization
 // CHECK-NEXT:   scalar-broadcast-legalization
 // CHECK-NEXT:   normalize-scf-for-loops
 // CHECK-NEXT:   canonicalize
