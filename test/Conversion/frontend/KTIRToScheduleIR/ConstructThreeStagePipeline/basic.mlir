@@ -1,4 +1,4 @@
-// RUN: dataflow-scheduler-opt --convert-elementwise-to-linalg --linalg-morph-ops="category-to-generic=true named-to-generic=true" --fuse-linalg --construct-three-stage-pipeline %s | FileCheck %s
+// RUN: dataflow-scheduler-opt --convert-elementwise-to-linalg --linalg-morph-ops="category-to-generic=true named-to-generic=true" --construct-three-stage-pipeline %s | FileCheck %s
 
 // CHECK: #[[$ATTR_0:.+]] = affine_map<(d0, d1) -> (d0, d1)>
 // CHECK: #[[$ATTR_1:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>
@@ -69,10 +69,7 @@
 // CHECK-NEXT:     return
 // CHECK-NEXT:   }
 
-
-
-
-
+#id = affine_map<(d0, d1) -> (d0, d1)>
 
 module {
     ktdf_arch.device @sample_device attributes {mem_space_mapping = #ktdf_arch.map<#ktdp.memory_space<global> = "DDR", #ktdp.memory_space<ct_local> = "L1">} import("../../../../Dialect/KTDFArch/sample_device.mlir")
@@ -126,8 +123,13 @@ module {
         // C[start_row+i:start_row+i+2][c0:c0+63] = A[start_row+i:start_row+i+2][c0:c0+63] + B[start_row+i:start_row+i+2][c0:c0+63]
         // Perform add operation on the data tiles.
         %C_data_tile = tensor.empty() : tensor<1x64xf16>
-        %result = linalg.add ins(%A_data_tile, %B_data_tile : tensor<1x64xf16>, tensor<1x64xf16>)
-                    outs(%C_data_tile: tensor<1x64xf16>) -> tensor<1x64xf16>
+        %result = linalg.generic {indexing_maps=[#id, #id, #id], iterator_types=["parallel", "parallel"]}
+            ins(%A_data_tile, %B_data_tile : tensor<1x64xf16>, tensor<1x64xf16>)
+            outs(%C_data_tile: tensor<1x64xf16>) {
+        ^bb0(%a: f16, %b: f16, %c: f16):
+            %sum = arith.addf %a, %b : f16
+            linalg.yield %sum : f16
+        } -> tensor<1x64xf16>
 
         // Construct an access tile from the memory view of C
         %C_access_tile = ktdp.construct_access_tile %C_view[%start_row_i, %c0] {
