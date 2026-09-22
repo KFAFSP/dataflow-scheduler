@@ -20,6 +20,7 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/CommandLine.h>
+#include <llvm/Support/LogicalResult.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/Linalg/Transforms/Transforms.h>
@@ -45,6 +46,10 @@
 
 static llvm::cl::opt<bool> disable_this_pass(
     "disable-" PASS_NAME, llvm::cl::desc("Disable Fuse Linalg pass"),
+    llvm::cl::init(false));
+static llvm::cl::opt<bool> relax_fusion(
+    "relax-" PASS_NAME,
+    llvm::cl::desc("Relaxes mapping constraints on Linalg fusion"),
     llvm::cl::init(false));
 
 using namespace scheduler;
@@ -98,7 +103,7 @@ struct RemoveOutsDependency : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
   }
 };
 
-/// Determines whether @p lhs and @p rhs are subsets of one another.
+/// Determines whether @p lhs and @p rhs name the same set of resources.
 [[nodiscard]] auto setEqual(
     llvm::MutableArrayRef<mlir::ktdf_arch::ResourceSpecAttr> lhs,
     llvm::MutableArrayRef<mlir::ktdf_arch::ResourceSpecAttr> rhs) {
@@ -115,7 +120,10 @@ struct RemoveOutsDependency : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
   return lhs == rhs;
 }
 
-/// Determines whether the mappings of @p lhs and @p rhs permit fusion.
+/// Attempts to fuse the mappings of @p lhs and @p rhs .
+///
+/// @retval failure     Can't fuse the specified mappings.
+/// @retval MapsToAttr  Fused mapping of @p lhs and @p rhs .
 [[nodiscard]] auto fuseMappings(mlir::ktdf_arch::MapsToAttr lhs,
                                 mlir::ktdf_arch::MapsToAttr rhs)
     -> llvm::FailureOr<mlir::ktdf_arch::MapsToAttr> {
@@ -123,12 +131,19 @@ struct RemoveOutsDependency : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
     return lhs ? lhs : rhs;
   }
 
-  // For now, only permit fusion of ops with the same mapping.
   llvm::SmallVector<mlir::ktdf_arch::ResourceSpecAttr> buffer;
   buffer.reserve(lhs.getValue().size() + rhs.getValue().size());
   llvm::append_range(buffer, lhs.getValue());
   const auto split = buffer.size();
   llvm::append_range(buffer, rhs.getValue());
+
+  if (relax_fusion) {
+    // Allow arbitrary fusion by just copying together the attribtues. Do not
+    // deduplicate so that this mapping is stable.
+    return mlir::ktdf_arch::MapsToAttr::get(lhs.getContext(), buffer);
+  }
+
+  // For now, only permit fusion of ops with the same mapping.
   if (!setEqual({buffer.data(), buffer.data() + split},
                 {buffer.data() + split, buffer.end()})) {
     return llvm::failure();
@@ -193,17 +208,17 @@ struct FuseElementwiseOps : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
 ///
 /// @returns  Succeeds when @p generic explicitly declares the correct mapping.
 auto propagateImpliedMapping(mlir::linalg::GenericOp generic)
-    -> llvm::FailureOr<mlir::ktdf_arch::MapsToAttr> {
+    -> llvm::LogicalResult {
   auto mappable =
       llvm::dyn_cast<mlir::ktdf_arch::Mappable>(generic.getOperation());
-  if (!mappable) {
-    return llvm::success(nullptr);
-  }
-  if (const auto maps_to = mappable.getMapsTo()) {
-    return llvm::success(maps_to);
+  if (!mappable || mappable.getMapsTo()) {
+    return llvm::success();
   }
 
-  // Try to determine a mapping from the contents of the operation.
+  // Try to determine a mapping from the contents of the operation. If the
+  // contents are mapped to different resources, the resulting mapping will be
+  // a union of these resources. In contrast to fusion, where these might make
+  // a valid program infeasible to map, these unions preserve feasibility.
   llvm::SetVector<mlir::ktdf_arch::ResourceSpecAttr> mapping;
   for (auto& child : *generic.getBody()) {
     if (const auto child_mapping = mlir::ktdf_arch::Mappable::getMapsTo(&child);
@@ -212,15 +227,15 @@ auto propagateImpliedMapping(mlir::linalg::GenericOp generic)
     }
   }
   if (mapping.empty()) {
-    return llvm::success(nullptr);
+    return llvm::success();
   }
 
-  // There are mapping constraints on the contents of this op that will
-  // have to be respected. Try to set them on the op.
+  // There are mapping constraints on the contents of this op that will have to
+  // be respected. This can be a union of resources. Try to set it on the op.
   const auto maps_to = mlir::ktdf_arch::MapsToAttr::get(generic->getContext(),
                                                         mapping.getArrayRef());
   if (llvm::succeeded(mappable.setMapsTo(maps_to))) {
-    return llvm::success(maps_to);
+    return llvm::success();
   }
 
   return llvm::failure();

@@ -70,6 +70,7 @@ func.func @unmapped_producer(%a: tensor<8xf32>, %b: tensor<8xf32>)
 // CHECK-NOT:         ktdf_arch.maps_to
 // CHECK:             arith.mulf
 // CHECK:             math.sqrt
+// CHECK-NOT:       linalg.generic
 func.func @no_mapping(%a: tensor<8xf32>, %b: tensor<8xf32>) -> tensor<8xf32> {
   %e0 = tensor.empty() : tensor<8xf32>
   %0 = linalg.generic {indexing_maps = [#id, #id, #id],
