@@ -26,17 +26,21 @@
 // CHECK-NEXT:    %[[LOAD_2:.*]] = ktdp.load %[[CONSTRUCT_ACCESS_TILE_2]] : <1x64xindex> -> tensor<1x64xf16>
 // CHECK-NEXT:    %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x64xf16>
 // CHECK-NEXT:    %[[EMPTY_1:.*]] = tensor.empty() : tensor<1x64xf16>
-// CHECK-NEXT:    %[[GENERIC_0:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_0]], #[[$ATTR_0]], #[[$ATTR_0]], #[[$ATTR_0]]], iterator_types = ["parallel", "parallel"]} ins(%[[LOAD_2]], %[[LOAD_0]], %[[LOAD_1]] : tensor<1x64xf16>, tensor<1x64xf16>, tensor<1x64xf16>) outs(%[[EMPTY_0]] : tensor<1x64xf16>) attrs =  {ktdf_arch.maps_to = "SFU"} {
-// CHECK-NEXT:    ^bb0(%[[VAL_0:.*]]: f16, %[[VAL_1:.*]]: f16, %[[VAL_2:.*]]: f16, %[[VAL_3:.*]]: f16):
-// CHECK-NEXT:      %[[ADDF_0:.*]] = arith.addf %[[VAL_1]], %[[VAL_2]] : f16
+// CHECK-NEXT:    %[[GENERIC_0:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_0]], #[[$ATTR_0]]], iterator_types = ["parallel", "parallel"]} ins(%[[LOAD_2]] : tensor<1x64xf16>) outs(%[[LOAD_2]] : tensor<1x64xf16>) attrs =  {ktdf_arch.maps_to = "SFU"} {
+// CHECK-NEXT:    ^bb0(%[[VAL_0:.*]]: f16, %[[VAL_1:.*]]: f16):
 // CHECK-NEXT:      %[[SQRT_0:.*]] = math.sqrt %[[VAL_0]] {ktdf_arch.maps_to = "SFU"} : f16
-// CHECK-NEXT:      %[[ADDF_1:.*]] = arith.addf %[[SQRT_0]], %[[ADDF_0]] : f16
+// CHECK-NEXT:      linalg.yield %[[SQRT_0]] : f16
+// CHECK-NEXT:    } -> tensor<1x64xf16>
+// CHECK-NEXT:    %[[GENERIC_1:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_0]], #[[$ATTR_0]], #[[$ATTR_0]], #[[$ATTR_0]]], iterator_types = ["parallel", "parallel"]} ins(%[[GENERIC_0]], %[[LOAD_0]], %[[LOAD_1]] : tensor<1x64xf16>, tensor<1x64xf16>, tensor<1x64xf16>) outs(%[[EMPTY_0]] : tensor<1x64xf16>) {
+// CHECK-NEXT:    ^bb0(%[[VAL_2:.*]]: f16, %[[VAL_3:.*]]: f16, %[[VAL_4:.*]]: f16, %[[VAL_5:.*]]: f16):
+// CHECK-NEXT:      %[[ADDF_0:.*]] = arith.addf %[[VAL_3]], %[[VAL_4]] : f16
+// CHECK-NEXT:      %[[ADDF_1:.*]] = arith.addf %[[VAL_2]], %[[ADDF_0]] : f16
 // CHECK-NEXT:      linalg.yield %[[ADDF_1]] : f16
 // CHECK-NEXT:    } -> tensor<1x64xf16>
 // CHECK-NEXT:    %[[CONSTRUCT_ACCESS_TILE_3:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_3]]{{\[}}%[[ADDI_0]], %[[CONSTANT_0]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<1x64xindex>
-// CHECK-NEXT:    ktdp.store %[[GENERIC_0]], %[[CONSTRUCT_ACCESS_TILE_3]] : tensor<1x64xf16>, <1x64xindex>
+// CHECK-NEXT:    ktdp.store %[[GENERIC_1]], %[[CONSTRUCT_ACCESS_TILE_3]] : tensor<1x64xf16>, <1x64xindex>
 // CHECK-NEXT:    return
-// CHECK-NEXT:   }
+// CHECK-NEXT:  }
 
 module {
     ktdf_arch.device @sample_device attributes {mem_space_mapping = #ktdf_arch.map<#ktdp.memory_space<global> = "DDR", #ktdp.memory_space<ct_local> = "L1">} import("../../../../Dialect/KTDFArch/sample_device.mlir")

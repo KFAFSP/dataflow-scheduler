@@ -127,8 +127,14 @@ struct RemoveOutsDependency : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
 [[nodiscard]] auto fuseMappings(mlir::ktdf_arch::MapsToAttr lhs,
                                 mlir::ktdf_arch::MapsToAttr rhs)
     -> llvm::FailureOr<mlir::ktdf_arch::MapsToAttr> {
-  if (lhs == rhs || !lhs || !rhs) {
+  if (lhs == rhs) {
     return lhs ? lhs : rhs;
+  }
+  if (!lhs || !rhs) {
+    if (relax_fusion) {
+      return lhs ? lhs : rhs;
+    }
+    return llvm::failure();
   }
 
   llvm::SmallVector<mlir::ktdf_arch::ResourceSpecAttr> buffer;
