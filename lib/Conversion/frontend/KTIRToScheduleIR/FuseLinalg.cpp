@@ -234,6 +234,8 @@ struct FuseLinalgPass : public impl::FuseLinalgPassBase<FuseLinalgPass> {
       return;
     }
 
+    mlir::func::FuncOp func = getOperation();
+
     // Collect all fusable linalg.generic candidate operations.
     llvm::SetVector<mlir::Operation*> candidates;
     const auto collect = [&](mlir::linalg::GenericOp generic) {
@@ -241,7 +243,7 @@ struct FuseLinalgPass : public impl::FuseLinalgPassBase<FuseLinalgPass> {
         candidates.insert(generic);
       }
     };
-    getOperation()->walk(collect);
+    func->walk(collect);
 
     mlir::RewritePatternSet patterns(&getContext());
     patterns.add<RemoveOutsDependency>(patterns.getContext());
