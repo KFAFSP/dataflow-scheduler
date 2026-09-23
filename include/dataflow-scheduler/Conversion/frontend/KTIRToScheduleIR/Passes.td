@@ -33,19 +33,6 @@ def ComputeGroupExtractionPass : Pass<"compute-group-extraction", "mlir::ModuleO
   let constructor = "::scheduler::createComputeGroupExtractionPass()";
 }
 
-def ConstructThreeStagePipelinePass : Pass<"construct-three-stage-pipeline", "mlir::ModuleOp"> {
-  let summary = "Construct a three-stage pipeline";
-  let description = [{
-    This pass constructs a three-stage pipeline.
-  }];
-  let constructor = "::scheduler::createConstructThreeStagePipelinePass()";
-  let dependentDialects = [
-    "mlir::arith::ArithDialect",
-    "mlir::ktdf::KTDFDialect",
-    "mlir::scf::SCFDialect"
-  ];
-}
-
 def KTIRLegalityCheckPass : Pass<"ktir-legality-check", "mlir::ModuleOp"> {
   let summary = "Reject KTIR constructs V1 cannot lower yet";
   let description = [{
@@ -58,6 +45,42 @@ def KTIRLegalityCheckPass : Pass<"ktir-legality-check", "mlir::ModuleOp"> {
   let dependentDialects = [
     "mlir::scf::SCFDialect",
     "mlir::linalg::LinalgDialect"
+  ];
+}
+
+def KTIRMapAndTilePass : Pass<"ktir-map-and-tile", "mlir::func::FuncOp"> {
+  let summary = "";
+  let description = [{
+
+  }];
+  let dependentDialects = [
+    "mlir::ktdf_arch::KTDFArchDialect",
+    "mlir::ktdp_lowering::KTDPLoweringDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::tensor::TensorDialect"
+  ];
+}
+
+def KTIRBufferizePass : Pass<"ktir-bufferize", "mlir::func::FuncOp"> {
+  let summary = "";
+  let description = [{
+
+  }];
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::memref::MemRefDialect"
+  ];
+}
+
+def KTIRPipelinePass : Pass<"ktir-pipeline", "mlir::func::FuncOp"> {
+  let summary = "";
+  let description = [{
+
+  }];
+  let dependentDialects = [
+    "mlir::ktdf::KTDFDialect",
+    "mlir::ktdf_arch::KTDFArchDialect"
   ];
 }
 

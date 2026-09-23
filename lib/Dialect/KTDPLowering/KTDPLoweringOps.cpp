@@ -22,10 +22,14 @@
 
 // clang-format off
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
+#include "ktir/Dialect/KTDP/KTDPTypes.h"
 // clang-format on
 
 #include <llvm/ADT/SetVector.h>
+#include <llvm/ADT/TypeSwitch.h>
+#include <llvm/Support/LogicalResult.h>
 #include <mlir/IR/Builders.h>
+#include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/DialectImplementation.h>
 #include <mlir/IR/OpImplementation.h>
 #include <mlir/Interfaces/ViewLikeInterface.h>
@@ -455,3 +459,35 @@ LogicalResult ConstructMemoryViewOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::Value ConstructMemoryViewOp::getViewSource() { return getOffset(); }
+
+//===----------------------------------------------------------------------===//
+// LoadOp
+//===----------------------------------------------------------------------===//
+
+auto LoadOp::verify() -> LogicalResult {
+  if (getStaticSizes() != getType().getShape()) {
+    return emitOpError("static sizes ")
+           << "[" << getStaticSizes() << "] do not match result shape ["
+           << getType().getShape() << "]";
+  }
+
+  // TODO: All the rest.
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// StoreOp
+//===----------------------------------------------------------------------===//
+
+auto StoreOp::verify() -> LogicalResult {
+  if (getStaticSizes() != getSource().getType().getShape()) {
+    return emitOpError("source shape ")
+           << "[" << getSource().getType().getShape()
+           << "] does not match static sizes [" << getStaticSizes() << "]";
+  }
+
+  // TODO: All the rest.
+
+  return success();
+}
