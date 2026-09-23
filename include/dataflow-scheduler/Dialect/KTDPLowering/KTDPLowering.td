@@ -259,4 +259,80 @@ def KTDPLowering_ConstructMemoryViewOp :
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Load & Store
+//===----------------------------------------------------------------------===//
+
+def KTDPLowering_LoadOp : KTDPLowering_Op<"load", [AttrSizedOperandSegments, OffsetSizeAndStrideOpInterface]> {
+  let arguments = (ins
+    AnyTypeOf<[AnyMemRef, Ktdp_AccessTileType], "", "::mlir::ShapedType">:$source,
+    Variadic<Index>:$offsets,
+    Variadic<Index>:$sizes,
+    Variadic<Index>:$strides,
+    DenseI64ArrayAttr:$static_offsets,
+    DenseI64ArrayAttr:$static_sizes,
+    DenseI64ArrayAttr:$static_strides
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $source ``
+    custom<DynamicIndexList>($offsets, $static_offsets)
+    custom<DynamicIndexList>($sizes, $static_sizes)
+    custom<DynamicIndexList>($strides, $static_strides)
+    attr-dict `:` type($source) `->` type($result)
+  }];
+
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    //===------------------------------------------------------------------===//
+    // OffsetSizeAndStrideOpInterface
+    //===------------------------------------------------------------------===//
+
+    auto getArrayAttrMaxRanks() -> std::array<unsigned, 3> {
+      unsigned rank = getSource().getType().getRank();
+      return {rank, rank, rank};
+    }
+    
+    static unsigned getOffsetSizeAndStrideStartOperandIndex() { return 1; }
+  }];
+}
+
+def KTDPLowering_StoreOp : KTDPLowering_Op<"store", [AttrSizedOperandSegments, OffsetSizeAndStrideOpInterface]> {
+  let arguments = (ins
+    AnyRankedTensor:$source,
+    AnyTypeOf<[AnyMemRef, Ktdp_AccessTileType], "", "::mlir::ShapedType">:$dest,
+    Variadic<Index>:$offsets,
+    Variadic<Index>:$sizes,
+    Variadic<Index>:$strides,
+    DenseI64ArrayAttr:$static_offsets,
+    DenseI64ArrayAttr:$static_sizes,
+    DenseI64ArrayAttr:$static_strides
+  );
+
+  let assemblyFormat = [{
+    $source `into` $dest ``
+    custom<DynamicIndexList>($offsets, $static_offsets)
+    custom<DynamicIndexList>($sizes, $static_sizes)
+    custom<DynamicIndexList>($strides, $static_strides)
+    attr-dict `:` type($source) `into` type($dest)
+  }];
+
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    //===------------------------------------------------------------------===//
+    // OffsetSizeAndStrideOpInterface
+    //===------------------------------------------------------------------===//
+
+    auto getArrayAttrMaxRanks() -> std::array<unsigned, 3> {
+      unsigned rank = getSource().getType().getRank();
+      return {rank, rank, rank};
+    }
+    
+    static unsigned getOffsetSizeAndStrideStartOperandIndex() { return 2; }
+  }];
+}
+
 #endif // DATAFLOW_SCHEDULER_DIALECT_KTDPLOWERING_KTDPLOWERING_TD
