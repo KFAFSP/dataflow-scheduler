@@ -1,25 +1,12 @@
-// RUN: dataflow-scheduler-opt --convert-elementwise-to-linalg --fuse-linalg %s \
-// RUN:   | FileCheck %s
+// RUN: dataflow-scheduler-opt --fuse-linalg %s | FileCheck %s
 
 // Tests that a mapping implied by the contents of a `linalg.generic` is
 // propagated onto the operation itself.
 
 #id = affine_map<(d0) -> (d0)>
 
-// The elementwise conversion moves the mapping of an `arith` op into the
-// payload it creates, from where it must surface on the enclosing generic.
-// CHECK-LABEL:   func.func @implied_from_elementwise
-// CHECK:           linalg.generic
-// CHECK-SAME:        ktdf_arch.maps_to = "SFU"
-// CHECK:             arith.addf
-// CHECK-SAME:          ktdf_arch.maps_to = "SFU"
-func.func @implied_from_elementwise(%a: tensor<8xf32>, %b: tensor<8xf32>)
-    -> tensor<8xf32> {
-  %0 = arith.addf %a, %b {ktdf_arch.maps_to = "SFU"} : tensor<8xf32>
-  return %0 : tensor<8xf32>
-}
-
-// A payload op that is already inside a generic implies the same mapping.
+// A payload op that is already inside a generic implies the same mapping. This
+// is the result of --convert-elementwise-to-linalg.
 // CHECK-LABEL:   func.func @implied_from_payload
 // CHECK:           linalg.generic
 // CHECK-SAME:        ktdf_arch.maps_to = "SFU"

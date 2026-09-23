@@ -128,7 +128,7 @@ struct RemoveOutsDependency : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
                                 mlir::ktdf_arch::MapsToAttr rhs)
     -> llvm::FailureOr<mlir::ktdf_arch::MapsToAttr> {
   if (lhs == rhs) {
-    return lhs ? lhs : rhs;
+    return lhs;
   }
   if (!lhs || !rhs) {
     if (relax_fusion) {
