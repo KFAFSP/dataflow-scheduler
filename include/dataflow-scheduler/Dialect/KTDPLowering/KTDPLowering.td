@@ -263,9 +263,22 @@ def KTDPLowering_ConstructMemoryViewOp :
 // Load & Store
 //===----------------------------------------------------------------------===//
 
-def KTDPLowering_LoadOp : KTDPLowering_Op<"load", [AttrSizedOperandSegments, OffsetSizeAndStrideOpInterface]> {
+def KTDPLowering_LoadOp : KTDPLowering_Op<"load", [
+    AttrSizedOperandSegments, 
+    OffsetSizeAndStrideOpInterface,
+    MemoryEffectsOpInterface]> {
+  let summary = "Lowering phase variant of `ktdp.load` that is bufferizable";
+  let description = [{
+    The `ktdp_lowering.load` op captures the semantics of a `ktdp.load` op plus
+    an optional sequence of `tensor.extract_slice` operations. It can take both
+    an `!ktdp.access_tile` as well as a `memref` as a source operand.
+  }];
+
   let arguments = (ins
-    AnyTypeOf<[AnyMemRef, Ktdp_AccessTileType], "", "::mlir::ShapedType">:$source,
+    Arg<
+      AnyTypeOf<[AnyMemRef, Ktdp_AccessTileType], "", "::mlir::ShapedType">, 
+      "", 
+      [MemRead]>:$source,
     Variadic<Index>:$offsets,
     Variadic<Index>:$sizes,
     Variadic<Index>:$strides,
@@ -285,6 +298,19 @@ def KTDPLowering_LoadOp : KTDPLowering_Op<"load", [AttrSizedOperandSegments, Off
 
   let hasVerifier = 1;
 
+  let builders = [
+    OpBuilder<(ins 
+      "RankedTensorType":$result_type, 
+      "Value":$source, 
+      "ArrayRef<OpFoldResult>":$mixed_offsets, 
+      "ArrayRef<OpFoldResult>":$mixed_sizes,
+      "ArrayRef<OpFoldResult>":$mixed_strides)>,
+    OpBuilder<(ins 
+      "RankedTensorType":$result_type, 
+      "Value":$source, 
+      "OffsetSizeAndStrideOpInterface":$slice)>
+  ];
+
   let extraClassDeclaration = [{
     //===------------------------------------------------------------------===//
     // OffsetSizeAndStrideOpInterface
@@ -299,10 +325,23 @@ def KTDPLowering_LoadOp : KTDPLowering_Op<"load", [AttrSizedOperandSegments, Off
   }];
 }
 
-def KTDPLowering_StoreOp : KTDPLowering_Op<"store", [AttrSizedOperandSegments, OffsetSizeAndStrideOpInterface]> {
+def KTDPLowering_StoreOp : KTDPLowering_Op<"store", [
+    AttrSizedOperandSegments, 
+    OffsetSizeAndStrideOpInterface,
+    MemoryEffectsOpInterface]> {
+  let summary = "Lowering phase variant of `ktdp.store` that is bufferizable";
+  let description = [{
+    The `ktdp_lowering.store` op captures the semantics of a `ktdp.store` op plus
+    an optional sequence of `tensor.insert_slice` operations. It can take both
+    an `!ktdp.access_tile` as well as a `memref` as a dest operand.
+  }];
+
   let arguments = (ins
     AnyRankedTensor:$source,
-    AnyTypeOf<[AnyMemRef, Ktdp_AccessTileType], "", "::mlir::ShapedType">:$dest,
+    Arg<
+      AnyTypeOf<[AnyMemRef, Ktdp_AccessTileType], "", "::mlir::ShapedType">,
+      "",
+      [MemWrite]>:$dest,
     Variadic<Index>:$offsets,
     Variadic<Index>:$sizes,
     Variadic<Index>:$strides,
@@ -320,6 +359,19 @@ def KTDPLowering_StoreOp : KTDPLowering_Op<"store", [AttrSizedOperandSegments, O
   }];
 
   let hasVerifier = 1;
+
+  let builders = [
+    OpBuilder<(ins 
+      "Value":$source, 
+      "Value":$dest, 
+      "ArrayRef<OpFoldResult>":$mixed_offsets, 
+      "ArrayRef<OpFoldResult>":$mixed_sizes,
+      "ArrayRef<OpFoldResult>":$mixed_strides)>,
+    OpBuilder<(ins 
+      "Value":$source,
+      "Value":$dest, 
+      "OffsetSizeAndStrideOpInterface":$slice)>
+  ];
 
   let extraClassDeclaration = [{
     //===------------------------------------------------------------------===//

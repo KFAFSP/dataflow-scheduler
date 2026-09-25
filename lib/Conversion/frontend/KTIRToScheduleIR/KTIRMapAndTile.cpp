@@ -296,9 +296,7 @@ auto lowerLoad(mlir::RewriterBase& rewriter, mlir::ktdp::LoadOp load,
   rewriter.setInsertionPointAfter(extract_slice);
   auto new_load = mlir::ktdp_lowering::LoadOp::create(
       rewriter, load.getLoc(), extract_slice.getType(), load.getAccessTile(),
-      extract_slice.getOffsets(), extract_slice.getSizes(),
-      extract_slice.getStrides(), extract_slice.getStaticOffsets(),
-      extract_slice.getStaticSizes(), extract_slice.getStaticStrides());
+      extract_slice);
   setThrottle(new_load, getThrottle(extract_slice->getOpResult(0)));
 
   // Add the hops back in after the load and replace `tensor.extract_slice`.
@@ -366,10 +364,7 @@ auto lowerStore(mlir::RewriterBase& rewriter, mlir::ktdp::StoreOp store,
 
   // Create the `ktdp_lowering.store` that captures the applied tiling.
   auto new_store = mlir::ktdp_lowering::StoreOp::create(
-      rewriter, store.getLoc(), stored, store.getAccessTile(),
-      insert_slice.getOffsets(), insert_slice.getSizes(),
-      insert_slice.getStrides(), insert_slice.getStaticOffsets(),
-      insert_slice.getStaticSizes(), insert_slice.getStaticStrides());
+      rewriter, store.getLoc(), stored, store.getAccessTile(), insert_slice);
   setThrottle(new_store, getThrottle(insert_slice.getSourceMutable()));
 
   rewriter.eraseOp(store);
