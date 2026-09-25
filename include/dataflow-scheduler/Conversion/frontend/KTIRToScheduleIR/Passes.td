@@ -49,9 +49,11 @@ def KTIRLegalityCheckPass : Pass<"ktir-legality-check", "mlir::ModuleOp"> {
 }
 
 def KTIRMapAndTilePass : Pass<"ktir-map-and-tile", "mlir::func::FuncOp"> {
-  let summary = "";
+  let summary = "Maps and tiles KTIR programs";
   let description = [{
-
+    Performs device-specific mapping and tiling transformations on a normalized
+    KTIR input program, leading to parallel loop nests with their load/store
+    operations having been sunk/hoisted.
   }];
   let dependentDialects = [
     "mlir::ktdf_arch::KTDFArchDialect",
@@ -63,9 +65,13 @@ def KTIRMapAndTilePass : Pass<"ktir-map-and-tile", "mlir::func::FuncOp"> {
 }
 
 def KTIRBufferizePass : Pass<"ktir-bufferize", "mlir::func::FuncOp"> {
-  let summary = "";
+  let summary = "Converts value-like accesses to memory load/store";
   let description = [{
+    Performs lowering transformations that replace tensors and access tiles
+    with actual backing memory and `memref`s where needed.
 
+    The following ops are bufferized by this pass:
+      - `ktdp.(load|store)`
   }];
   let dependentDialects = [
     "mlir::arith::ArithDialect",
@@ -74,9 +80,12 @@ def KTIRBufferizePass : Pass<"ktir-bufferize", "mlir::func::FuncOp"> {
 }
 
 def KTIRPipelinePass : Pass<"ktir-pipeline", "mlir::func::FuncOp"> {
-  let summary = "";
+  let summary = "Constructs pipelines in bufferized KTIR programs";
   let description = [{
-
+    Detects all top-level loop nests and attempts to construct a pipeline
+    within them. The pipeline will be initialized with all the 
+    `ktdp_lowering.store` found inside the loop body, growing by inserting
+    producers inside the loop body while possible.
   }];
   let dependentDialects = [
     "mlir::ktdf::KTDFDialect",

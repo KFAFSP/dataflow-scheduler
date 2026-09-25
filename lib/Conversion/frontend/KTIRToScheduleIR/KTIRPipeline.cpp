@@ -84,13 +84,35 @@ void findLoopNest(llvm::SmallVectorImpl<mlir::scf::ForOp>& loops) {
   }
 }
 
-auto createPipeline(mlir::RewriterBase& rewriter,
-                    llvm::ArrayRef<mlir::ktdp_lowering::StoreOp> stores,
+auto createPipeline(mlir::RewriterBase& rewriter, mlir::scf::ForOp outermost,
                     mlir::DominanceInfo& dominance) -> mlir::ktdf::PipelineOp {
+  mlir::scf::LoopVector loop_nest{outermost};
+  findLoopNest(loop_nest);
+  auto innermost = loop_nest.back();
+
+  // Collect `ktdp_lowering.(load|store)` and `ktdf.via` operations.
+  llvm::SmallVector<mlir::ktdp_lowering::LoadOp> loads;
+  llvm::SmallVector<mlir::ktdp_lowering::StoreOp> stores;
+  llvm::SmallVector<mlir::ktdf::ViaOp> vias;
+  outermost.walk([&](mlir::Operation* op) {
+    if (auto load = mlir::dyn_cast<mlir::ktdp_lowering::LoadOp>(op); load) {
+      loads.push_back(load);
+    } else if (auto store = mlir::dyn_cast<mlir::ktdp_lowering::StoreOp>(op);
+               store) {
+      stores.push_back(store);
+    } else if (auto via = mlir::dyn_cast<mlir::ktdf::ViaOp>(op); via) {
+      vias.push_back(via);
+    }
+  });
+
+  // Create the pipeline.
+  mlir::OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointToStart(innermost.getBody());
   mlir::ktdf::PipelineBuilder pipeline_builder(
       rewriter, rewriter.getFusedLoc(llvm::map_to_vector(
                     stores, [](mlir::Operation* op) { return op->getLoc(); })));
 
+  // Populate the pipeline with operations.
   const auto get_mem_space = [&](mlir::Value value) -> mlir::Attribute {
     if (auto access_tile = llvm::dyn_cast<AccessTile>(value); access_tile) {
       return getMemorySpace(access_tile);
@@ -117,8 +139,7 @@ auto createPipeline(mlir::RewriterBase& rewriter,
                   mlir::ktdf_arch::Mappable::getMapsTo(compute)),
               true};
     }
-    if (op->mightHaveTrait<mlir::OpTrait::ConstantLike>() ||
-        llvm::isa<mlir::func::FuncOp>(op->getParentOp())) {
+    if (!innermost->isAncestor(op)) {
       return nullptr;
     }
 
@@ -130,33 +151,7 @@ auto createPipeline(mlir::RewriterBase& rewriter,
           stores.size()),
       classify, dominance);
 
-  return pipeline_builder.finalize();
-}
-
-auto createPipeline(mlir::RewriterBase& rewriter, mlir::scf::ForOp outermost,
-                    mlir::DominanceInfo& dominance) -> mlir::ktdf::PipelineOp {
-  mlir::scf::LoopVector loop_nest{outermost};
-  findLoopNest(loop_nest);
-
-  // Collect `ktdp_lowering.(load|store)` and `ktdf.via` operations.
-  llvm::SmallVector<mlir::ktdp_lowering::LoadOp> loads;
-  llvm::SmallVector<mlir::ktdp_lowering::StoreOp> stores;
-  llvm::SmallVector<mlir::ktdf::ViaOp> vias;
-  outermost.walk([&](mlir::Operation* op) {
-    if (auto load = mlir::dyn_cast<mlir::ktdp_lowering::LoadOp>(op); load) {
-      loads.push_back(load);
-    } else if (auto store = mlir::dyn_cast<mlir::ktdp_lowering::StoreOp>(op);
-               store) {
-      stores.push_back(store);
-    } else if (auto via = mlir::dyn_cast<mlir::ktdf::ViaOp>(op); via) {
-      vias.push_back(via);
-    }
-  });
-
-  // Create the pipeline.
-  mlir::OpBuilder::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointToStart(loop_nest.back().getBody());
-  auto result = createPipeline(rewriter, stores, dominance);
+  auto result = pipeline_builder.finalize();
   LDBG() << "created " << result;
   return result;
 }
