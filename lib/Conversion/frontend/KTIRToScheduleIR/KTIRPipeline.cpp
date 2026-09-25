@@ -126,18 +126,28 @@ auto createPipeline(mlir::RewriterBase& rewriter, mlir::scf::ForOp outermost,
       auto stage = builder.createStage();
       stage.setApplicableUnitsAttr(mlir::ArrayAttr::get(
           builder.getContext(), {get_mem_space(store.getDest())}));
-      return stage;
+      return {stage, true};
     }
     if (auto load = llvm::dyn_cast<mlir::ktdp_lowering::LoadOp>(op); load) {
-      return {builder.getOrCreateStage(get_mem_space(load.getSource())), true};
+      return builder.tryPlacement(get_mem_space(load.getSource()));
     }
     if (auto via = llvm::dyn_cast<mlir::ktdf::ViaOp>(op); via) {
-      return {builder.getOrCreateStage(via.getHopsAttr()), true};
+      if (via.getHops().size() > 1) {
+        rewriter.setInsertionPoint(via);
+        auto rest = mlir::ktdf::ViaOp::create(
+            rewriter, via.getLoc(), via.getOperand(),
+            rewriter.getArrayAttr(via.getHops().getValue().drop_back(1)));
+        rewriter.modifyOpInPlace(via, [&]() {
+          via.setOperand(rest);
+          via.setHopsAttr(
+              rewriter.getArrayAttr(via.getHops().getValue().back()));
+        });
+      }
+      return builder.tryPlacement(via.getHopsAttr());
     }
     if (auto compute = llvm::dyn_cast<mlir::linalg::LinalgOp>(op); compute) {
-      return {builder.getOrCreateStage(
-                  mlir::ktdf_arch::Mappable::getMapsTo(compute)),
-              true};
+      return builder.tryPlacement(
+          mlir::ktdf_arch::Mappable::getMapsTo(compute));
     }
     if (!innermost->isAncestor(op)) {
       return nullptr;

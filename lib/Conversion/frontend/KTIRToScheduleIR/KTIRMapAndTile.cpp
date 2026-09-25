@@ -301,8 +301,9 @@ auto lowerLoad(mlir::RewriterBase& rewriter, mlir::ktdp::LoadOp load,
 
   // Add the hops back in after the load and replace `tensor.extract_slice`.
   mlir::Value loaded = new_load.getResult();
-  for (auto hop : llvm::ArrayRef(hops).drop_front(1)) {
-    loaded = mlir::ktdf::ViaOp::create(rewriter, load.getLoc(), loaded, hop);
+  if (auto via = llvm::ArrayRef(hops).drop_front(1); !via.empty()) {
+    loaded = mlir::ktdf::ViaOp::create(rewriter, load.getLoc(), loaded,
+                                       rewriter.getArrayAttr(via));
   }
   rewriter.replaceOp(extract_slice, loaded);
   rewriter.eraseOp(load);
@@ -358,8 +359,11 @@ auto lowerStore(mlir::RewriterBase& rewriter, mlir::ktdp::StoreOp store,
   // Add the hops back in before the store.
   rewriter.setInsertionPoint(insert_slice);
   mlir::Value stored = insert_slice.getSource();
-  for (auto hop : llvm::reverse(llvm::ArrayRef(reverse_hops).drop_front(1))) {
-    stored = mlir::ktdf::ViaOp::create(rewriter, store.getLoc(), stored, hop);
+  if (auto reverse_via = llvm::MutableArrayRef(reverse_hops).drop_front(1);
+      !reverse_via.empty()) {
+    std::reverse(reverse_via.begin(), reverse_via.end());
+    stored = mlir::ktdf::ViaOp::create(rewriter, store.getLoc(), stored,
+                                       rewriter.getArrayAttr(reverse_via));
   }
 
   // Create the `ktdp_lowering.store` that captures the applied tiling.
