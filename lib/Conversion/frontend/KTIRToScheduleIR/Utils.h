@@ -112,6 +112,7 @@ inline void setThrottle(mlir::Operation* op, int64_t value) {
     case mlir::utils::IteratorType::reduction:
       return mlir::ktdf::LoopType::ReductionLoop;
   }
+  llvm_unreachable("unknown iterator type");
 }
 
 [[nodiscard]] inline auto getLoopTypeAttr(mlir::MLIRContext* context,
