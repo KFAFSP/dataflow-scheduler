@@ -24,29 +24,34 @@
 // CHECK-NEXT:     scf.for %[[VAL_0:.*]] = %[[CONSTANT_2]] to %[[CONSTANT_1]] step %[[CONSTANT_1]] {
 // CHECK-NEXT:       scf.for %[[VAL_1:.*]] = %[[CONSTANT_2]] to %[[CONSTANT_0]] step %[[CONSTANT_0]] {
 // CHECK-NEXT:         ktdf.pipeline {
-// CHECK-NEXT:           %[[PRIVATE_0:.*]]:8 = ktdf.private -> (!ktdf.fifo.slot<"MNISU" -> "DDR", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"SFU" -> "MNISU", 64xf16>, !ktdf.token, !ktdf.fifo.slot<["MNILU", "L1"] -> "SFU", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"DDR" -> ["MNILU", "L1"], 64xf16>, !ktdf.token) {
+// CHECK-NEXT:           %[[PRIVATE_0:.*]]:10 = ktdf.private -> (!ktdf.fifo.slot<"MNISU" -> "DDR", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"SFU" -> "MNISU", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"MNILU" -> "L1", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"DDR" -> "MNILU", 64xf16>, !ktdf.token) {
 // CHECK-NEXT:             %[[FIFO_0:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"MNISU" -> "DDR", 64xf16>
 // CHECK-NEXT:             %[[CREATE_TOKEN_0:.*]] = ktdf.create_token : !ktdf.token
 // CHECK-NEXT:             %[[FIFO_1:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"SFU" -> "MNISU", 64xf16>
 // CHECK-NEXT:             %[[CREATE_TOKEN_1:.*]] = ktdf.create_token : !ktdf.token
-// CHECK-NEXT:             %[[FIFO_2:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<["MNILU", "L1"] -> "SFU", 64xf16>
+// CHECK-NEXT:             %[[FIFO_2:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>
 // CHECK-NEXT:             %[[CREATE_TOKEN_2:.*]] = ktdf.create_token : !ktdf.token
-// CHECK-NEXT:             %[[FIFO_3:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"DDR" -> ["MNILU", "L1"], 64xf16>
+// CHECK-NEXT:             %[[FIFO_3:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"MNILU" -> "L1", 64xf16>
 // CHECK-NEXT:             %[[CREATE_TOKEN_3:.*]] = ktdf.create_token : !ktdf.token
-// CHECK-NEXT:             ktdf.private_yield %[[FIFO_0]], %[[CREATE_TOKEN_0]], %[[FIFO_1]], %[[CREATE_TOKEN_1]], %[[FIFO_2]], %[[CREATE_TOKEN_2]], %[[FIFO_3]], %[[CREATE_TOKEN_3]] : !ktdf.fifo.slot<"MNISU" -> "DDR", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"SFU" -> "MNISU", 64xf16>, !ktdf.token, !ktdf.fifo.slot<["MNILU", "L1"] -> "SFU", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"DDR" -> ["MNILU", "L1"], 64xf16>, !ktdf.token
+// CHECK-NEXT:             %[[FIFO_4:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"DDR" -> "MNILU", 64xf16>
+// CHECK-NEXT:             %[[CREATE_TOKEN_4:.*]] = ktdf.create_token : !ktdf.token
+// CHECK-NEXT:             ktdf.private_yield %[[FIFO_0]], %[[CREATE_TOKEN_0]], %[[FIFO_1]], %[[CREATE_TOKEN_1]], %[[FIFO_2]], %[[CREATE_TOKEN_2]], %[[FIFO_3]], %[[CREATE_TOKEN_3]], %[[FIFO_4]], %[[CREATE_TOKEN_4]] : !ktdf.fifo.slot<"MNISU" -> "DDR", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"SFU" -> "MNISU", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"MNILU" -> "L1", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"DDR" -> "MNILU", 64xf16>, !ktdf.token
 // CHECK-NEXT:           }
-// CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[PRIVATE_0:.*]]#7) {
-// CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_0]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[PRIVATE_0]]#6 size [] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> ["MNILU", "L1"], 64xf16>
+// CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[PRIVATE_0:.*]]#9) {
+// CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_0]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[PRIVATE_0]]#8 size [] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "MNILU", 64xf16>
 // CHECK-NEXT:           }
-// CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0:.*]]#7) depends_out(%[[PRIVATE_0]]#5) {
-// CHECK-NEXT:             ktdf.data_transfer from %[[PRIVATE_0]]#6 size [] to %[[PRIVATE_0]]#4 size [] : !ktdf.fifo.slot<"DDR" -> ["MNILU", "L1"], 64xf16>, !ktdf.fifo.slot<["MNILU", "L1"] -> "SFU", 64xf16>
+// CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0:.*]]#9) depends_out(%[[PRIVATE_0]]#7) {
+// CHECK-NEXT:             ktdf.data_transfer from %[[PRIVATE_0]]#8 size [] to %[[PRIVATE_0]]#6 size [] : !ktdf.fifo.slot<"DDR" -> "MNILU", 64xf16>, !ktdf.fifo.slot<"MNILU" -> "L1", 64xf16>
 // CHECK-NEXT:           } {applicable_units = ["MNILU"]}
+// CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0:.*]]#7) depends_out(%[[PRIVATE_0]]#5) {
+// CHECK-NEXT:             ktdf.data_transfer from %[[PRIVATE_0]]#6 size [] to %[[PRIVATE_0]]#4 size [] : !ktdf.fifo.slot<"MNILU" -> "L1", 64xf16>, !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>
+// CHECK-NEXT:           }
 // CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0:.*]]#5) depends_out(%[[PRIVATE_0]]#3) {
-// CHECK-NEXT:             %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[PRIVATE_0]]#4 : <["MNILU", "L1"] -> "SFU", 64xf16> -> tensor<1x64xf16>
+// CHECK-NEXT:             %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[PRIVATE_0]]#4 : <"L1" -> "SFU", 64xf16> -> tensor<1x64xf16>
 // CHECK-NEXT:             %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x64xf16>
 // CHECK-NEXT:             %[[GENERIC_0:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_0]], #[[$ATTR_0]]], iterator_types = ["parallel", "parallel"]} ins(%[[READ_FROM_FIFO_0]] : tensor<1x64xf16>) outs(%[[EMPTY_0]] : tensor<1x64xf16>) attrs =  {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
-// CHECK-NEXT:             ^bb0(%[[VAL_5:.*]]: f16, %[[VAL_6:.*]]: f16):
-// CHECK-NEXT:               %[[SQRT_0:.*]] = math.sqrt %[[VAL_5]] : f16
+// CHECK-NEXT:             ^bb0(%[[VAL_6:.*]]: f16, %[[VAL_7:.*]]: f16):
+// CHECK-NEXT:               %[[SQRT_0:.*]] = math.sqrt %[[VAL_6]] : f16
 // CHECK-NEXT:               linalg.yield %[[SQRT_0]] : f16
 // CHECK-NEXT:             } -> tensor<1x64xf16>
 // CHECK-NEXT:             ktdf.write_to_fifo %[[GENERIC_0]], %[[PRIVATE_0]]#2 : tensor<1x64xf16>, <"SFU" -> "MNISU", 64xf16>
