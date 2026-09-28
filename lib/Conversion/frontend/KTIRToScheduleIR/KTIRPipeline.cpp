@@ -161,7 +161,7 @@ auto createPipeline(mlir::RewriterBase& rewriter, mlir::scf::ForOp outermost,
           stores.size()),
       classify, dominance);
 
-  auto result = pipeline_builder.finalize();
+  auto result = pipeline_builder.build();
   LDBG() << "created " << result;
   return result;
 }
