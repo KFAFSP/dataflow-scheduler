@@ -34,6 +34,7 @@
 namespace scheduler {
 
 using MemRef = mlir::TypedValue<mlir::MemRefType>;
+using AccessTile = mlir::TypedValue<mlir::ktdp::AccessTileType>;
 
 [[nodiscard]] inline auto getMemorySpace(MemRef memref) -> mlir::Attribute {
   if (const auto space = memref.getType().getMemorySpace(); space) {
@@ -46,8 +47,6 @@ using MemRef = mlir::TypedValue<mlir::MemRefType>;
 
   return nullptr;
 }
-
-using AccessTile = mlir::TypedValue<mlir::ktdp::AccessTileType>;
 
 [[nodiscard]] inline auto getMemorySpace(AccessTile access_tile)
     -> mlir::Attribute {
@@ -62,6 +61,17 @@ using AccessTile = mlir::TypedValue<mlir::ktdp::AccessTileType>;
   }
 
   return getMemorySpace(base);
+}
+
+[[nodiscard]] inline auto getMemorySpace(mlir::Value value) -> mlir::Attribute {
+  if (auto access_tile = llvm::dyn_cast<AccessTile>(value); access_tile) {
+    return getMemorySpace(access_tile);
+  }
+  if (auto memref = llvm::dyn_cast<MemRef>(value); memref) {
+    return getMemorySpace(memref);
+  }
+
+  return nullptr;
 }
 
 struct AttrMapping : llvm::DenseMap<mlir::Attribute, mlir::Attribute> {

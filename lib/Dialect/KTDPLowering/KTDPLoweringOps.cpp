@@ -507,6 +507,17 @@ void LoadOp::build(OpBuilder& builder, OperationState& state,
         slice.getStaticSizes(), slice.getStaticStrides());
 }
 
+void LoadOp::build(OpBuilder& builder, OperationState& state,
+                   RankedTensorType result_type, Value source,
+                   ArrayRef<OpFoldResult> mixed_sizes) {
+  const SmallVector<int64_t> static_offsets(result_type.getRank(), 0);
+  const auto [static_sizes, sizes] = decomposeMixedValues(mixed_sizes);
+  const SmallVector<int64_t> static_strides(result_type.getRank(), 1);
+
+  build(builder, state, result_type, source, {}, sizes, {}, static_offsets,
+        static_sizes, static_strides);
+}
+
 //===----------------------------------------------------------------------===//
 // StoreOp
 //===----------------------------------------------------------------------===//
@@ -546,4 +557,15 @@ void StoreOp::build(OpBuilder& builder, OperationState& state, Value source,
   build(builder, state, source, dest, slice.getOffsets(), slice.getSizes(),
         slice.getStrides(), slice.getStaticOffsets(), slice.getStaticSizes(),
         slice.getStaticStrides());
+}
+
+void StoreOp::build(OpBuilder& builder, OperationState& state, Value source,
+                    Value dest, ArrayRef<OpFoldResult> mixed_sizes) {
+  const auto type = cast<RankedTensorType>(source.getType());
+  const SmallVector<int64_t> static_offsets(type.getRank(), 0);
+  const auto [static_sizes, sizes] = decomposeMixedValues(mixed_sizes);
+  const SmallVector<int64_t> static_strides(type.getRank(), 1);
+
+  build(builder, state, source, dest, {}, sizes, {}, static_offsets,
+        static_sizes, static_strides);
 }
