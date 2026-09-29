@@ -86,10 +86,65 @@ def KTIRPipelinePass : Pass<"ktir-pipeline", "mlir::func::FuncOp"> {
     within them. The pipeline will be initialized with all the 
     `ktdp_lowering.store` found inside the loop body, growing by inserting
     producers inside the loop body while possible.
+
+    After pipeline creation, lowering and legalization patterns are applied 
+    until the pipeline is normal form. The pipeline normal form is defined as
+    follows:
+
+    ```mlir
+    ktdf.pipeline {
+      %... = ktdf.private {
+        // tokens...
+        // FIFOs...
+      }
+
+      // Load stages (1 per unique memory space)
+      ktdf.stage depends_in(none) depends_out(%tok0) {
+        ktdf.data_transfer from %input to %in_fifo
+      }
+
+      // Compute stages (1 per unique mapping)
+      ktdf.stage depends_in(%tok0) depends_out(%tok1) {
+        %in = ktdf.read_from_fifo %in_fifo
+        %out = compute %in
+        ktdf.write_to_fifo %out, %out_fifo
+      } {applicable_units = ["COMPUTE"]}
+
+      // Store stages (1 per unique memory space)
+      ktdf.stage depends_in(%tok1) depends_out(none) {
+        ktdf.data_transfer from %out_fifo to %output
+      }
+    }
+    ```
+
+    In case that there were `ktdf.via` hops between two ops in the pipeline,
+    these will materialize as follows (between the adjacent stages):
+
+    ```mlir
+    ktdf.pipeline {
+      %... = ktdf.private {
+        // ...
+        // allocs...
+      }
+
+      // ...
+
+      // Hop stages (2 per memory space) ...
+      ktdf.stage depends_in(%tok0) depends_out(%tok1) {
+        ktdf.data_transfer from %in_fifo to %hop_alloc
+      }
+      ktdf.stage depends_in(%tok1) depends_out(%tok2) {
+        ktdf.data_transfer from %hop_alloc to %out_fifo
+      }
+
+      // ...
+    }
+    ```
   }];
   let dependentDialects = [
     "mlir::ktdf::KTDFDialect",
-    "mlir::ktdf_arch::KTDFArchDialect"
+    "mlir::ktdf_arch::KTDFArchDialect",
+    "mlir::memref::MemRefDialect"
   ];
 }
 

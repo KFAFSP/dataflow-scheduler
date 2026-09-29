@@ -308,7 +308,11 @@ def KTDPLowering_LoadOp : KTDPLowering_Op<"load", [
     OpBuilder<(ins 
       "RankedTensorType":$result_type, 
       "Value":$source, 
-      "OffsetSizeAndStrideOpInterface":$slice)>
+      "OffsetSizeAndStrideOpInterface":$slice)>,
+    OpBuilder<(ins
+      "RankedTensorType":$result_type,
+      "Value":$source,
+      "ArrayRef<OpFoldResult>":$mixed_sizes)>
   ];
 
   let extraClassDeclaration = [{
@@ -370,7 +374,11 @@ def KTDPLowering_StoreOp : KTDPLowering_Op<"store", [
     OpBuilder<(ins 
       "Value":$source,
       "Value":$dest, 
-      "OffsetSizeAndStrideOpInterface":$slice)>
+      "OffsetSizeAndStrideOpInterface":$slice)>,
+    OpBuilder<(ins
+      "Value":$source,
+      "Value":$dest,
+      "ArrayRef<OpFoldResult>":$mixed_sizes)>
   ];
 
   let extraClassDeclaration = [{
