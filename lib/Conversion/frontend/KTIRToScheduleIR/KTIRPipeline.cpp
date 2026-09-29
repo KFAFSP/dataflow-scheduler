@@ -153,7 +153,7 @@ auto createPipeline(mlir::RewriterBase& rewriter, mlir::scf::ForOp outermost,
       return nullptr;
     }
 
-    return mlir::ktdf::PipelineBuilder::naturalPlacement(op);
+    return mlir::ktdf::PipelineBuilder::Placement::natural(op);
   };
   pipeline_builder.insert(
       llvm::ArrayRef<mlir::Operation*>(
@@ -251,13 +251,55 @@ struct LowerStore : mlir::OpRewritePattern<mlir::ktdp_lowering::StoreOp> {
   }
 };
 
+namespace {
+
+[[nodiscard]] auto getSingleUser(mlir::Value value) -> mlir::Operation* {
+  const auto users = value.getUsers();
+  if (users.empty() || std::next(users.begin()) != users.end()) {
+    return nullptr;
+  }
+  return *users.begin();
+}
+
+template <class OpType>
+[[nodiscard]] auto getSingleUserOfType(mlir::Value value) -> OpType {
+  return mlir::dyn_cast_if_present<OpType>(getSingleUser(value));
+}
+
+/// Eliminates @p via if possible.
+///
+/// If @p via has no users, it is erased. If @p via is the single user of a
+/// ReadFromFifoOp, and has a single use in a WriteToFifoOp, it is replaced with
+/// a DataTransferOp instead, erasing all three ops.
+///
+/// @pre  `rewriter` is positioned before @p via .
+///
+/// @return Success if the IR was modified, otherwise failure.
+auto eliminateVia(mlir::RewriterBase& rewriter, mlir::ktdf::ViaOp via)
+    -> mlir::LogicalResult {
+  auto write = getSingleUserOfType<mlir::ktdf::WriteToFifoOp>(via);
+  auto read = via.getOperand().getDefiningOp<mlir::ktdf::ReadFromFifoOp>();
+  if (!write || !read || !read->hasOneUse()) {
+    return mlir::failure();
+  }
+
+  mlir::ktdf::DataTransferOp::create(rewriter, via.getLoc(), read.getFifoSlot(),
+                                     write.getFifoSlot());
+  rewriter.eraseOp(write);
+  rewriter.eraseOp(via);
+  rewriter.eraseOp(read);
+  return mlir::success();
+}
+
+}  // namespace
+
 struct LowerVia : mlir::OpRewritePattern<mlir::ktdf::ViaOp> {
   using OpRewritePattern::OpRewritePattern;
 
   auto matchAndRewrite(mlir::ktdf::ViaOp via,
                        mlir::PatternRewriter& rewriter) const
       -> llvm::LogicalResult override {
-    return mlir::ktdf::eliminateVia(rewriter, via);
+    return eliminateVia(rewriter, via);
   }
 };
 
