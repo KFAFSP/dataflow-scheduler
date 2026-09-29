@@ -449,7 +449,7 @@ auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
   const auto place =
       [&](mlir::ktdf::PipelineBuilder& builder,
           mlir::Operation* op) -> mlir::ktdf::PipelineBuilder::Placement {
-    // Stores go into the special store_stages that aren't consider otherwise.
+    // Stores go into the special store_stages that aren't considerd otherwise.
     if (auto store = llvm::dyn_cast<mlir::ktdp_lowering::StoreOp>(op); store) {
       LDBG() << "inserting store " << store;
       const auto memory_space = getMemorySpace(store.getDest());
@@ -469,12 +469,13 @@ auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
       return it->second;
     }
 
-    // Loads go into existing or newly created stages.
+    // Loads go into existing or newly created, reusable stages.
     if (auto load = llvm::dyn_cast<mlir::ktdp_lowering::LoadOp>(op); load) {
       return builder.tryPlacement(getMemorySpace(load.getSource()));
     }
 
-    // Vias are split into hops and go into existing or newly created stages.
+    // Vias are split into hops and go into newly created stages not considered
+    // for any other placements.
     if (auto via = llvm::dyn_cast<mlir::ktdf::ViaOp>(op); via) {
       if (via.getHops().size() > 1) {
         rewriter.setInsertionPoint(via);
@@ -487,10 +488,13 @@ auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
               rewriter.getArrayAttr(via.getHops().getValue().back()));
         });
       }
-      return builder.tryPlacement(via.getHopsAttr());
+
+      auto stage = builder.createStage();
+      stage.setApplicableUnitsAttr(via.getHopsAttr());
+      return {stage, true};
     }
 
-    // Mapped operations go into existing or newly created stages.
+    // Mapped operations go into existing or newly created, reusable stages.
     if (auto mapping = mlir::ktdf_arch::Mappable::getMapsTo(op); mapping) {
       return builder.tryPlacement(mapping);
     }
