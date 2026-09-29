@@ -312,6 +312,11 @@ def KTDPLowering_LoadOp : KTDPLowering_Op<"load", [
     OpBuilder<(ins
       "RankedTensorType":$result_type,
       "Value":$source,
+      "ValueRange":$sizes,
+      "ArrayRef<int64_t>":$static_sizes)>,
+    OpBuilder<(ins
+      "RankedTensorType":$result_type,
+      "Value":$source,
       "ArrayRef<OpFoldResult>":$mixed_sizes)>
   ];
 
@@ -375,6 +380,11 @@ def KTDPLowering_StoreOp : KTDPLowering_Op<"store", [
       "Value":$source,
       "Value":$dest, 
       "OffsetSizeAndStrideOpInterface":$slice)>,
+    OpBuilder<(ins
+      "Value":$source,
+      "Value":$dest,
+      "ValueRange":$sizes,
+      "ArrayRef<int64_t>":$static_sizes)>,
     OpBuilder<(ins
       "Value":$source,
       "Value":$dest,
