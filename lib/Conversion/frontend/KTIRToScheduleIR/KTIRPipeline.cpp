@@ -57,44 +57,58 @@ namespace scheduler {
 
 namespace {
 
+/// Combines FIFO slot allocations of the same FIFO type.
+class Allocator : public mlir::ktdf::PipelineBuilder::Allocator {
+  // TODO: Add support for dynamic dimensions.
+  //
+  // canAllocate will have to ensure that the shape can be reified in the
+  // PrivateOp. Since that will be canonicalized by the builder, it can do this
+  // speculatively.
+  //
+  // allocate will need to use the reified shape computation and should combine
+  // FIFO slot allocations based on type _and_ shape operands.
+
+ public:
+  auto allocate(mlir::ktdf::PipelineBuilder& builder, mlir::OpResult producer,
+                mlir::ktdf::StageOp consumer) -> mlir::ktdf::FifoSlot override {
+    mlir::IRRewriter rewriter(builder.getPrivateBuilder());
+
+    const auto type = getFifoSlotType(producer, consumer);
+    auto& alloc = by_type_[type];
+    if (!alloc) {
+      // Create a new allocation.
+      alloc = mlir::ktdf::FifoAllocateOp::create(rewriter, producer.getLoc(),
+                                                 {type}, {});
+    } else {
+      // Expand the existing allocation to have one more slot.
+      const llvm::SmallVector<mlir::Type> slot_types(alloc->getNumResults() + 1,
+                                                     type);
+      auto old_alloc = std::exchange(
+          alloc, mlir::ktdf::FifoAllocateOp::create(rewriter, producer.getLoc(),
+                                                    slot_types, {}));
+      rewriter.replaceOp(old_alloc, alloc->getResults().drop_back());
+    }
+
+    return mlir::cast<mlir::ktdf::FifoSlot>(alloc.getResults().back());
+  }
+
+ private:
+  llvm::DenseMap<mlir::ktdf::FifoSlotType, mlir::ktdf::FifoAllocateOp> by_type_;
+};
+
 struct KTIRPipelinePass : public impl::KTIRPipelinePassBase<KTIRPipelinePass> {
   using KTIRPipelinePassBase<KTIRPipelinePass>::KTIRPipelinePassBase;
 
   void runOnOperation() override;
 };
 
-void findLoopNest(llvm::SmallVectorImpl<mlir::scf::ForOp>& loops) {
-  if (loops.empty()) {
-    return;
-  }
-
-  auto loop = loops.back();
-  while (true) {
-    const auto body = loop.getBody()->without_terminator();
-    if (body.empty() || std::next(body.begin()) != body.end()) {
-      return;
-    }
-
-    auto inner = llvm::cast<mlir::scf::ForOp>(&*body.begin());
-    if (!inner) {
-      return;
-    }
-
-    loop = loops.emplace_back(inner);
-  }
-}
-
-auto createPipeline(mlir::RewriterBase& rewriter, mlir::scf::ForOp outermost,
+auto createPipeline(mlir::RewriterBase& rewriter, mlir::scf::ForOp innermost,
                     mlir::DominanceInfo& dominance) -> mlir::ktdf::PipelineOp {
-  mlir::scf::LoopVector loop_nest{outermost};
-  findLoopNest(loop_nest);
-  auto innermost = loop_nest.back();
-
   // Collect `ktdp_lowering.(load|store)` and `ktdf.via` operations.
   llvm::SmallVector<mlir::ktdp_lowering::LoadOp> loads;
   llvm::SmallVector<mlir::ktdp_lowering::StoreOp> stores;
   llvm::SmallVector<mlir::ktdf::ViaOp> vias;
-  outermost.walk([&](mlir::Operation* op) {
+  innermost.walk([&](mlir::Operation* op) {
     if (auto load = mlir::dyn_cast<mlir::ktdp_lowering::LoadOp>(op); load) {
       loads.push_back(load);
     } else if (auto store = mlir::dyn_cast<mlir::ktdp_lowering::StoreOp>(op);
@@ -108,9 +122,12 @@ auto createPipeline(mlir::RewriterBase& rewriter, mlir::scf::ForOp outermost,
   // Create the pipeline.
   mlir::OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToStart(innermost.getBody());
+  Allocator allocator;
   mlir::ktdf::PipelineBuilder pipeline_builder(
-      rewriter, rewriter.getFusedLoc(llvm::map_to_vector(
-                    stores, [](mlir::Operation* op) { return op->getLoc(); })));
+      rewriter,
+      rewriter.getFusedLoc(llvm::map_to_vector(
+          stores, [](mlir::Operation* op) { return op->getLoc(); })),
+      &allocator);
 
   // Populate the pipeline with operations.
   const auto get_mem_space = [&](mlir::Value value) -> mlir::Attribute {
@@ -305,39 +322,6 @@ struct LowerVia : mlir::OpRewritePattern<mlir::ktdf::ViaOp> {
 
 auto postProcess(mlir::RewriterBase& rewriter, mlir::ktdf::PipelineOp pipeline,
                  mlir::ktdf_arch::Mapping& mapping) -> llvm::LogicalResult {
-  // Combine FIFO slots.
-  // FIXME: Path expansion expects to have one alloc per unit? How does that
-  //        work for different dynamic sizes?
-  llvm::DenseMap<std::pair<mlir::Attribute, mlir::Attribute>, mlir::OpOperand*>
-      fifo_map;
-  for (auto& operand : pipeline.getPrivateOp().getYieldOp()->getOpOperands()) {
-    auto alloc = operand.get().getDefiningOp<mlir::ktdf::FifoAllocateOp>();
-    if (!alloc || alloc.getNumResults() != 1) {
-      continue;
-    }
-
-    const auto type =
-        llvm::cast<mlir::ktdf::FifoSlotType>(alloc->getResult(0).getType());
-    const auto [it, added] =
-        fifo_map.try_emplace({type.getSrc(), type.getDest()}, &operand);
-    if (added) {
-      continue;
-    }
-
-    auto widen = it->second->get().getDefiningOp<mlir::ktdf::FifoAllocateOp>();
-    if (widen.getDynamicSizes() != alloc.getDynamicSizes()) {
-      continue;
-    }
-
-    rewriter.setInsertionPoint(widen);
-    llvm::SmallVector<mlir::Type> types(widen->getResultTypes());
-    types.push_back(operand.get().getType());
-    auto new_alloc = mlir::ktdf::FifoAllocateOp::create(
-        rewriter, widen.getLoc(), types, widen.getDynamicSizes());
-    rewriter.replaceOp(widen, new_alloc->getResults().drop_back(1));
-    rewriter.replaceOp(alloc, new_alloc->getResults().back());
-  }
-
   // Remove all non-execution-unit mappings on the stages.
   // FIXME: We'll need to improve this to provide path expansion with what it
   //        needs top handle vias.
@@ -366,6 +350,25 @@ auto postProcess(mlir::RewriterBase& rewriter, mlir::ktdf::PipelineOp pipeline,
   return llvm::success();
 }
 
+/// Finds the innermost perfectly nested `scf.for` from @p loop .
+[[nodiscard]] auto findInnermost(mlir::scf::ForOp loop) -> mlir::scf::ForOp {
+  while (loop) {
+    const auto body = loop.getBody()->without_terminator();
+    if (body.empty() || std::next(body.begin()) != body.end()) {
+      break;
+    }
+
+    auto inner = llvm::cast<mlir::scf::ForOp>(&*body.begin());
+    if (!inner) {
+      break;
+    }
+
+    loop = inner;
+  }
+
+  return loop;
+}
+
 }  // namespace
 
 void KTIRPipelinePass::runOnOperation() {
@@ -388,7 +391,7 @@ void KTIRPipelinePass::runOnOperation() {
   // Create the pipelines.
   const auto pipelines = llvm::map_to_vector(
       func.getOps<mlir::scf::ForOp>(), [&](mlir::scf::ForOp outermost) {
-        return createPipeline(rewriter, outermost, dominance);
+        return createPipeline(rewriter, findInnermost(outermost), dominance);
       });
 
   // Legalize the pipelines.

@@ -34,20 +34,20 @@
 // CHECK-NEXT:     scf.for %[[VAL_0:.*]] = %[[CONSTANT_2]] to %[[CONSTANT_1]] step %[[CONSTANT_1]] {
 // CHECK-NEXT:       scf.for %[[VAL_1:.*]] = %[[CONSTANT_2]] to %[[CONSTANT_0]] step %[[CONSTANT_0]] {
 // CHECK-NEXT:         ktdf.pipeline {
-// CHECK-NEXT:           %[[PRIVATE_0:.*]]:6 = ktdf.private -> (!ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>) {
+// CHECK-NEXT:           %[[PRIVATE_0:.*]]:6 = ktdf.private -> (!ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>, !ktdf.token, !ktdf.token, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>) {
 // CHECK-NEXT:             %[[FIFO_0:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>
 // CHECK-NEXT:             %[[CREATE_TOKEN_0:.*]] = ktdf.create_token : !ktdf.token
-// CHECK-NEXT:             %[[FIFO_1:.*]]:3 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
 // CHECK-NEXT:             %[[CREATE_TOKEN_1:.*]] = ktdf.create_token : !ktdf.token
-// CHECK-NEXT:             ktdf.private_yield %[[FIFO_0]], %[[CREATE_TOKEN_0]], %[[FIFO_1]]#0, %[[CREATE_TOKEN_1]], %[[FIFO_1]]#1, %[[FIFO_1]]#2 : !ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.token, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
+// CHECK-NEXT:             %[[FIFO_1:.*]]:3 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
+// CHECK-NEXT:             ktdf.private_yield %[[FIFO_0]], %[[CREATE_TOKEN_0]], %[[CREATE_TOKEN_1]], %[[FIFO_1]]#0, %[[FIFO_1]]#1, %[[FIFO_1]]#2 : !ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>, !ktdf.token, !ktdf.token, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
 // CHECK-NEXT:           }
-// CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[PRIVATE_0:.*]]#3) {
+// CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[PRIVATE_0:.*]]#2) {
 // CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_0]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[PRIVATE_0]]#5 size [] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
 // CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_1]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[PRIVATE_0]]#4 size [] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
-// CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_2]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[PRIVATE_0]]#2 size [] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
+// CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_2]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[PRIVATE_0]]#3 size [] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
 // CHECK-NEXT:           }
-// CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0:.*]]#3) depends_out(%[[PRIVATE_0]]#1) {
-// CHECK-NEXT:             %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[PRIVATE_0]]#2 : <"DDR" -> "SFU", 64xf16> -> tensor<1x64xf16>
+// CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0:.*]]#2) depends_out(%[[PRIVATE_0]]#1) {
+// CHECK-NEXT:             %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[PRIVATE_0]]#3 : <"DDR" -> "SFU", 64xf16> -> tensor<1x64xf16>
 // CHECK-NEXT:             %[[READ_FROM_FIFO_1:.*]] = ktdf.read_from_fifo %[[PRIVATE_0]]#4 : <"DDR" -> "SFU", 64xf16> -> tensor<1x64xf16>
 // CHECK-NEXT:             %[[READ_FROM_FIFO_2:.*]] = ktdf.read_from_fifo %[[PRIVATE_0]]#5 : <"DDR" -> "SFU", 64xf16> -> tensor<1x64xf16>
 // CHECK-NEXT:             %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x64xf16>
