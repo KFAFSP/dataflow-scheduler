@@ -309,7 +309,7 @@ struct LowerViaMemory : mlir::OpRewritePattern<mlir::ktdf::ViaOp> {
         llvm::cast<mlir::RankedTensorType>(via.getType()), alloc, sizes);
     load->setDiscardableAttrs(via->getRawDictionaryAttrs());
     rewriter.replaceOp(via, load);
-    rewriter.modifyOpInPlace(stage, [&]() { stage.addInDependency({token}); });
+    rewriter.modifyOpInPlace(stage, [&]() { stage.setDependsIn({token}); });
     return llvm::success();
   }
 

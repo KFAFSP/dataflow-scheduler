@@ -43,7 +43,7 @@
 // CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0:.*]]#5) depends_out(%[[PRIVATE_0]]#6) {
 // CHECK-NEXT:             ktdf.data_transfer from %[[PRIVATE_0]]#4 size [1, 64] to %[[PRIVATE_0]]#7[0, 0] size [1, 64] : !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>, memref<1x64xf16, "L1">
 // CHECK-NEXT:           }
-// CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0:.*]]#5, %[[PRIVATE_0]]#6) depends_out(%[[PRIVATE_0]]#3) {
+// CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0]]#6) depends_out(%[[PRIVATE_0]]#3) {
 // CHECK-NEXT:             ktdf.data_transfer from %[[PRIVATE_0]]#7[0, 0] size [1, 64] to %[[PRIVATE_0]]#2 size [1, 64] : memref<1x64xf16, "L1">, !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>
 // CHECK-NEXT:           }
 // CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0:.*]]#3) depends_out(%[[PRIVATE_0]]#1) {
