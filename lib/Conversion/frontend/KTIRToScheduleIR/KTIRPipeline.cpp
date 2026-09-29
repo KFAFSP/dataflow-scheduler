@@ -283,10 +283,6 @@ struct LowerViaMemory : mlir::OpRewritePattern<mlir::ktdf::ViaOp> {
     const auto alloc_type =
         mlir::MemRefType::get(type.getShape(), type.getElementType(),
                               mlir::MemRefLayoutAttrInterface{}, memory_space);
-    const auto sizes = llvm::map_to_vector(
-        type.getShape(), [&](int64_t size) -> mlir::OpFoldResult {
-          return rewriter.getI64IntegerAttr(size);
-        });
 
     mlir::ktdf::PrivateBuilder private_builder(pipeline, std::nullopt,
                                                rewriter.getListener());
@@ -297,8 +293,8 @@ struct LowerViaMemory : mlir::OpRewritePattern<mlir::ktdf::ViaOp> {
     mlir::ktdf::StageOp::create(
         rewriter, via.getLoc(), stage.getDependsIn(), {token},
         [&](mlir::OpBuilder& builder, mlir::Location loc) {
-          auto store = mlir::ktdp_lowering::StoreOp::create(builder, loc, read,
-                                                            alloc, sizes);
+          auto store = mlir::ktdp_lowering::StoreOp::create(
+              builder, loc, read, alloc, {}, type.getShape());
           store->setDiscardableAttrs(via->getRawDictionaryAttrs());
           rewriter.moveOpBefore(read, store);
         });
@@ -306,7 +302,8 @@ struct LowerViaMemory : mlir::OpRewritePattern<mlir::ktdf::ViaOp> {
     rewriter.setInsertionPoint(via);
     auto load = mlir::ktdp_lowering::LoadOp::create(
         rewriter, via.getLoc(),
-        llvm::cast<mlir::RankedTensorType>(via.getType()), alloc, sizes);
+        llvm::cast<mlir::RankedTensorType>(via.getType()), alloc, {},
+        type.getShape());
     load->setDiscardableAttrs(via->getRawDictionaryAttrs());
     rewriter.replaceOp(via, load);
     rewriter.modifyOpInPlace(stage, [&]() { stage.setDependsIn({token}); });
