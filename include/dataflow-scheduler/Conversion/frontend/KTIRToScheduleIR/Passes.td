@@ -56,6 +56,7 @@ def KTIRMapAndTilePass : Pass<"ktir-map-and-tile", "mlir::func::FuncOp"> {
     operations having been sunk/hoisted.
   }];
   let dependentDialects = [
+    "mlir::ktdf::KTDFDialect",
     "mlir::ktdf_arch::KTDFArchDialect",
     "mlir::ktdp_lowering::KTDPLoweringDialect",
     "mlir::linalg::LinalgDialect",

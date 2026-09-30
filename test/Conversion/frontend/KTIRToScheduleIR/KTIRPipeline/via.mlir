@@ -6,12 +6,12 @@
 
 // CHECK-LABEL:   func.func @local_schedule_1(
 // CHECK-SAME:      %[[ARG0:.*]]: index) {
-// CHECK-NEXT:     %[[CONSTANT_0:.*]] = arith.constant 64 : index
-// CHECK-NEXT:     %[[CONSTANT_1:.*]] = arith.constant 1 : index
-// CHECK-NEXT:     %[[CONSTANT_2:.*]] = arith.constant 0 : index
-// CHECK-NEXT:     %[[CONSTANT_3:.*]] = arith.constant 3 : index
-// CHECK-NEXT:     %[[CONSTANT_4:.*]] = arith.constant 1024 : index
-// CHECK-NEXT:     %[[CONSTANT_5:.*]] = arith.constant 12288 : index
+// CHECK-DAG:      %[[CONSTANT_0:.*]] = arith.constant 64 : index
+// CHECK-DAG:      %[[CONSTANT_1:.*]] = arith.constant 1 : index
+// CHECK-DAG:      %[[CONSTANT_2:.*]] = arith.constant 0 : index
+// CHECK-DAG:      %[[CONSTANT_3:.*]] = arith.constant 3 : index
+// CHECK-DAG:      %[[CONSTANT_4:.*]] = arith.constant 1024 : index
+// CHECK-DAG:      %[[CONSTANT_5:.*]] = arith.constant 12288 : index
 // CHECK-NEXT:     %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
 // CHECK-NEXT:     %[[MULI_0:.*]] = arith.muli %[[GET_COMPUTE_TILE_ID_0]], %[[CONSTANT_3]] : index
 // CHECK-NEXT:     %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_4]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.memory_space<global>} : memref<96x64xf16>

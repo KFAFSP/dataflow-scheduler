@@ -165,7 +165,10 @@ struct LowerLoadToFifo : mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
   auto matchAndRewrite(mlir::ktdf::WriteToFifoOp write,
                        mlir::PatternRewriter& rewriter) const
       -> llvm::LogicalResult override {
-    auto load = write.getData().getDefiningOp<mlir::ktdp_lowering::LoadOp>();
+    auto bcast = write.getData().getDefiningOp<mlir::tensor::ExtractSliceOp>();
+    auto load =
+        bcast ? bcast.getSource().getDefiningOp<mlir::ktdp_lowering::LoadOp>()
+              : write.getData().getDefiningOp<mlir::ktdp_lowering::LoadOp>();
     if (!load) {
       return rewriter.notifyMatchFailure(write, "does not read from memory");
     }
@@ -174,10 +177,22 @@ struct LowerLoadToFifo : mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
       return rewriter.notifyMatchFailure(load, "not bufferized");
     }
 
-    auto [map, ivs, sizes] = createMap(rewriter, load);
+    const auto [source_map, source_offsets, source_sizes] =
+        createMap(rewriter, load);
+    llvm::SmallVector<mlir::OpFoldResult> dest_sizes(source_sizes);
+    if (bcast) {
+      const auto [dest_map, dest_offsets, sizes] = createMap(rewriter, bcast);
+      if (!dest_map.isConstant() ||
+          llvm::count(dest_map.getConstantResults(), 0) !=
+              dest_map.getNumResults()) {
+        return rewriter.notifyMatchFailure(bcast, "broadcast not legalizble");
+      }
+      dest_sizes = sizes;
+    }
     auto transfer = mlir::ktdf::DataTransferOp::create(
         rewriter, rewriter.getFusedLoc({load.getLoc(), write.getLoc()}), memref,
-        map, ivs, sizes, write.getFifoSlot(), {}, {}, sizes);
+        source_map, source_offsets, source_sizes, write.getFifoSlot(), {}, {},
+        dest_sizes);
     transfer->setDiscardableAttrs(load->getRawDictionaryAttrs());
     rewriter.eraseOp(write);
     return llvm::success();
