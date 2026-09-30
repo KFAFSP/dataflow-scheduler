@@ -24,25 +24,31 @@
 #include <mlir/Dialect/Linalg/Transforms/Transforms.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
+#include <mlir/Dialect/Tensor/Transforms/Transforms.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinTypeInterfaces.h>
 #include <mlir/IR/Operation.h>
+#include <mlir/IR/PatternMatch.h>
 #include <mlir/IR/Value.h>
 #include <mlir/IR/Verifier.h>
 #include <mlir/Interfaces/DestinationStyleOpInterface.h>
+#include <mlir/Interfaces/InferTypeOpInterface.h>
 #include <mlir/Pass/Pass.h>
+#include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 
 #include <algorithm>
 #include <cstdint>
 
 #include "Utils.h"
+#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/DataTransferLowering.h"
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
 
 #define PASS_NAME "ktir-map-and-tile"
@@ -197,10 +203,87 @@ auto determineTileSizes(mlir::linalg::LinalgOp op,
   return llvm::success();
 }
 
+auto reifySize(mlir::OpBuilder& builder, mlir::Location loc, mlir::Value value,
+               int64_t dim) -> mlir::FailureOr<mlir::OpFoldResult> {
+  if (auto result = llvm::dyn_cast<mlir::OpResult>(value); result) {
+    if (auto iface =
+            result.getDefiningOp<mlir::ReifyRankedShapedTypeOpInterface>();
+        iface) {
+      return iface.reifyDimOfResult(builder, result.getResultNumber(), dim);
+    }
+  }
+
+  const auto type = llvm::dyn_cast<mlir::RankedTensorType>(value.getType());
+  if (!type) {
+    return llvm::failure();
+  }
+
+  if (const auto size = type.getShape()[dim];
+      !mlir::ShapedType::isDynamic(size)) {
+    return mlir::OpFoldResult(builder.getI64IntegerAttr(size));
+  }
+
+  return mlir::OpFoldResult(
+      mlir::tensor::DimOp::create(builder, loc, value, dim));
+}
+
+auto compressInput(mlir::RewriterBase& rewriter, mlir::linalg::LinalgOp op,
+                   mlir::OpOperand* input) -> llvm::LogicalResult {
+  const auto type =
+      llvm::dyn_cast<mlir::RankedTensorType>(input->get().getType());
+  const auto bcast_dims = op.getMatchingIndexingMap(input).getBroadcastDims();
+  if (!type || bcast_dims.empty()) {
+    return llvm::failure();
+  }
+
+  const auto zero = rewriter.getI64IntegerAttr(0);
+  const auto one = rewriter.getI64IntegerAttr(1);
+
+  llvm::SmallVector<mlir::Range> ranges;
+  ranges.reserve(type.getRank());
+  for (auto dim : llvm::iota_range<int64_t>(0, type.getRank(), false)) {
+    const auto size = reifySize(rewriter, op.getLoc(), input->get(), dim);
+    if (failed(size)) {
+      return llvm::failure();
+    }
+    ranges.push_back({zero, *size, one});
+  }
+
+  for (auto dim : bcast_dims) {
+    ranges[dim] = {zero, one, zero};
+  }
+
+  input->set(mlir::tensor::ExtractSliceOp::create(rewriter, op.getLoc(),
+                                                  input->get(), ranges));
+  return llvm::success();
+}
+
+auto compressInputs(mlir::RewriterBase& rewriter, mlir::linalg::LinalgOp op)
+    -> llvm::LogicalResult {
+  rewriter.startOpModification(op);
+  auto changed = false;
+
+  for (auto* const input : op.getDpsInputOperands()) {
+    changed |= succeeded(compressInput(rewriter, op, input));
+  }
+
+  if (!changed) {
+    rewriter.cancelOpModification(op);
+    return llvm::failure();
+  }
+
+  LDBG() << "compressed " << mlir::OpWithFlags(op, kSkipRegions);
+  rewriter.finalizeOpModification(op);
+  return llvm::success();
+}
+
 auto tile(mlir::RewriterBase& rewriter, mlir::linalg::LinalgOp& op,
           mlir::ktdf_arch::Mapping& mapping)
     -> llvm::FailureOr<mlir::scf::LoopVector> {
   rewriter.setInsertionPoint(op);
+
+  // Remove needless dependencies on broadcasted dimensions.
+  std::ignore = compressInputs(rewriter, op);
 
   // Determine tile sizes from output operand shape (needed for loop creation).
   I64Vec tile_sizes;
@@ -460,6 +543,87 @@ void dropIterArgs(mlir::RewriterBase& rewriter,
   }
 }
 
+void bubbleOpExtractSlice(mlir::RewriterBase& rewriter,
+                          mlir::tensor::ExtractSliceOp op,
+                          const AttrMapping& mem_space_map) {
+  while (auto via = op.getSource().getDefiningOp<mlir::ktdf::ViaOp>()) {
+    rewriter.modifyOpInPlace(op, [&]() { op.setOperand(0, via.getOperand()); });
+    rewriter.modifyOpInPlace(via, [&]() {
+      via.getResult().setType(op.getType());
+      via.setOperand(op);
+    });
+    rewriter.replaceAllUsesExcept(op, via, via);
+    rewriter.moveOpBefore(op, via);
+  }
+
+  if (auto load = op.getSource().getDefiningOp<mlir::ktdp_lowering::LoadOp>();
+      load) {
+    rewriter.modifyOpInPlace(op, [&]() {
+      std::ignore = mlir::ktdf_arch::Mappable::setMapsTo(
+          op, mlir::ktdf_arch::MapsToAttr::get(
+                  rewriter.getContext(),
+                  {llvm::cast<mlir::ktdf_arch::ResourceSpecAttr>(
+                      mem_space_map.map(getMemorySpace(load.getSource())))}));
+    });
+  }
+}
+
+auto broadcastInput(mlir::RewriterBase& rewriter, mlir::linalg::LinalgOp op,
+                    mlir::OpOperand* input, const AttrMapping& mem_space_map)
+    -> llvm::LogicalResult {
+  const auto type =
+      llvm::dyn_cast<mlir::RankedTensorType>(input->get().getType());
+  const auto bcast_dims = op.getMatchingIndexingMap(input).getBroadcastDims();
+  if (!type || bcast_dims.empty()) {
+    return llvm::failure();
+  }
+
+  const auto vector_lanes = rewriter.getI64IntegerAttr(
+      op->getAttrOfType<mlir::ktdf_arch::I64Attr>(kThrottleAttrName)
+          .getValue());
+  const auto zero = rewriter.getI64IntegerAttr(0);
+  const auto one = rewriter.getI64IntegerAttr(1);
+
+  llvm::SmallVector<mlir::Range> ranges;
+  ranges.reserve(type.getRank());
+  for (auto dim : llvm::iota_range<int64_t>(0, type.getRank(), false)) {
+    const auto size = reifySize(rewriter, op.getLoc(), input->get(), dim);
+    if (failed(size)) {
+      return llvm::failure();
+    }
+    ranges.push_back({zero, *size, one});
+  }
+
+  for (auto dim : bcast_dims) {
+    ranges[dim] = {zero, vector_lanes, zero};
+  }
+
+  auto broadcast = mlir::tensor::ExtractSliceOp::create(rewriter, op.getLoc(),
+                                                        input->get(), ranges);
+  input->set(broadcast);
+  bubbleOpExtractSlice(rewriter, broadcast, mem_space_map);
+  return llvm::success();
+}
+
+auto broadcastInputs(mlir::RewriterBase& rewriter, mlir::linalg::LinalgOp op,
+                     const AttrMapping& mem_space_map) -> llvm::LogicalResult {
+  rewriter.startOpModification(op);
+  auto changed = false;
+
+  for (auto* const input : op.getDpsInputOperands()) {
+    changed |= succeeded(broadcastInput(rewriter, op, input, mem_space_map));
+  }
+
+  if (!changed) {
+    rewriter.cancelOpModification(op);
+    return llvm::failure();
+  }
+
+  LDBG() << "broadcasted " << mlir::OpWithFlags(op, kSkipRegions);
+  rewriter.finalizeOpModification(op);
+  return llvm::success();
+}
+
 }  // namespace
 
 void KTIRMapAndTilePass::runOnOperation() {
@@ -525,6 +689,18 @@ void KTIRMapAndTilePass::runOnOperation() {
     breakLoopCarriedDependencies(rewriter, op);
   }
 
+  // Merge `tensor.(insert|extract)_slice` operations before lowering.
+  {
+    mlir::RewritePatternSet patterns(&getContext());
+    mlir::tensor::populateMergeConsecutiveInsertExtractSlicePatterns(patterns);
+
+    if (failed(
+            mlir::applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+      signalPassFailure();
+      return;
+    }
+  }
+
   // Lower all `ktdp.(load|store)` operations.
   if (failed(lowerLoadAndStore(rewriter, loads, stores, mem_space_map))) {
     signalPassFailure();
@@ -550,6 +726,12 @@ void KTIRMapAndTilePass::runOnOperation() {
   if (failed(mlir::verify(func, true))) {
     signalPassFailure();
     return;
+  }
+
+  // Broadcast compute operands back to target vector size.
+  for (auto op : computes) {
+    rewriter.setInsertionPoint(op);
+    std::ignore = broadcastInputs(rewriter, op, mem_space_map);
   }
 
   // Clean up all the unused function-level constants that remain.
