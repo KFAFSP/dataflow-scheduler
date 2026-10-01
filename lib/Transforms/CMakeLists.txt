@@ -7,6 +7,7 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     CustomLinalgBufferization.cpp
     AddressAssignment.cpp
     IndirectAddrBufLegalization.cpp
+    IndirectAccessLoopMaterialization.cpp
     AffineMinCanonicalization.cpp
     ApplyDevicePatterns.cpp
     DoubleBuffering.cpp
