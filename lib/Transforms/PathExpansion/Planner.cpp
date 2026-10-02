@@ -27,6 +27,7 @@
 #include "ktir/Dialect/KTDP/KTDPAttrs.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -964,6 +965,287 @@ static mlir::LogicalResult classifyOriginalStages(
 }
 
 //===----------------------------------------------------------------------===//
+// Step 2b: Retype FIFOs Between Original Stages
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// One end (producer or consumer) of a FIFO slot inside an original stage.
+struct FifoEndpoint {
+  mlir::Operation* op = nullptr;
+  StageNode* stage = nullptr;
+  // Whether the FIFO slot is the op's source operand (always true for
+  // read_from_fifo, always false for write_to_fifo).
+  bool fifo_is_source = false;
+};
+}  // namespace
+
+/// Return the transfer registered for \p op in \p info, or nullptr.
+static TransferMaterializationInfo* findTransferForOp(
+    StageMaterializationInfo& info, mlir::Operation* op) {
+  for (TransferMaterializationInfo* transfer : info.transfers)
+    if (transfer->template_op == op) return transfer;
+  return nullptr;
+}
+
+/// Return true if \p transfer replaces the FIFO operand of \p endpoint. A
+/// transfer on a DataTransferOp may only replace its memref side, in which
+/// case the FIFO operand is still the original one.
+static bool transferRewritesFifo(const TransferMaterializationInfo* transfer,
+                                 const FifoEndpoint& endpoint) {
+  if (!transfer) return false;
+  return endpoint.fifo_is_source ? transfer->source_private_resource != nullptr
+                                 : transfer->dest_private_resource != nullptr;
+}
+
+/// Return the fifo.allocate result that \p fifo_slot (a ktdf.private result)
+/// is yielded from, or a null result if it cannot be traced.
+static mlir::OpResult getFifoAllocateResult(mlir::Value fifo_slot) {
+  auto private_result = mlir::dyn_cast<mlir::OpResult>(fifo_slot);
+  if (!private_result) return {};
+  auto priv_op =
+      mlir::dyn_cast<mlir::ktdf::PrivateOp>(private_result.getOwner());
+  if (!priv_op) return {};
+  mlir::Value yielded =
+      priv_op.getYieldOp().getOperands()[private_result.getResultNumber()];
+  auto alloc_result = mlir::dyn_cast<mlir::OpResult>(yielded);
+  if (!alloc_result ||
+      !mlir::isa<mlir::ktdf::FifoAllocateOp>(alloc_result.getOwner()))
+    return {};
+  return alloc_result;
+}
+
+/// Step 2b: Step 2 only rewrites FIFOs that touch a synthetic stage. A FIFO
+/// whose producer and consumer are both original stages keeps the endpoints
+/// from the input IR (e.g. memory-level "L1" -> "SFU"), even though Step 1 has
+/// assigned an applicable unit to both stages. Retype every such FIFO to
+/// (producer.applicable_unit -> consumer.applicable_unit) and register
+/// transfers on both ends so the producer and consumer move to the new FIFO
+/// together.
+///
+/// The new allocation mirrors the original fifo.allocate slot for slot, since
+/// slot order is significant for FIFO semantics.
+static mlir::LogicalResult retypeFifosBetweenOriginalStages(
+    llvm::ArrayRef<StageNode*> expanded_stages,
+    const scheduler::arch_view::RoutingGraph& arch_graph,
+    PathExpansionPlan* plan) {
+  // Collect the producer and consumer of every FIFO slot used by an original
+  // stage.
+  llvm::MapVector<mlir::Value, FifoEndpoint> producers, consumers;
+  llvm::SmallPtrSet<mlir::Value, 4> indirect_slots;
+  for (StageNode* stage : expanded_stages) {
+    if (isIntermediateStage(stage)) continue;
+    auto stage_op = mlir::cast<mlir::ktdf::StageOp>(stage->getOperation());
+
+    auto record = [&](llvm::MapVector<mlir::Value, FifoEndpoint>& endpoints,
+                      mlir::Value fifo_slot, mlir::Operation* op,
+                      bool fifo_is_source) -> mlir::WalkResult {
+      if (!endpoints.insert({fifo_slot, {op, stage, fifo_is_source}}).second) {
+        op->emitError("path-expansion: FIFO slot has more than one ")
+            << (&endpoints == &producers ? "producer" : "consumer");
+        return mlir::WalkResult::interrupt();
+      }
+      return mlir::WalkResult::advance();
+    };
+
+    mlir::WalkResult result = stage_op.walk([&](mlir::Operation* op) {
+      if (auto read_op = mlir::dyn_cast<mlir::ktdf::ReadFromFifoOp>(op))
+        return record(consumers, read_op.getFifoSlot(), op, true);
+      if (auto write_op = mlir::dyn_cast<mlir::ktdf::WriteToFifoOp>(op))
+        return record(producers, write_op.getFifoSlot(), op, false);
+      if (auto transfer = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(op)) {
+        if (mlir::isa<mlir::ktdf::FifoSlotType>(transfer.getSource().getType()))
+          if (record(consumers, transfer.getSource(), op, true)
+                  .wasInterrupted())
+            return mlir::WalkResult::interrupt();
+        if (mlir::isa<mlir::ktdf::FifoSlotType>(
+                transfer.getDestination().getType()))
+          return record(producers, transfer.getDestination(), op, false);
+        return mlir::WalkResult::advance();
+      }
+      if (auto ind_transfer =
+              mlir::dyn_cast<mlir::ktdf::IndDataTransferOp>(op)) {
+        bool is_gather = ind_transfer.isGather();
+        mlir::Value fifo_side =
+            is_gather ? ind_transfer.getDirDst() : ind_transfer.getDirSrc();
+        if (!mlir::isa<mlir::ktdf::FifoSlotType>(fifo_side.getType()))
+          return mlir::WalkResult::advance();
+        indirect_slots.insert(fifo_side);
+        return is_gather ? record(producers, fifo_side, op, false)
+                         : record(consumers, fifo_side, op, true);
+      }
+      return mlir::WalkResult::advance();
+    });
+    if (result.wasInterrupted()) return mlir::failure();
+  }
+
+  // Classify each slot and group the ones needing a new type by the
+  // fifo.allocate that defines them.
+  using Endpoints = std::pair<mlir::Attribute, mlir::Attribute>;
+  struct SlotToRetype {
+    mlir::Value fifo_slot;
+    unsigned slot_idx;
+    FifoEndpoint producer;
+    FifoEndpoint consumer;
+    Endpoints expected;
+  };
+  struct AllocToRetype {
+    llvm::SmallVector<SlotToRetype> slots;
+    bool needs_retype = false;
+  };
+  llvm::MapVector<mlir::Operation*, AllocToRetype> allocs;
+
+  for (auto& [fifo_slot, producer] : producers) {
+    auto consumer_it = consumers.find(fifo_slot);
+    // A slot with only one end in this pipeline has nothing to keep in sync.
+    if (consumer_it == consumers.end()) continue;
+    const FifoEndpoint& consumer = consumer_it->second;
+
+    bool producer_rewritten = transferRewritesFifo(
+        findTransferForOp(plan->stage_info[producer.stage], producer.op),
+        producer);
+    bool consumer_rewritten = transferRewritesFifo(
+        findTransferForOp(plan->stage_info[consumer.stage], consumer.op),
+        consumer);
+    assert(producer_rewritten == consumer_rewritten &&
+           "FIFO slot was rewritten on only one end; producer and consumer "
+           "would use different FIFOs");
+    // Both ends were already moved off this FIFO by Step 2.
+    if (producer_rewritten) continue;
+
+    std::optional<ResourceType> src_unit =
+        plan->stage_info[producer.stage].applicable_unit;
+    std::optional<ResourceType> dest_unit =
+        plan->stage_info[consumer.stage].applicable_unit;
+    if (!src_unit || !dest_unit) continue;
+
+    auto fifo_type = mlir::cast<mlir::ktdf::FifoSlotType>(fifo_slot.getType());
+    Endpoints expected = {*src_unit, *dest_unit};
+    bool needs_retype =
+        expected != Endpoints{fifo_type.getSrc(), fifo_type.getDest()};
+
+    mlir::OpResult alloc_result = getFifoAllocateResult(fifo_slot);
+    if (!alloc_result) {
+      if (!needs_retype) continue;
+      return producer.op->emitError(
+          "path-expansion: cannot trace FIFO slot to its fifo.allocate");
+    }
+    if (needs_retype && indirect_slots.contains(fifo_slot))
+      return producer.op->emitError(
+          "path-expansion: retyping a FIFO used by an indirect data transfer "
+          "is not supported");
+
+    AllocToRetype& alloc = allocs[alloc_result.getOwner()];
+    alloc.slots.push_back({fifo_slot, alloc_result.getResultNumber(), producer,
+                           consumer, expected});
+    alloc.needs_retype |= needs_retype;
+  }
+
+  for (auto& [alloc_op, alloc] : allocs) {
+    if (!alloc.needs_retype) continue;
+
+    // Every slot of the allocation must still be on the original FIFO, and
+    // all of them must map to the same new endpoints; otherwise the new
+    // allocation cannot mirror the original one.
+    Endpoints first_expected = alloc.slots.front().expected;
+    if (alloc.slots.size() != alloc_op->getNumResults() ||
+        llvm::any_of(alloc.slots, [&](const SlotToRetype& slot) {
+          return slot.expected != first_expected;
+        }))
+      return alloc_op->emitError(
+          "path-expansion: cannot retype a fifo.allocate whose slots do not "
+          "all connect the same pair of units");
+
+    auto fifo_src =
+        llvm::cast<ResourceType>(alloc.slots.front().expected.first);
+    auto fifo_dest =
+        llvm::cast<ResourceType>(alloc.slots.front().expected.second);
+    llvm::SmallVector<int64_t> elements_per_slot;
+    mlir::Type element_type;
+    for (mlir::Type result_type : alloc_op->getResultTypes()) {
+      auto fifo_type = mlir::cast<mlir::ktdf::FifoSlotType>(result_type);
+      assert(!fifo_type.isDynamicNumElements() &&
+             "Dynamic FIFO sizes not supported in path expansion");
+      assert((!element_type || element_type == fifo_type.getElementType()) &&
+             "Expected all slots of a fifo.allocate to share an element type");
+      element_type = fifo_type.getElementType();
+      elements_per_slot.push_back(fifo_type.getStaticNumElements());
+    }
+    PrivateResourceSpec* fifo_spec = plan->resource_factory.createFifo(
+        fifo_src, fifo_dest, elements_per_slot, element_type);
+
+    for (const SlotToRetype& slot : alloc.slots) {
+      validateFifoSlotIndex(slot.fifo_slot, slot.slot_idx, fifo_spec);
+
+      StageMaterializationInfo& producer_info =
+          plan->stage_info[slot.producer.stage];
+      StageMaterializationInfo& consumer_info =
+          plan->stage_info[slot.consumer.stage];
+
+      // Use a dummy edge when no direct edge exists between the stage
+      // resources (they usually go through LS-unit nodes).
+      scheduler::arch_view::RoutingGraph::NodeId src_node_id =
+          arch_graph.getNodeIdForResource(producer_info.stage_resource);
+      scheduler::arch_view::RoutingGraph::NodeId dst_node_id =
+          arch_graph.getNodeIdForResource(consumer_info.stage_resource);
+      scheduler::arch_view::RoutingGraph::EdgeInfo edge{src_node_id,
+                                                        dst_node_id, 1};
+      if (auto edge_opt = arch_graph.getEdgeInfo(src_node_id, dst_node_id))
+        edge = *edge_opt;
+
+      // Point the FIFO operand of one end at the new slot. A DataTransferOp
+      // may already have a transfer that only replaced its memref side; reuse
+      // it so the op still has a single transfer.
+      auto retargetEndpoint = [&](const FifoEndpoint& endpoint,
+                                  StageMaterializationInfo& info,
+                                  bool is_consumer) {
+        ResourceType source_resource =
+            is_consumer ? fifo_src : info.stage_resource;
+        ResourceType dest_resource =
+            is_consumer ? info.stage_resource : fifo_dest;
+
+        TransferMaterializationInfo* transfer =
+            findTransferForOp(info, endpoint.op);
+        if (!transfer) {
+          transfer =
+              mlir::isa<mlir::ktdf::DataTransferOp>(endpoint.op)
+                  ? plan->transfer_factory.createFromTemplate(
+                        endpoint.op, edge, source_resource, dest_resource)
+                  : plan->transfer_factory.createFromFifoOp(
+                        endpoint.op, edge, source_resource, dest_resource,
+                        fifo_spec, slot.slot_idx, /*is_read=*/is_consumer);
+          info.transfers.push_back(transfer);
+        }
+        if (is_consumer) {
+          transfer->source_private_resource = fifo_spec;
+          transfer->source_slot_index = slot.slot_idx;
+        } else {
+          transfer->dest_private_resource = fifo_spec;
+          transfer->dest_slot_index = slot.slot_idx;
+        }
+
+        // The materializer only rewrites read_from_fifo / write_to_fifo in
+        // kAdaptFifoKinds stages; DataTransferOps are rewritten in either
+        // adapting kind.
+        bool is_fifo_op = !mlir::isa<mlir::ktdf::DataTransferOp>(endpoint.op);
+        if (info.kind == StageMaterializationInfo::Kind::kPreserveOriginal ||
+            is_fifo_op)
+          info.kind = StageMaterializationInfo::Kind::kAdaptFifoKinds;
+      };
+
+      retargetEndpoint(slot.producer, producer_info, /*is_consumer=*/false);
+      retargetEndpoint(slot.consumer, consumer_info, /*is_consumer=*/true);
+
+      LDBG(1) << "  Retyped FIFO slot " << slot.slot_idx << " between stage "
+              << slot.producer.stage->getStageId() << " and stage "
+              << slot.consumer.stage->getStageId() << " to " << fifo_src
+              << " -> " << fifo_dest << "\n";
+    }
+  }
+
+  return mlir::success();
+}
+
+//===----------------------------------------------------------------------===//
 // Step 3: Populate Synthetic Stage Transfers
 //===----------------------------------------------------------------------===//
 
@@ -1189,6 +1471,16 @@ static mlir::LogicalResult applyPathExpansion(
   }
   LDBG_OS(1, [&](llvm::raw_ostream& os) {
     debugPrintStageList(os, expanded_stages, plan, "After Step 2");
+  });
+
+  // STEP 2b: Retype FIFOs whose producer and consumer are both original stages
+  LDBG(1) << "\n=== Step 2b: Retype FIFOs Between Original Stages ===\n";
+  if (mlir::failed(retypeFifosBetweenOriginalStages(expanded_stages, arch_graph,
+                                                    plan))) {
+    return mlir::failure();
+  }
+  LDBG_OS(1, [&](llvm::raw_ostream& os) {
+    debugPrintStageList(os, expanded_stages, plan, "After Step 2b");
   });
 
   // STEP 3: Populate synthetic stage transfers
