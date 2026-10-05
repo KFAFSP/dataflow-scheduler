@@ -1,56 +1,10 @@
-// Check which stage graph shapes the planner accepts. Every stage must be
+// Check the stage graph shapes the planner rejects. Every stage must be
 // clearly before (load side) or after (store side) the compute stages.
-// Stages within a side may branch and merge, but the later planning steps
-// still need a single chain, so those pipelines are rejected for now.
+// Pipelines whose stages branch and merge are tested in
+// non_linear_stages.mlir.
 
 // RUN: not dataflow-scheduler-opt --path-expansion --split-input-file \
 // RUN:   --debug-only=path-expansion-planner %s 2>&1 | FileCheck %s
-
-// Two load stages feed one compute stage. Both are on the load side, so the
-// side check passes. The linear-chain check then rejects the pipeline.
-
-// CHECK:     Stage 2 has multiple incoming dependencies (merging)
-// CHECK-NOT: Stages are not all clearly before or after the compute stages
-// CHECK:     Stage topology is not a linear chain
-// CHECK:     error: path-expansion: failed to plan path expansion
-
-module {
-  ktdf_arch.device @sample_device attributes {} import("../../Dialect/KTDFArch/sample_device.mlir")
-  func.func @two_loads_one_compute(%a: memref<64xf16, "DDR">, %b: memref<64xf16, "DDR">, %c: memref<64xf16, "DDR">) {
-    %c0 = arith.constant 0 : index
-    ktdf.pipeline {
-      %p:7 = ktdf.private -> (!ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>, !ktdf.token, !ktdf.token, !ktdf.token, !ktdf.token) {
-        %f0 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
-        %f1 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
-        %f2 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>
-        %t0 = ktdf.create_token : !ktdf.token
-        %t1 = ktdf.create_token : !ktdf.token
-        %t2 = ktdf.create_token : !ktdf.token
-        %t3 = ktdf.create_token : !ktdf.token
-        ktdf.private_yield %f0, %f1, %f2, %t0, %t1, %t2, %t3 : !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>, !ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>, !ktdf.token, !ktdf.token, !ktdf.token, !ktdf.token
-      }
-      ktdf.stage depends_in(none) depends_out(%p#3) {
-        ktdf.data_transfer from %a[%c0] size [64] to %p#0 size [64] : memref<64xf16, "DDR">, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
-      }
-      ktdf.stage depends_in(none) depends_out(%p#4) {
-        ktdf.data_transfer from %b[%c0] size [64] to %p#1 size [64] : memref<64xf16, "DDR">, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
-      }
-      ktdf.stage depends_in(%p#3, %p#4) depends_out(%p#5) {
-        %x = ktdf.read_from_fifo %p#0 : <"DDR" -> "SFU", 64xf16> -> tensor<64xf16>
-        %y = ktdf.read_from_fifo %p#1 : <"DDR" -> "SFU", 64xf16> -> tensor<64xf16>
-        %e = tensor.empty() : tensor<64xf16>
-        %s = linalg.add ins(%x, %y : tensor<64xf16>, tensor<64xf16>) outs(%e : tensor<64xf16>) -> tensor<64xf16>
-        ktdf.write_to_fifo %s, %p#2 : tensor<64xf16>, <"SFU" -> "DDR", 64xf16>
-      } {applicable_units = ["SFU"]}
-      ktdf.stage depends_in(%p#5) depends_out(none) {
-        ktdf.data_transfer from %p#2 size [64] to %c[%c0] size [64] : !ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>, memref<64xf16, "DDR">
-      }
-    }
-    return
-  }
-}
-
-// -----
 
 // A stage that neither feeds nor is fed by a compute stage.
 

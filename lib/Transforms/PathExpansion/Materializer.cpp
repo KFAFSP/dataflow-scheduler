@@ -546,6 +546,8 @@ mlir::ktdf::StageOp PathExpansionMaterializer::materializeStageNode(
         synthesizeTransferStage(info);
         break;
     }
+    if (info.kind != StageMaterializationInfo::Kind::kSyntheticTransfer)
+      appendPlannedTransfers(info);
   } else if (template_op) {
     // No info found, preserve original
     cloneStageBody(mlir::cast<mlir::ktdf::StageOp>(template_op));
@@ -769,37 +771,46 @@ void PathExpansionMaterializer::adaptStageBodyWithTransfers(
 void PathExpansionMaterializer::synthesizeTransferStage(
     const StageMaterializationInfo& info) {
   // Synthesize new data transfer operations based on transfer info
-  for (const TransferMaterializationInfo* transfer_info : info.transfers) {
-    mlir::Location loc = transfer_info->template_op
-                             ? transfer_info->template_op->getLoc()
-                             : builder_.getUnknownLoc();
+  for (const TransferMaterializationInfo* transfer_info : info.transfers)
+    emitSyntheticTransfer(*transfer_info);
+}
 
-    assert(transfer_info->source_private_resource &&
-           "Synthetic transfer must have source private resource");
-    assert(transfer_info->dest_private_resource &&
-           "Synthetic transfer must have dest private resource");
+void PathExpansionMaterializer::appendPlannedTransfers(
+    const StageMaterializationInfo& info) {
+  for (const TransferMaterializationInfo* transfer_info : info.transfers)
+    if (!transfer_info->template_op) emitSyntheticTransfer(*transfer_info);
+}
 
-    mlir::Value source =
-        getPrivateResourceValue(transfer_info->source_private_resource,
-                                transfer_info->source_slot_index);
-    mlir::Value destination = getPrivateResourceValue(
-        transfer_info->dest_private_resource, transfer_info->dest_slot_index);
+void PathExpansionMaterializer::emitSyntheticTransfer(
+    const TransferMaterializationInfo& transfer_info) {
+  mlir::Location loc = transfer_info.template_op
+                           ? transfer_info.template_op->getLoc()
+                           : builder_.getUnknownLoc();
 
-    auto params = materializeTransferParams(*transfer_info);
+  assert(transfer_info.source_private_resource &&
+         "Synthetic transfer must have source private resource");
+  assert(transfer_info.dest_private_resource &&
+         "Synthetic transfer must have dest private resource");
 
-    mlir::AffineMap source_map = canonicalizeMapAndIndices(
-        transfer_info->source_map, params.source_indices);
-    mlir::AffineMap dest_map =
-        canonicalizeMapAndIndices(transfer_info->dest_map, params.dest_indices);
+  mlir::Value source = getPrivateResourceValue(
+      transfer_info.source_private_resource, transfer_info.source_slot_index);
+  mlir::Value destination = getPrivateResourceValue(
+      transfer_info.dest_private_resource, transfer_info.dest_slot_index);
 
-    auto transfer = mlir::ktdf::DataTransferOp::create(
-        builder_, loc, source, source_map, params.source_indices,
-        params.source_sizes, destination, dest_map, params.dest_indices,
-        params.dest_sizes);
-    if (transfer_info->template_op) {
-      transfer->setDiscardableAttrs(
-          transfer_info->template_op->getRawDictionaryAttrs());
-    }
+  auto params = materializeTransferParams(transfer_info);
+
+  mlir::AffineMap source_map = canonicalizeMapAndIndices(
+      transfer_info.source_map, params.source_indices);
+  mlir::AffineMap dest_map =
+      canonicalizeMapAndIndices(transfer_info.dest_map, params.dest_indices);
+
+  auto transfer = mlir::ktdf::DataTransferOp::create(
+      builder_, loc, source, source_map, params.source_indices,
+      params.source_sizes, destination, dest_map, params.dest_indices,
+      params.dest_sizes);
+  if (transfer_info.template_op) {
+    transfer->setDiscardableAttrs(
+        transfer_info.template_op->getRawDictionaryAttrs());
   }
 }
 
