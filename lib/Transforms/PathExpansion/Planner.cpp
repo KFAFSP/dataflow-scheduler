@@ -340,13 +340,125 @@ static std::pair<ResourceType, ResourceType> firstTransferMemSpaces(
 }
 
 //===----------------------------------------------------------------------===//
+// Stage Side Classification
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// Where an original stage sits relative to the compute stages of the
+/// pipeline. Load-side stages bring data towards the compute stages and
+/// store-side stages carry results away from them.
+enum class StageSide { kLoad, kCompute, kStore };
+}  // namespace
+
+using StageSideMap = llvm::DenseMap<StageNode*, StageSide>;
+
+/// Return true if \p stage is pinned to a compute unit in the input IR.
+///
+/// Only stages whose applicable unit is a Compute node in the routing graph
+/// count. A stage pinned to a load/store unit is still an ordinary load-side
+/// or store-side stage.
+static bool isComputeAnchor(
+    StageNode* stage, const scheduler::arch_view::RoutingGraph& arch_graph) {
+  auto stage_op =
+      mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
+  if (!stage_op) return false;
+  std::optional<mlir::ArrayAttr> units = stage_op.getApplicableUnits();
+  if (!units || units->size() != 1) return false;
+  auto unit = llvm::dyn_cast<ResourceType>(units->getValue()[0]);
+  if (!unit) return false;
+  auto node = arch_graph.getNode(unit);
+  return node && node->kind == scheduler::arch_view::RoutingGraph::
+                                   ResourceNode::ResourceKind::Compute;
+}
+
+/// Decide, for every original stage, whether it is on the load side, is a
+/// compute stage, or is on the store side. Fails if the stage graph does not
+/// have a shape that path expansion can handle.
+///
+/// The stages do not have to form a single chain. Each side may branch and
+/// merge freely, for example two load stages feeding one compute stage. What
+/// matters is that every stage is clearly before or clearly after the compute
+/// stages:
+///
+///  - There must be at least one compute stage.
+///  - Every other stage must be upstream of a compute stage (load side) or
+///    downstream of one (store side), directly or through other stages.
+///  - No stage may be both upstream and downstream of compute stages, since
+///    that would place it between two of them. Compute stages themselves may
+///    feed each other directly or be unconnected.
+///
+/// How it works: walk the stages in topological order, marking as downstream
+/// every stage fed by a compute stage or by a stage already marked
+/// downstream. Then walk in reverse order to mark the upstream stages the
+/// same way. Every non-compute stage must end up with exactly one mark.
+static llvm::FailureOr<StageSideMap> classifyStageSides(
+    llvm::ArrayRef<StageNode*> sorted_stages,
+    const scheduler::arch_view::RoutingGraph& arch_graph) {
+  llvm::SmallPtrSet<StageNode*, 4> anchors;
+  for (StageNode* stage : sorted_stages)
+    if (isComputeAnchor(stage, arch_graph)) anchors.insert(stage);
+  if (anchors.empty()) {
+    LDBG(1) << "Pipeline has no stage pinned to a compute unit";
+    return mlir::failure();
+  }
+
+  // Forward walk: a stage comes after a compute stage if any of its
+  // predecessors is a compute stage or comes after one.
+  llvm::SmallPtrSet<StageNode*, 8> after_compute;
+  for (StageNode* stage : sorted_stages) {
+    if (!anchors.contains(stage) && !after_compute.contains(stage)) continue;
+    for (StageNode* succ : stage->getDependencies()) after_compute.insert(succ);
+  }
+
+  // Backward walk: a stage comes before a compute stage if any of its
+  // successors is a compute stage or comes before one.
+  llvm::SmallPtrSet<StageNode*, 8> before_compute;
+  for (StageNode* stage : llvm::reverse(sorted_stages)) {
+    if (llvm::any_of(stage->getDependencies(), [&](StageNode* succ) {
+          return anchors.contains(succ) || before_compute.contains(succ);
+        }))
+      before_compute.insert(stage);
+  }
+
+  StageSideMap sides;
+  for (StageNode* stage : sorted_stages) {
+    if (anchors.contains(stage)) {
+      sides[stage] = StageSide::kCompute;
+      continue;
+    }
+    bool is_before = before_compute.contains(stage);
+    bool is_after = after_compute.contains(stage);
+    if (is_before && is_after) {
+      LDBG(1) << "Stage " << stage->getStageId()
+              << " sits between two compute stages";
+      return mlir::failure();
+    }
+    if (!is_before && !is_after) {
+      LDBG(1) << "Stage " << stage->getStageId()
+              << " is not connected to any compute stage";
+      return mlir::failure();
+    }
+    sides[stage] = is_before ? StageSide::kLoad : StageSide::kStore;
+  }
+  return sides;
+}
+
+//===----------------------------------------------------------------------===//
 // Main Planning Functions
 //===----------------------------------------------------------------------===//
 
-/// Topologically sort pipeline stages and verify the result is a linear chain.
-static llvm::FailureOr<llvm::SmallVector<StageNode*>>
-sortAndValidateLinearPipelineStages(PipelineTree& tree,
-                                    PipelineNode* pipeline) {
+/// Topologically sort the pipeline stages, check that the stage graph has a
+/// shape path expansion can handle, and work out which side of the compute
+/// stages each stage is on.
+///
+/// There are two checks. classifyStageSides() checks the general rule: every
+/// stage must be clearly before or after the compute stages. The planning
+/// steps after it still expect the stages to form a single chain, so a
+/// linear-chain check follows. Drop that second check once Steps 1-3 handle
+/// stages that branch and merge.
+static llvm::FailureOr<llvm::SmallVector<StageNode*>> sortAndValidateStages(
+    PipelineTree& tree, PipelineNode* pipeline,
+    const scheduler::arch_view::RoutingGraph& arch_graph, StageSideMap& sides) {
   llvm::FailureOr<llvm::SmallVector<StageNode*>> sorted_stages_or =
       tree.topologicalSortStages(pipeline);
   if (mlir::failed(sorted_stages_or)) {
@@ -355,6 +467,14 @@ sortAndValidateLinearPipelineStages(PipelineTree& tree,
   }
 
   llvm::SmallVector<StageNode*> sorted_stages = *sorted_stages_or;
+
+  llvm::FailureOr<StageSideMap> sides_or =
+      classifyStageSides(sorted_stages, arch_graph);
+  if (mlir::failed(sides_or)) {
+    LDBG(1) << "Stages are not all clearly before or after the compute stages";
+    return mlir::failure();
+  }
+  sides = std::move(*sides_or);
 
   if (mlir::failed(validateLinearChain(sorted_stages))) {
     LDBG(1) << "Stage topology is not a linear chain";
@@ -395,47 +515,50 @@ buildFullShortestPath(llvm::ArrayRef<ResourceType> original_resource_path,
   return full_path;
 }
 
-/// Assign stage_resource to every original stage using a context-aware
-/// two-pass algorithm that accounts for neighboring stages.
+/// Work out the stage_resource of every original stage.
 ///
-/// The stage_resource is the memory endpoint adjacent to the stage's LS unit
-/// in the routing graph.  It cannot always be determined from a single stage
-/// in isolation when a transfer has two memref operands; the neighbor context
-/// disambiguates which side is the external endpoint.
+/// The stage_resource is the memory a stage's load/store unit is attached to
+/// in the routing graph. Path expansion uses it to find out which memories
+/// and units the data passes through between stages.
 ///
-/// Rules (applied in order, first match wins):
-///  1. Anchor stage (applicable_unit present in input IR): stage_resource ==
-///     that applicable-unit resource.
-///  2. First stage in chain (no left neighbor): use source memref memory-space.
-///  3. Last stage in chain (no right neighbor): use dest memref memory-space.
-///  4. Intermediate stage with exactly one memref side: the memref side is
-///     unambiguously the stage resource — no neighbor context needed.
-///  5. Intermediate stage: examine already-resolved neighbor resources —
-///       a. If left neighbor's stage_resource matches this stage's transfer
-///          source memref → use this stage's transfer dest memref memory-space.
-///       b. Else if right neighbor's stage_resource matches this stage's
-///          transfer dest memref → use this stage's transfer source memref
-///          memory-space.
-///       c. Otherwise assert (unresolvable without further passes).
+/// Each stage is decided on its own, using the rules below in order:
 ///
-/// Pass 1 resolves rules 1–4.  Pass 2 resolves rule 5 for any remaining
-/// stages, iterating until stable (handles chains of intermediate stages).
+///  1. The stage is already pinned to a unit in the input IR (a compute unit
+///     or a load/store unit). Its resource is that unit.
+///  2. Only one side of the stage's data transfer is a memref; the other side
+///     is a FIFO. The memref side is the stage's memory.
+///  3. Both sides are memrefs, so the side of the pipeline decides:
+///       - A load-side stage reads from the memory next to its load unit and
+///         pushes the data towards the compute stage, so its resource is the
+///         transfer's source.
+///       - A store-side stage writes to the memory next to its store unit,
+///         so its resource is the transfer's destination.
+///
+/// Because the side of a stage comes from \p sides, the rules never look at
+/// neighbouring stages. That is why the order of stages within a side does
+/// not matter here.
+///
+/// A stage with no predecessors must read from memory, because nothing in the
+/// pipeline could fill a FIFO it reads from. Likewise, a stage with no
+/// successors must write to memory. Both are asserted.
 static void assignOriginalStageResources(
-    llvm::ArrayRef<StageNode*> sorted_stages, PathExpansionPlan* plan) {
-  size_t n = sorted_stages.size();
+    llvm::ArrayRef<StageNode*> sorted_stages, const StageSideMap& sides,
+    PathExpansionPlan* plan) {
+  // Stages that some other stage feeds into.
+  llvm::SmallPtrSet<StageNode*, 8> has_predecessor;
+  for (StageNode* stage : sorted_stages)
+    has_predecessor.insert(stage->getDependencies().begin(),
+                           stage->getDependencies().end());
 
-  // Pass 1: resolve rules 1, 2, 3, 4.
-  // Note: stage_info entries are default-constructed on first access (via
-  // operator[])
-  for (size_t i = 0; i < n; ++i) {
-    StageNode* stage = sorted_stages[i];
+  // stage_info entries are default-constructed on first access (operator[]).
+  for (StageNode* stage : sorted_stages) {
     StageMaterializationInfo& info = plan->stage_info[stage];
 
     auto stage_op =
         mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
     assert(stage_op && "expected operation to be valid for original stages");
 
-    // Rule 1: anchor stage — applicable_unit already known from input IR.
+    // Rule 1: the unit is already known from the input IR.
     if (auto units = stage_op.getApplicableUnits()) {
       assert(units->size() == 1 &&
              "path expansion currently does not handle nested pipelines with "
@@ -445,87 +568,28 @@ static void assignOriginalStageResources(
     }
 
     auto [src_ms, dst_ms] = firstTransferMemSpaces(stage_op);
+    assert((src_ms || dst_ms) &&
+           "Unable to determine stage_resource for original stage: its data "
+           "transfer has no memref side");
+    assert((has_predecessor.contains(stage) || src_ms) &&
+           "A stage with no predecessors must have a memref source on its "
+           "data_transfer");
+    assert((!stage->getDependencies().empty() || dst_ms) &&
+           "A stage with no successors must have a memref dest on its "
+           "data_transfer");
 
-    // Rule 2: first stage — use source memref.
-    if (i == 0) {
-      assert(src_ms &&
-             "First stage must have a memref source on its data_transfer");
-      info.stage_resource = src_ms;
+    // Rule 2: only one side of the transfer is a memref.
+    if (!src_ms || !dst_ms) {
+      info.stage_resource = src_ms ? src_ms : dst_ms;
       continue;
     }
 
-    // Rule 3: last stage — use dest memref.
-    if (i == n - 1) {
-      assert(dst_ms &&
-             "Last stage must have a memref dest on its data_transfer");
-      info.stage_resource = dst_ms;
-      continue;
-    }
-
-    // Rule 4: exactly one side of the transfer is a memref (the other side
-    // is a FIFO or similar non-memref).  The memref side is unambiguously the
-    // stage resource — no neighbor context needed.
-    if (src_ms && !dst_ms) {
-      info.stage_resource = src_ms;
-      continue;
-    }
-    if (dst_ms && !src_ms) {
-      info.stage_resource = dst_ms;
-      continue;
-    }
-    // Rule 5 will be handled in pass 2.
-  }
-
-  // Pass 2: resolve rule 5 iteratively until stable.
-  // Each iteration resolves at least one previously-unresolved intermediate
-  // stage (using a neighbor resolved in the previous iteration).
-  bool changed = true;
-  while (changed) {
-    changed = false;
-    for (size_t i = 1; i + 1 < n; ++i) {
-      StageNode* stage = sorted_stages[i];
-      StageMaterializationInfo& info = plan->stage_info[stage];
-      if (info.stage_resource) continue;  // already resolved
-
-      auto stage_op =
-          mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
-      assert(stage_op && "expected operation to be valid for original stages");
-
-      auto [src_ms, dst_ms] = firstTransferMemSpaces(stage_op);
-
-      ResourceType left_resource =
-          plan->stage_info[sorted_stages[i - 1]].stage_resource;
-      ResourceType right_resource =
-          plan->stage_info[sorted_stages[i + 1]].stage_resource;
-
-      // Rule 5a: left neighbor's resource matches our transfer source
-      //          → our endpoint is the destination side.
-      if (left_resource && src_ms && left_resource == src_ms) {
-        assert(dst_ms &&
-               "Intermediate stage transfer must have a dest memref "
-               "when resolved via left neighbor");
-        info.stage_resource = dst_ms;
-        changed = true;
-        continue;
-      }
-
-      // Rule 5b: right neighbor's resource matches our transfer destination
-      //          → our endpoint is the source side.
-      if (right_resource && dst_ms && right_resource == dst_ms) {
-        assert(src_ms &&
-               "Intermediate stage transfer must have a source memref "
-               "when resolved via right neighbor");
-        info.stage_resource = src_ms;
-        changed = true;
-        continue;
-      }
-    }
-  }
-
-  // Verify all stages were resolved.
-  for (size_t i = 0; i < n; ++i) {
-    assert(plan->stage_info[sorted_stages[i]].stage_resource &&
-           "Unable to determine stage_resource for original stage");
+    // Rule 3: both sides are memrefs; the side of the pipeline decides.
+    // Compute stages are always pinned, so they were handled by rule 1.
+    StageSide side = sides.at(stage);
+    assert(side != StageSide::kCompute &&
+           "Compute stages should be pinned to a unit");
+    info.stage_resource = side == StageSide::kLoad ? src_ms : dst_ms;
   }
 }
 
@@ -1383,14 +1447,6 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
 // Orchestration
 //===----------------------------------------------------------------------===//
 
-static bool hasAnchorStage(llvm::ArrayRef<StageNode*> sorted_stages) {
-  return llvm::any_of(sorted_stages, [](StageNode* stage) {
-    auto op =
-        mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
-    return op && op.getApplicableUnits().has_value();
-  });
-}
-
 static llvm::SmallVector<ResourceType> collectOriginalStageResourcePath(
     llvm::ArrayRef<StageNode*> sorted_stages, const PathExpansionPlan* plan) {
   llvm::SmallVector<ResourceType> endpoint_path;
@@ -1503,23 +1559,20 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   auto plan = std::make_unique<PathExpansionPlan>();
   plan->changed = false;
 
-  // PREP 1: Sort and validate pipeline stages
+  // PREP 1: Sort and validate pipeline stages, and find each stage's side
+  // (load, compute or store).
+  StageSideMap sides;
   llvm::FailureOr<llvm::SmallVector<StageNode*>> sorted_stages_or =
-      sortAndValidateLinearPipelineStages(tree, pipeline);
+      sortAndValidateStages(tree, pipeline, arch_graph, sides);
   if (mlir::failed(sorted_stages_or)) {
     return nullptr;
   }
   llvm::SmallVector<StageNode*> sorted_stages = *sorted_stages_or;
 
-  // PREP 2: Verify pipeline has an anchor stage
-  if (!hasAnchorStage(sorted_stages)) {
-    return nullptr;
-  }
-
   LLVM_DEBUG(debugPrintInitialPlannerState(pipeline, sorted_stages));
 
-  // PREP 3: Assign resources and collect endpoint path
-  assignOriginalStageResources(sorted_stages, plan.get());
+  // PREP 2: Assign resources and collect endpoint path
+  assignOriginalStageResources(sorted_stages, sides, plan.get());
   llvm::SmallVector<ResourceType> endpoint_path =
       collectOriginalStageResourcePath(sorted_stages, plan.get());
   if (endpoint_path.size() < 2) {
@@ -1528,7 +1581,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
     return plan;
   }
 
-  // PREP 4: Build full shortest path across architecture graph
+  // PREP 3: Build full shortest path across architecture graph
   std::optional<scheduler::arch_view::RoutingGraph::Path> full_path_opt =
       buildFullShortestPath(endpoint_path, arch_graph);
   if (!full_path_opt) {
@@ -1539,7 +1592,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
 
   LLVM_DEBUG(debugPrintFullPath(full_path));
 
-  // PREP 5: Check whether path expansion is needed
+  // PREP 4: Check whether path expansion is needed
   if (!needsExpansion(endpoint_path, full_path, arch_graph)) {
     plan->changed = false;
     LDBG(1) << "Pipeline already legal";
