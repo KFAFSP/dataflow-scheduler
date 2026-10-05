@@ -44,6 +44,7 @@
 // CHECK-NEXT:   hoist-constant-storage
 // CHECK-NEXT:   )
 // CHECK-NEXT:   )
+// CHECK-NEXT:   fold-fifo-relay-stages
 // CHECK-NEXT:   path-expansion
 // CHECK-NEXT:   indirect-addr-buf-fill-legalization
 // CHECK-NEXT:   scalar-broadcast-legalization

@@ -85,6 +85,9 @@ void scheduler::buildSchedulerOptimizationPipeline(
     nested.addPass(createHoistInvariantsPass());
     nested.addPass(createHoistConstantStoragePass());
   }
+  // Path expansion can only split stages, so it expects transfers between
+  // memories that are relayed through FIFOs in one stage.
+  pm.addPass(createFoldFifoRelayStagesPass());
   pm.addPass(createPathExpansionPass(scheduler_ctx));
   // Path expansion materializes the stages and their units, which is what says
   // whether an indirect address buffer fill is on a memory its unit can read.
