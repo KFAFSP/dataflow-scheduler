@@ -19,12 +19,14 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/DebugLog.h>
+#include <llvm/Support/MathExtras.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/Linalg/Transforms/Transforms.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/Dialect/Tensor/Transforms/Transforms.h>
+#include <mlir/Dialect/Utils/StaticValueUtils.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinTypeInterfaces.h>
@@ -578,25 +580,47 @@ auto broadcastInput(mlir::RewriterBase& rewriter, mlir::linalg::LinalgOp op,
     return llvm::failure();
   }
 
-  const auto vector_lanes = rewriter.getI64IntegerAttr(
+  const auto vector_lanes =
       op->getAttrOfType<mlir::ktdf_arch::I64Attr>(kThrottleAttrName)
-          .getValue());
+          .getValue();
   const auto zero = rewriter.getI64IntegerAttr(0);
   const auto one = rewriter.getI64IntegerAttr(1);
 
   llvm::SmallVector<mlir::Range> ranges;
   ranges.reserve(type.getRank());
+  int64_t elements = 1;
   for (auto dim : llvm::iota_range<int64_t>(0, type.getRank(), false)) {
     const auto size = reifySize(rewriter, op.getLoc(), input->get(), dim);
     if (failed(size)) {
       return llvm::failure();
     }
     ranges.push_back({zero, *size, one});
+
+    if (llvm::is_contained(bcast_dims, dim)) {
+      continue;
+    }
+    const auto static_size = mlir::getConstantIntValue(*size);
+    if (!static_size ||
+        llvm::MulOverflow(elements, *static_size, elements) != 0) {
+      return llvm::failure();
+    }
+  }
+
+  // The operand fills one vector, so only the lanes the other dimensions leave
+  // are spread along the innermost broadcast dimension. A broadcast outside the
+  // lanes keeps size 1.
+  if (elements <= 0 || vector_lanes % elements != 0) {
+    return llvm::failure();
+  }
+  const auto fill = vector_lanes / elements;
+  if (fill == 1) {
+    return llvm::failure();
   }
 
   for (auto dim : bcast_dims) {
-    ranges[dim] = {zero, vector_lanes, zero};
+    ranges[dim] = {zero, one, zero};
   }
+  ranges[bcast_dims.back()] = {zero, rewriter.getI64IntegerAttr(fill), zero};
 
   auto broadcast = mlir::tensor::ExtractSliceOp::create(rewriter, op.getLoc(),
                                                         input->get(), ranges);
