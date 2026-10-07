@@ -12,6 +12,7 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     ApplyDevicePatterns.cpp
     DoubleBuffering.cpp
     EnsureDeviceDeclaration.cpp
+    FoldFifoRelayStages.cpp
     HoistConstantStorage.cpp
     HoistInvariants.cpp
     IndirectAddrBufFillLegalization.cpp
