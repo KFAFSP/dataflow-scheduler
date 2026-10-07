@@ -581,8 +581,7 @@ auto broadcastInput(mlir::RewriterBase& rewriter, mlir::linalg::LinalgOp op,
   }
 
   const auto vector_lanes =
-      op->getAttrOfType<mlir::ktdf_arch::I64Attr>(kThrottleAttrName)
-          .getValue();
+      op->getAttrOfType<mlir::ktdf_arch::I64Attr>(kThrottleAttrName).getValue();
   const auto zero = rewriter.getI64IntegerAttr(0);
   const auto one = rewriter.getI64IntegerAttr(1);
 
