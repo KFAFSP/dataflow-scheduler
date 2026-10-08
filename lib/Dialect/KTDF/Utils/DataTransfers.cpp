@@ -18,8 +18,10 @@
 
 #include "dataflow-scheduler/Transforms/Utils/DataTransfers.h"
 
+#include <llvm/Support/LogicalResult.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/IR/BuiltinTypes.h>
+#include <mlir/IR/PatternMatch.h>
 #include <mlir/IR/Value.h>
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
@@ -136,9 +138,37 @@ struct LowerStoreFromLoad
   auto matchAndRewrite(mlir::ktdp_lowering::StoreOp store,
                        mlir::PatternRewriter& rewriter) const
       -> llvm::LogicalResult override {
-    auto load = store.getSource().getDefiningOp<mlir::ktdp_lowering::LoadOp>();
-    if (!load) {
+    auto source = llvm::dyn_cast<mlir::OpResult>(store.getSource());
+    if (!source) {
       return rewriter.notifyMatchFailure(store, "does not load from memory");
+    }
+
+    // Ignore any sequence of `tensor.(collapse|expand)_shape`, since these are
+    // order-preserving and thus folded into the `ktdf.data_transfer`.
+    auto load = llvm::dyn_cast<mlir::ktdp_lowering::LoadOp>(source.getOwner());
+    while (!load) {
+      if (auto collapse =
+              llvm::dyn_cast<mlir::tensor::CollapseShapeOp>(source.getOwner());
+          collapse) {
+        source = llvm::dyn_cast<mlir::OpResult>(collapse.getSrc());
+        if (!source) {
+          return rewriter.notifyMatchFailure(collapse,
+                                             "does not load from memory");
+        }
+      } else if (auto expand = llvm::dyn_cast<mlir::tensor::ExpandShapeOp>(
+                     source.getOwner());
+                 expand) {
+        source = llvm::dyn_cast<mlir::OpResult>(expand.getSrc());
+        if (!source) {
+          return rewriter.notifyMatchFailure(expand,
+                                             "does not load from memory");
+        }
+      } else {
+        return rewriter.notifyMatchFailure(source.getOwner(),
+                                           "does not load from memory");
+      }
+
+      load = llvm::dyn_cast<mlir::ktdp_lowering::LoadOp>(source.getOwner());
     }
 
     auto [load_map, load_ivs, load_sizes] = createMap(rewriter, load);
