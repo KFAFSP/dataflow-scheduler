@@ -113,7 +113,7 @@ if(DataflowScheduler_ENABLE_PYTHON_BINDINGS)
 endif()
 
 add_subdirectory(external)
-add_dependencies(dataflow-scheduler-headers dataflow-scheduler-dialects-headers ktir-headers)
+add_dependencies(dataflow-scheduler-headers dataflow-scheduler-dialects-headers ktir-headers mlir-headers)
 add_dependencies(dataflow-scheduler-doc dataflow-scheduler-dialects-doc ktir-doc)
 
 # Treat warnings as errors for all first-party sources. This block is
