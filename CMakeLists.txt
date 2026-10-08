@@ -124,8 +124,11 @@ if(DataflowScheduler_ENABLE_WERROR)
   message(STATUS "DataflowScheduler: -Werror enabled for first-party sources")
 endif()
 
-set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-set(CMAKE_VISIBILITY_INLINES_HIDDEN YES)
+# Shared libraries must export their symbols to each other.
+if(NOT BUILD_SHARED_LIBS)
+  set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+  set(CMAKE_VISIBILITY_INLINES_HIDDEN YES)
+endif()
 
 # Include DataflowScheduler CMake module.
 set(DataflowScheduler_INCLUDE_DIRS 
