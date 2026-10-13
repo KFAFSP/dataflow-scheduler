@@ -418,19 +418,23 @@ mlir::LogicalResult legalizeFillSite(const FillSite& site,
     source_indices.push_back(recreated);
   }
 
+  // Both halves keep the fill's discardable attributes, e.g. its throttle.
+  mlir::DictionaryAttr fill_attrs = fill->getDiscardableAttrDictionary();
   llvm::SmallVector<mlir::OpFoldResult> sizes = fill.getMixedSourceSizes();
-  mlir::ktdf::DataTransferOp::create(
+  auto staging = mlir::ktdf::DataTransferOp::create(
       builder, fill.getLoc(), source,
       fill.getSourceMap().value_or(mlir::AffineMap()), source_indices, sizes,
       buffer, buffer_subscript, /*dest_indices=*/mlir::ValueRange{}, sizes);
+  staging->setDiscardableAttrs(fill_attrs);
 
   // The fill itself, now reading the staging buffer.
   builder.setInsertionPoint(fill);
-  mlir::ktdf::DataTransferOp::create(
+  auto staged_fill = mlir::ktdf::DataTransferOp::create(
       builder, fill.getLoc(), buffer, buffer_subscript,
       /*source_indices=*/mlir::ValueRange{}, sizes, fill.getDestination(),
       fill.getDestMap().value_or(mlir::AffineMap()), fill.getDestIndices(),
       fill.getMixedDestSizes());
+  staged_fill->setDiscardableAttrs(fill_attrs);
   llvm::SmallVector<mlir::Value> old_operands(fill->getOperands());
   fill.erase();
   eraseDeadDefs(old_operands, stage);
