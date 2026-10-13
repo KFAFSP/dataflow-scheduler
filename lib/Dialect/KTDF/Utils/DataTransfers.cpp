@@ -296,11 +296,71 @@ struct LowerIndStoreFromFifo
   }
 };
 
+/// Folds a `tensor.(collapse|expand)_shape` of a `ktdf.read_from_fifo` into the
+/// read: a FIFO slot is flat, so the read may produce the reshaped type
+/// directly. Only applies when the reshape is the read's sole user, since a
+/// FIFO slot cannot be read twice.
+struct FoldReshapeOfFifoRead
+    : mlir::OpRewritePattern<mlir::ktdf::ReadFromFifoOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  auto matchAndRewrite(mlir::ktdf::ReadFromFifoOp read,
+                       mlir::PatternRewriter& rewriter) const
+      -> llvm::LogicalResult override {
+    if (!read->hasOneUse()) {
+      return rewriter.notifyMatchFailure(read, "expected a single use");
+    }
+    auto* const reshape = *read->getUsers().begin();
+    if (!llvm::isa<mlir::tensor::CollapseShapeOp, mlir::tensor::ExpandShapeOp>(
+            reshape)) {
+      return rewriter.notifyMatchFailure(read, "not read by a reshape");
+    }
+
+    // Retyping in place keeps the read's attributes (e.g. `splat`).
+    rewriter.modifyOpInPlace(read, [&]() {
+      read.getResult().setType(
+          llvm::cast<mlir::ShapedType>(reshape->getResult(0).getType()));
+    });
+    rewriter.replaceOp(reshape, read.getResult());
+    return llvm::success();
+  }
+};
+
+/// Folds a `tensor.(collapse|expand)_shape` feeding a `ktdf.write_to_fifo`
+/// into the write: a FIFO slot is flat, so the write may take the reshape's
+/// source directly.
+struct FoldReshapeIntoFifoWrite
+    : mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  auto matchAndRewrite(mlir::ktdf::WriteToFifoOp write,
+                       mlir::PatternRewriter& rewriter) const
+      -> llvm::LogicalResult override {
+    auto* const reshape = write.getData().getDefiningOp();
+    if (!llvm::isa_and_present<mlir::tensor::CollapseShapeOp,
+                               mlir::tensor::ExpandShapeOp>(reshape)) {
+      return rewriter.notifyMatchFailure(write, "not written from a reshape");
+    }
+
+    rewriter.modifyOpInPlace(write, [&]() {
+      write.getDataMutable().assign(reshape->getOperand(0));
+    });
+    return llvm::success();
+  }
+};
+
 }  // namespace
+
+void scheduler::populateFoldFifoReshapePatterns(
+    mlir::RewritePatternSet& patterns) {
+  patterns.add<FoldReshapeOfFifoRead, FoldReshapeIntoFifoWrite>(
+      patterns.getContext());
+}
 
 void scheduler::populateConvertToDataTransferPatterns(
     mlir::RewritePatternSet& patterns) {
   patterns.add<LowerLoadToFifo, LowerStoreFromFifo, LowerStoreFromLoad,
                LowerIndLoadToFifo, LowerIndStoreFromFifo>(
       patterns.getContext());
+  populateFoldFifoReshapePatterns(patterns);
 }

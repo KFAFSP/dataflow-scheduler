@@ -34,7 +34,16 @@ namespace scheduler {
 ///    `ktdf.ind_data_transfer`
 ///  - Converts `ktdp_lowering.ind_store(ktdf.read_from_fifo)` to
 ///    `ktdf.ind_data_transfer`
+///  - Folds reshapes at FIFO boundaries (see
+///    populateFoldFifoReshapePatterns)
 void populateConvertToDataTransferPatterns(mlir::RewritePatternSet& patterns);
+
+/// Adds @p patterns that fold `tensor.(collapse|expand)_shape` ops at FIFO
+/// boundaries, since a FIFO slot is flat:
+///
+///  - Folds `reshape(ktdf.read_from_fifo)` into the read's result type
+///  - Folds `ktdf.write_to_fifo(reshape)` into a write of the reshape source
+void populateFoldFifoReshapePatterns(mlir::RewritePatternSet& patterns);
 
 }  // namespace scheduler
 
