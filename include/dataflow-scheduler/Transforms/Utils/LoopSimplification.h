@@ -78,17 +78,6 @@ class LoopNestConstraints : protected mlir::ValueBoundsConstraintSet {
   llvm::DenseMap<mlir::Operation*, llvm::SmallVector<unsigned>> slice_points_;
 };
 
-/// Determines whether @p extract and @p insert, which must slice the same
-/// tensor, are proven to never overlap in distinct iterations of the `scf.for`
-/// loops enclosing both. That is, whether for all IV vectors i != j,
-/// `extract(i) ∩ insert(j) = ∅`. Ops without common loops are trivially
-/// independent.
-///
-/// @p constraints caches the index value constraints between queries.
-auto areIndependent(mlir::tensor::ExtractSliceOp extract,
-                    mlir::tensor::InsertSliceOp insert,
-                    LoopNestConstraints& constraints) -> bool;
-
 void populateSimplifyLoopsPatterns(mlir::RewritePatternSet& patterns);
 
 }  // namespace scheduler

@@ -111,68 +111,6 @@ void LoopNestConstraints::addLoopLattices() {
 }
 
 //===----------------------------------------------------------------------===//
-// scheduler::areIndependent
-//===----------------------------------------------------------------------===//
-
-auto areIndependent(mlir::tensor::ExtractSliceOp extract,
-                    mlir::tensor::InsertSliceOp insert,
-                    LoopNestConstraints& constraints) -> bool {
-  assert(extract.getSourceType().getRank() == insert.getDestType().getRank() &&
-         "expected slices of the same tensor");
-
-  // Collect the loop nest enclosing both ops.
-  llvm::SmallVector<mlir::scf::ForOp> loops;
-  for (auto* op = extract->getParentOp();
-       op != nullptr && !op->hasTrait<mlir::OpTrait::IsIsolatedFromAbove>();
-       op = op->getParentOp()) {
-    if (!op->isAncestor(insert)) {
-      continue;
-    }
-    if (auto loop = llvm::dyn_cast<mlir::scf::ForOp>(op); loop) {
-      loops.push_back(loop);
-      continue;
-    }
-    if (llvm::isa<mlir::LoopLikeOpInterface>(op)) {
-      break;
-    }
-  }
-  if (loops.empty()) {
-    return true;
-  }
-
-  const auto extract_point = constraints.populateIndices(extract);
-  const auto insert_point = constraints.populateIndices(insert);
-  if (failed(extract_point) || failed(insert_point)) {
-    return false;
-  }
-  const auto iv_columns =
-      llvm::map_to_vector(loops, [&](mlir::scf::ForOp loop) {
-        return constraints.populate(loop.getInductionVar());
-      });
-
-  // The extract happens in the first instance, the insert in the second one.
-  llvm::SmallVector<unsigned> second;
-  auto overlap = constraints.pair(loops.back(), second);
-  auto same_iteration = mlir::presburger::IntegerPolyhedron::getUniverse(
-      overlap.getSpace().getSpaceWithoutLocals());
-
-  const auto add_equal = [](mlir::presburger::IntegerRelation& relation,
-                            unsigned lhs, unsigned rhs) {
-    llvm::SmallVector<int64_t> row(relation.getNumCols(), 0);
-    row[lhs] += 1;
-    row[rhs] -= 1;
-    relation.addEquality(row);
-  };
-  for (auto [lhs, rhs] : llvm::zip_equal(*extract_point, *insert_point)) {
-    add_equal(overlap, lhs, second[rhs]);
-  }
-  for (auto column : iv_columns) {
-    add_equal(same_iteration, column, second[column]);
-  }
-  return overlap.isSubsetOf(same_iteration);
-}
-
-//===----------------------------------------------------------------------===//
 // scheduler::populateSimplifyLoopsPatterns
 //===----------------------------------------------------------------------===//
 
@@ -194,19 +132,22 @@ struct DropUnusedInsertSlice
                                          "not inserting into iter_arg");
     }
 
+    // Result must be yielded to the next iteration, possibly via more inserts.
     const auto* result = loop.getTiedLoopYieldedValue(arg);
     while (result->get() != insert_slice) {
       auto insert = result->get().getDefiningOp<mlir::tensor::InsertSliceOp>();
       if (!insert) {
-        return rewriter.notifyMatchFailure(insert,
+        return rewriter.notifyMatchFailure(result->getOwner(),
                                            "not inserting into iter_arg");
       }
       result = &insert.getDestMutable();
     }
 
+    // Collect all the loops that surround this insert_slice.
     LoopNestConstraints constraints(getContext());
     llvm::SmallVector<unsigned> iv_columns;
     iv_columns.push_back(constraints.populate(loop.getInductionVar()));
+    auto outermost = loop;
     for (auto parent = loop->getParentOfType<mlir::scf::ForOp>(); parent;
          parent = parent->getParentOfType<mlir::scf::ForOp>()) {
       auto siblings = parent.getBody()->without_terminator();
@@ -214,9 +155,11 @@ struct DropUnusedInsertSlice
         return rewriter.notifyMatchFailure(parent, "imperfect loop nest");
       }
       iv_columns.push_back(constraints.populate(parent.getInductionVar()));
+      outermost = parent;
     }
     std::reverse(iv_columns.begin(), iv_columns.end());
 
+    // Get the vector of dimensions that corresponds to the writing iteration.
     const auto insert_point = constraints.populateIndices(insert_slice);
     if (failed(insert_point)) {
       return rewriter.notifyMatchFailure(insert_slice,
@@ -233,18 +176,18 @@ struct DropUnusedInsertSlice
         relation.addEquality(row);
       };
 
+      // Get the vector of dimensions that corrsponds to the reading iteration.
       const auto extract_point = constraints.populateIndices(extract_slice);
       if (failed(extract_point)) {
         return false;
       }
 
+      // Equate the tensor coordinates and determine whether they only overlap
+      // in the same iteration.
       llvm::SmallVector<unsigned> second;
-      auto overlap = constraints.pair(loop, second);
-
-      // The extract happens in the first instance, the insert in the second.
+      auto overlap = constraints.pair(outermost, second);
       auto same_iteration = mlir::presburger::IntegerPolyhedron::getUniverse(
           overlap.getSpace().getSpaceWithoutLocals());
-
       for (auto [lhs, rhs] : llvm::zip_equal(*extract_point, *insert_point)) {
         add_equal(overlap, lhs, second[rhs]);
       }
@@ -254,6 +197,7 @@ struct DropUnusedInsertSlice
       return overlap.isSubsetOf(same_iteration);
     };
 
+    // Check if none of the users observes the result of the insertion.
     for (auto* const user : arg.getUsers()) {
       if (llvm::isa<mlir::tensor::InsertSliceOp>(user)) {
         continue;
@@ -269,6 +213,7 @@ struct DropUnusedInsertSlice
       }
     }
 
+    // Simply drop the insertion.
     rewriter.replaceOp(insert_slice, insert_slice.getDest());
     return llvm::success();
   }
