@@ -53,6 +53,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
+#include "dataflow-scheduler/Transforms/Utils/LoopSimplification.h"
 
 #define PASS_NAME "ktir-map-and-tile"
 #define DEBUG_TYPE PASS_NAME
@@ -510,23 +511,6 @@ struct TileStore : mlir::OpRewritePattern<mlir::ktdp::StoreOp> {
   const AttrMapping& mem_space_map_;
 };
 
-void breakLoopCarriedDependencies(mlir::RewriterBase& rewriter,
-                                  mlir::DestinationStyleOpInterface op) {
-  rewriter.setInsertionPoint(op);
-  for (auto& outs : op.getDpsInitsMutable()) {
-    auto slice = outs.get().getDefiningOp<mlir::tensor::ExtractSliceOp>();
-    if (!slice || !llvm::isa<mlir::BlockArgument>(slice.getSource())) {
-      continue;
-    }
-
-    // FIMXE: This only works because we aren't tiling reduction dimensions!
-
-    rewriter.replaceOp(slice, mlir::tensor::EmptyOp::create(
-                                  rewriter, op.getLoc(), slice.getMixedSizes(),
-                                  slice.getType().getElementType()));
-  }
-}
-
 void bubbleOpExtractSlice(mlir::RewriterBase& rewriter,
                           mlir::tensor::ExtractSliceOp op,
                           const AttrMapping& mem_space_map) {
@@ -676,10 +660,7 @@ void KTIRMapAndTilePass::runOnOperation() {
     }
 
     loop_nests.emplace_back(std::move(*maybe_loops));
-    // Break the loop carried `tensor.extract_slice` dependencies.
-    // FIXME: This is illegal if we're ever tiling across a reduction dimension.
-    breakLoopCarriedDependencies(rewriter, op);
-  }
+      }
 
   // Merge `tensor.(insert|extract)_slice` ops and tile `ktdp.(load|store)` and
   // remove all the unneeded `iter_args`.
@@ -687,8 +668,8 @@ void KTIRMapAndTilePass::runOnOperation() {
     mlir::RewritePatternSet patterns(&getContext());
     patterns.add<TileLoad, TileStore>(patterns.getContext(), mem_space_map);
     mlir::tensor::populateMergeConsecutiveInsertExtractSlicePatterns(patterns);
-    mlir::populateRegionBranchOpInterfaceCanonicalizationPatterns(
-        patterns, mlir::scf::ForOp::getOperationName());
+    mlir::tensor::populateFoldTensorEmptyPatterns(patterns);
+    populateSimplifyLoopsPatterns(patterns);
 
     if (failed(
             mlir::applyPatternsGreedily(getOperation(), std::move(patterns)))) {
