@@ -135,8 +135,7 @@ auto determineTileSizes(mlir::linalg::LinalgOp op,
   const auto result_type =
       mlir::cast<mlir::RankedTensorType>(op->getResult(0).getType());
   if (!llvm::all_equal(op->getResultTypes())) {
-    // Current implementation only allows for uniform tiling of all results.
-    return op.emitError("tiling error: expected matching result types");
+    op.emitWarning("tiling heterogeneous results is not supported");
   }
 
   LDBG() << "determining tile sizes for "
@@ -660,7 +659,7 @@ void KTIRMapAndTilePass::runOnOperation() {
     }
 
     loop_nests.emplace_back(std::move(*maybe_loops));
-      }
+  }
 
   // Merge `tensor.(insert|extract)_slice` ops and tile `ktdp.(load|store)` and
   // remove all the unneeded `iter_args`.
