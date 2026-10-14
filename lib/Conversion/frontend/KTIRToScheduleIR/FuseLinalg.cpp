@@ -33,6 +33,7 @@
 #include <mlir/IR/Value.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
+#include <mlir/Transforms/RegionUtils.h>
 
 #include <utility>
 
@@ -284,7 +285,13 @@ struct FuseLinalgPass : public impl::FuseLinalgPassBase<FuseLinalgPass> {
                                                    std::move(patterns),
                                                    rewrite_config, &changed))) {
       signalPassFailure();
+      return;
     }
+
+    // Remove the ops that are dead after fusion, which the strict driver does
+    // not revisit.
+    mlir::IRRewriter rewriter(func);
+    std::ignore = mlir::runRegionDCE(rewriter, func->getRegions());
   }
 };
 
