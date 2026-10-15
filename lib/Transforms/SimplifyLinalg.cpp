@@ -588,6 +588,9 @@ struct SimplifyLinalgPass
     mlir::tensor::populateMergeConsecutiveInsertExtractSlicePatterns(patterns);
     mlir::linalg::populateEraseUnusedOperandsAndResultsPatterns(patterns);
     mlir::linalg::populateEraseUnnecessaryInputsPatterns(patterns);
+    ctx->getLoadedDialect<mlir::linalg::LinalgDialect>()
+        ->getCanonicalizationPatterns(patterns);
+    mlir::linalg::GenericOp::getCanonicalizationPatterns(patterns, ctx);
 
     if (mlir::failed(mlir::applyPatternsGreedily(func, std::move(patterns)))) {
       signalPassFailure();

@@ -23,7 +23,8 @@ func.func @constant(%a: tensor<8x16xf32>) -> tensor<16xf32> {
                        iterator_types = ["parallel"]}
        ins(%a : tensor<8x16xf32>) outs(%e : tensor<16xf32>) {
   ^bb0(%x: f32, %o: f32):
-    linalg.yield %x : f32
+    %n = arith.negf %x : f32
+    linalg.yield %n : f32
   } -> tensor<16xf32>
   return %0 : tensor<16xf32>
 }
@@ -42,7 +43,8 @@ func.func @offset(%a: tensor<16xf32>) -> tensor<8xf32> {
                        iterator_types = ["parallel"]}
        ins(%a : tensor<16xf32>) outs(%e : tensor<8xf32>) {
   ^bb0(%x: f32, %o: f32):
-    linalg.yield %x : f32
+    %n = arith.negf %x : f32
+    linalg.yield %n : f32
   } -> tensor<8xf32>
   return %0 : tensor<8xf32>
 }
@@ -57,7 +59,8 @@ func.func @constant_map(%a: tensor<8x16xf32>) -> tensor<16xf32> {
                        iterator_types = ["parallel"]}
        ins(%a : tensor<8x16xf32>) outs(%e : tensor<16xf32>) {
   ^bb0(%x: f32, %o: f32):
-    linalg.yield %x : f32
+    %n = arith.negf %x : f32
+    linalg.yield %n : f32
   } -> tensor<16xf32>
   return %0 : tensor<16xf32>
 }
@@ -76,7 +79,8 @@ func.func @stride(%a: tensor<15xf32>) -> tensor<8xf32> {
                        iterator_types = ["parallel"]}
        ins(%a : tensor<15xf32>) outs(%e : tensor<8xf32>) {
   ^bb0(%x: f32, %o: f32):
-    linalg.yield %x : f32
+    %n = arith.negf %x : f32
+    linalg.yield %n : f32
   } -> tensor<8xf32>
   return %0 : tensor<8xf32>
 }
@@ -95,7 +99,8 @@ func.func @shrink_and_stride(%a: tensor<20xf32>) -> tensor<8xf32> {
                        iterator_types = ["parallel"]}
        ins(%a : tensor<20xf32>) outs(%e : tensor<8xf32>) {
   ^bb0(%x: f32, %o: f32):
-    linalg.yield %x : f32
+    %n = arith.negf %x : f32
+    linalg.yield %n : f32
   } -> tensor<8xf32>
   return %0 : tensor<8xf32>
 }
@@ -139,7 +144,8 @@ func.func @init(%a: tensor<8xf32>, %init: tensor<16xf32>) -> tensor<16xf32> {
                        iterator_types = ["parallel"]}
        ins(%a : tensor<8xf32>) outs(%init : tensor<16xf32>) {
   ^bb0(%x: f32, %o: f32):
-    linalg.yield %x : f32
+    %n = arith.negf %x : f32
+    linalg.yield %n : f32
   } -> tensor<16xf32>
   return %0 : tensor<16xf32>
 }
@@ -154,7 +160,8 @@ func.func @tight(%a: tensor<8xf32>) -> tensor<8xf32> {
                        iterator_types = ["parallel"]}
        ins(%a : tensor<8xf32>) outs(%e : tensor<8xf32>) {
   ^bb0(%x: f32, %o: f32):
-    linalg.yield %x : f32
+    %n = arith.negf %x : f32
+    linalg.yield %n : f32
   } -> tensor<8xf32>
   return %0 : tensor<8xf32>
 }
@@ -169,7 +176,8 @@ func.func @dynamic_range(%a: tensor<16xf32>, %init: tensor<?xf32>)
                        iterator_types = ["parallel"]}
        ins(%a : tensor<16xf32>) outs(%init : tensor<?xf32>) {
   ^bb0(%x: f32, %o: f32):
-    linalg.yield %x : f32
+    %n = arith.negf %x : f32
+    linalg.yield %n : f32
   } -> tensor<?xf32>
   return %0 : tensor<?xf32>
 }
@@ -183,7 +191,8 @@ func.func @buffer(%a: memref<16xf32>, %b: memref<8xf32>) {
                   iterator_types = ["parallel"]}
       ins(%a : memref<16xf32>) outs(%b : memref<8xf32>) {
   ^bb0(%x: f32, %o: f32):
-    linalg.yield %x : f32
+    %n = arith.negf %x : f32
+    linalg.yield %n : f32
   }
   return
 }
