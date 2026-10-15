@@ -742,4 +742,17 @@ def IndirectAccessLoopMaterializationPass
   ];
 }
 
+def SimplifyLinalgPass : Pass<"simplify-linalg", "mlir::func::FuncOp"> {
+  let summary = "Simplifies `linalg` operations";
+  let description = [{
+    TODO
+  }];
+  let dependentDialects = [
+    "mlir::affine::AffineDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::tensor::TensorDialect"
+  ];
+}
+
 #endif // DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD
