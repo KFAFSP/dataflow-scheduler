@@ -20,7 +20,7 @@
 // Stage 1 (direct load).
 // CHECK:                 ktdf.stage depends_in(none) depends_out(%[[PRV]]#3) {
 // CHECK-NOT:               scf.if
-// CHECK:                   ktdf.data_transfer from %{{.+}}[0, 0, 0, 0] size [1, 1, 1, 64] to %[[PRV]]#2 size [1, 1, 1, 64] {dataflow_scheduler.throttle = 64 : i64}
+// CHECK:                   ktdf.data_transfer from %{{.+}}[%[[I1]], %[[I2]], 0, 0] size [1, 1, 1, 64] to %[[PRV]]#2 size [1, 1, 1, 64] {dataflow_scheduler.throttle = 64 : i64}
 // CHECK-NEXT:            }
 
 // Stage 2 (compute).
@@ -33,10 +33,9 @@
 // CHECK-NEXT:            ktdf.stage depends_in(%[[PRV]]#1) depends_out(none) {
 // CHECK-NEXT:              %[[EQ:.+]] = arith.cmpi eq, %[[I2]], %{{.+}} : index
 // CHECK-NEXT:              scf.if %[[EQ]] {
-// CHECK:                     memref.memory_space_cast %[[AB]]
-// CHECK:                     %[[FILL_IAB:.+]] = memref.reinterpret_cast %[[IAB]]
-// CHECK-NEXT:                ktdf.data_transfer from %{{.+}}[0, 0] size [1, 32] to %[[FILL_IAB]][0] size [32]
-// CHECK-SAME:                  {dataflow_scheduler.throttle = 1 : i64} : memref<1x32xindex, strided<[32, 1], offset: ?>, "DDR">, memref<32xindex, strided<[1], offset: ?>, "IAB">
+// CHECK-NEXT:                %[[AB_CAST:.+]] = memref.memory_space_cast %[[AB]]
+// CHECK-NEXT:                ktdf.data_transfer from %[[AB_CAST]][%[[I1]], 0] size [1, 32] to %[[IAB]][0] size [32]
+// CHECK-SAME:                  {dataflow_scheduler.throttle = 1 : i64} : memref<2x32xindex, "DDR">, memref<32xindex, "IAB">
 // CHECK-NEXT:              }
 // CHECK:                   %[[BASE:.+]] = memref.reinterpret_cast %{{.+}} to offset: [%{{.+}}], sizes: [64, 2, 64], strides: [64, 4096, 1]
 // CHECK-NEXT:              %[[IAB_RC:.+]] = memref.reinterpret_cast %[[IAB]] to offset: [%{{.+}}], sizes: [32], strides: [1]

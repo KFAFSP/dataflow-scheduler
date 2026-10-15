@@ -76,42 +76,6 @@ namespace {
              mlir::ktdp_lowering::ConstructIndirectAccessTileOp>() != nullptr;
 }
 
-/// Compute a flat-offset `Value` from per-dim indices and compile-time
-/// strides. Optimises away zero-index terms and unit strides.
-[[nodiscard]] mlir::Value computeReinterpretCastOffset(
-    mlir::OpBuilder& builder, mlir::Location loc,
-    llvm::ArrayRef<mlir::Value> indices, llvm::ArrayRef<int64_t> strides) {
-  if (indices.empty())
-    return mlir::arith::ConstantIndexOp::create(builder, loc, 0);
-
-  llvm::SmallVector<mlir::Value> terms;
-  for (auto [idx, stride] : llvm::zip(indices, strides)) {
-    if (mlir::isZeroInteger(idx)) continue;
-    mlir::Value term;
-    if (stride == 1) {
-      term = idx;
-    } else {
-      mlir::Value s =
-          mlir::arith::ConstantIndexOp::create(builder, loc, stride);
-      term = mlir::arith::MulIOp::create(builder, loc, idx, s);
-    }
-    terms.push_back(term);
-  }
-  if (terms.empty())
-    return mlir::arith::ConstantIndexOp::create(builder, loc, 0);
-  if (terms.size() == 1) return terms[0];
-  mlir::Value offset = terms[0];
-  for (size_t i = 1; i < terms.size(); ++i)
-    offset = mlir::arith::AddIOp::create(builder, loc, offset, terms[i]);
-  return offset;
-}
-
-/// Emit the base-view recipe for a direct memref:
-///   memory_space_cast (mem_space_map applied) + full-rank reinterpret_cast
-/// at given offset and sizes.  Strides come from the memref type layout.
-///
-/// For the IAB path the memory space is already correct and no cast is
-/// emitted: pass `emit_space_cast = false`.
 /// Look up the static strides of a construct_memory_view-produced memref.
 /// Returns the strides from the op's static_strides attribute when defined by
 /// ktdp.construct_memory_view or ktdp_lowering.construct_memory_view;
@@ -151,6 +115,28 @@ namespace {
   return strides;
 }
 
+/// Emit a `memref.memory_space_cast` of @p memory_view with the mapped memory
+/// space. Returns the cast result (a memref with the same shape/layout but the
+/// target memory space). Used by the direct load/store path.
+[[nodiscard]] mlir::Value emitMemorySpaceCast(
+    mlir::OpBuilder& builder, mlir::Location loc, MemRef memory_view,
+    const AttrMapping& mem_space_map) {
+  mlir::MemRefType view_type = memory_view.getType();
+  mlir::Attribute memory_space = mem_space_map.map(getMemorySpace(memory_view));
+  auto cast_type =
+      mlir::MemRefType::get(view_type.getShape(), view_type.getElementType(),
+                            view_type.getLayout(), memory_space);
+  return mlir::memref::MemorySpaceCastOp::create(builder, loc, cast_type,
+                                                 memory_view)
+      .getResult();
+}
+
+/// Emit the base-view recipe for the IAB (indirect) path:
+///   memory_space_cast + full-rank reinterpret_cast at offset 0 and given
+///   sizes.  Strides come from the memref type layout.
+///
+/// For the IAB path the memory space is always remapped (emit_space_cast=true)
+/// or already correct (emit_space_cast=false).
 [[nodiscard]] mlir::Value buildBaseView(mlir::OpBuilder& builder,
                                         mlir::Location loc, MemRef memory_view,
                                         mlir::Value offset,
@@ -162,7 +148,7 @@ namespace {
   // Collect layout strides from the op if available, else from type/row-major.
   llvm::SmallVector<int64_t> strides = getMemRefStrides(memory_view);
 
-  // Cast source memref value
+  // Cast source memref value.
   mlir::Value cast_src = memory_view;
   mlir::Attribute memory_space;
   if (emit_space_cast) {
@@ -246,12 +232,69 @@ void copyAttrsAndThrottle(mlir::Operation* from, mlir::Operation* to,
   }
 }
 
+/// Compute a flat-offset `Value` from per-dim indices and compile-time
+/// strides. Optimises away zero-index terms and unit strides.
+[[nodiscard]] mlir::Value computeReinterpretCastOffset(
+    mlir::OpBuilder& builder, mlir::Location loc,
+    llvm::ArrayRef<mlir::Value> indices, llvm::ArrayRef<int64_t> strides) {
+  if (indices.empty())
+    return mlir::arith::ConstantIndexOp::create(builder, loc, 0);
+
+  llvm::SmallVector<mlir::Value> terms;
+  for (auto [idx, stride] : llvm::zip(indices, strides)) {
+    if (mlir::isZeroInteger(idx)) continue;
+    mlir::Value term;
+    if (stride == 1) {
+      term = idx;
+    } else {
+      mlir::Value s =
+          mlir::arith::ConstantIndexOp::create(builder, loc, stride);
+      term = mlir::arith::MulIOp::create(builder, loc, idx, s);
+    }
+    terms.push_back(term);
+  }
+  if (terms.empty())
+    return mlir::arith::ConstantIndexOp::create(builder, loc, 0);
+  if (terms.size() == 1) return terms[0];
+  mlir::Value offset = terms[0];
+  for (size_t i = 1; i < terms.size(); ++i)
+    offset = mlir::arith::AddIOp::create(builder, loc, offset, terms[i]);
+  return offset;
+}
+
 // ---------------------------------------------------------------------------
-// LowerLoad  (ktdp.load -> ktdp_lowering.load, skips indirect tiles)
+// Helpers shared by LowerLoad and LowerStore
+// ---------------------------------------------------------------------------
+
+/// Expand the `base_map` of @p tile_op over its indices and symbol operands,
+/// returning one SSA Value per source-memref dimension.  Returns std::nullopt
+/// and emits a match-failure diagnostic on @p anchor on error.
+[[nodiscard]] std::optional<llvm::SmallVector<mlir::Value>> expandTileBaseMap(
+    mlir::ktdp::ConstructAccessTilesOp tile_op, mlir::PatternRewriter& rewriter,
+    mlir::Operation* anchor) {
+  llvm::SmallVector<mlir::Value> expand_operands(tile_op.getIndices().begin(),
+                                                 tile_op.getIndices().end());
+  mlir::ValueRange symbol_operands = tile_op.getSymbolOperands();
+  expand_operands.append(symbol_operands.begin(), symbol_operands.end());
+
+  auto per_dim = mlir::affine::expandAffineMap(
+      rewriter, tile_op.getLoc(), tile_op.getBaseMap(), expand_operands);
+  if (!per_dim) {
+    (void)rewriter.notifyMatchFailure(anchor, "unable to expand base_map");
+    return std::nullopt;
+  }
+  return llvm::SmallVector<mlir::Value>(per_dim->begin(), per_dim->end());
+}
+
+// ---------------------------------------------------------------------------
+// LowerLoad  (ktdp.load -> ktdp_lowering.load on a cast memref with
+//             per-dim offsets, skips indirect tiles)
 // ---------------------------------------------------------------------------
 
 struct LowerLoad : mlir::OpRewritePattern<mlir::ktdp::LoadOp> {
-  using OpRewritePattern::OpRewritePattern;
+  explicit LowerLoad(mlir::MLIRContext* context,
+                     const AttrMapping& mem_space_map)
+      : OpRewritePattern(context), mem_space_map_(mem_space_map) {}
 
   auto matchAndRewrite(mlir::ktdp::LoadOp load,
                        mlir::PatternRewriter& rewriter) const
@@ -260,29 +303,70 @@ struct LowerLoad : mlir::OpRewritePattern<mlir::ktdp::LoadOp> {
     if (isIndirectTile(load.getAccessTile()))
       return rewriter.notifyMatchFailure(load, "indirect tile");
 
-    const auto result_type = load.getType();
-    if (!result_type.hasStaticShape()) {
-      return rewriter.notifyMatchFailure(load, "dynamic shape");
-    }
+    const auto result_type =
+        mlir::dyn_cast<mlir::RankedTensorType>(load.getType());
+    if (!result_type || !result_type.hasStaticShape())
+      return rewriter.notifyMatchFailure(load,
+                                         "not a static-shape ranked tensor");
 
-    llvm::SmallVector<int64_t> static_offsets(result_type.getRank(), 0);
-    llvm::SmallVector<int64_t> static_strides(result_type.getRank(), 1);
+    auto tile_op = load.getAccessTile()
+                       .getDefiningOp<mlir::ktdp::ConstructAccessTilesOp>();
+    if (!tile_op)
+      return rewriter.notifyMatchFailure(load,
+                                         "access tile not locally defined");
+
+    const auto memory_view = llvm::dyn_cast<MemRef>(tile_op.getBase());
+    if (!memory_view)
+      return rewriter.notifyMatchFailure(load, "base is not a memref");
+
+    // Expand base_map to get one index per source-memref dimension.
+    auto indices = expandTileBaseMap(tile_op, rewriter, load);
+    if (!indices) return llvm::failure();
+
+    // Emit only the memory-space cast; address offsets go on the load op.
+    // Skip the cast for the IAB fill path (already carries correct mem space).
+    mlir::Value source = memory_view;
+    bool is_iab_fill_path =
+        memory_view
+            .getDefiningOp<mlir::ktdp_lowering::ConstructMemoryViewOp>() !=
+        nullptr;
+    if (!is_iab_fill_path)
+      source = emitMemorySpaceCast(rewriter, load.getLoc(), memory_view,
+                                   mem_space_map_);
+
+    // Build mixed offsets (per-dim indices) and unit strides.
+    llvm::SmallVector<mlir::OpFoldResult> mixed_offsets, mixed_sizes,
+        mixed_strides;
+    for (mlir::Value idx : *indices) mixed_offsets.push_back(idx);
+    for (int64_t sz : result_type.getShape())
+      mixed_sizes.push_back(rewriter.getIndexAttr(sz));
+    mixed_strides.assign(result_type.getRank(), rewriter.getIndexAttr(1));
+
     auto new_load = mlir::ktdp_lowering::LoadOp::create(
-        rewriter, load.getLoc(), result_type, load.getAccessTile(), {}, {}, {},
-        static_offsets, result_type.getShape(), static_strides);
+        rewriter, load.getLoc(), result_type, source, mixed_offsets,
+        mixed_sizes, mixed_strides);
     // Like a tiled load, transfer at the rate of the consuming computes.
     copyAttrsAndThrottle(load, new_load, getConsumerThrottle(load.getResult()));
     rewriter.replaceOp(load, new_load);
+
+    // Erase the tile op if it has no remaining users.
+    if (tile_op.getResult().use_empty()) rewriter.eraseOp(tile_op);
     return llvm::success();
   }
+
+ private:
+  AttrMapping mem_space_map_;
 };
 
 // ---------------------------------------------------------------------------
-// LowerStore  (ktdp.store -> ktdp_lowering.store, skips indirect tiles)
+// LowerStore  (ktdp.store -> ktdp_lowering.store on a cast memref with
+//              per-dim offsets, skips indirect tiles)
 // ---------------------------------------------------------------------------
 
 struct LowerStore : mlir::OpRewritePattern<mlir::ktdp::StoreOp> {
-  using OpRewritePattern::OpRewritePattern;
+  explicit LowerStore(mlir::MLIRContext* context,
+                      const AttrMapping& mem_space_map)
+      : OpRewritePattern(context), mem_space_map_(mem_space_map) {}
 
   auto matchAndRewrite(mlir::ktdp::StoreOp store,
                        mlir::PatternRewriter& rewriter) const
@@ -292,100 +376,196 @@ struct LowerStore : mlir::OpRewritePattern<mlir::ktdp::StoreOp> {
       return rewriter.notifyMatchFailure(store, "indirect tile");
 
     const auto data_type = store.getDataTile().getType();
-    if (!data_type.hasStaticShape()) {
+    if (!data_type.hasStaticShape())
       return rewriter.notifyMatchFailure(store, "dynamic shape");
-    }
 
-    llvm::SmallVector<int64_t> static_offsets(data_type.getRank(), 0);
-    llvm::SmallVector<int64_t> static_strides(data_type.getRank(), 1);
+    auto tile_op = store.getAccessTile()
+                       .getDefiningOp<mlir::ktdp::ConstructAccessTilesOp>();
+    if (!tile_op)
+      return rewriter.notifyMatchFailure(store,
+                                         "access tile not locally defined");
+
+    const auto memory_view = llvm::dyn_cast<MemRef>(tile_op.getBase());
+    if (!memory_view)
+      return rewriter.notifyMatchFailure(store, "base is not a memref");
+
+    // Expand base_map to get one index per source-memref dimension.
+    auto indices = expandTileBaseMap(tile_op, rewriter, store);
+    if (!indices) return llvm::failure();
+
+    // Emit only the memory-space cast; address offsets go on the store op.
+    // Skip the cast for the IAB fill path (already carries correct mem space).
+    mlir::Value dest = memory_view;
+    bool is_iab_fill_path =
+        memory_view
+            .getDefiningOp<mlir::ktdp_lowering::ConstructMemoryViewOp>() !=
+        nullptr;
+    if (!is_iab_fill_path)
+      dest = emitMemorySpaceCast(rewriter, store.getLoc(), memory_view,
+                                 mem_space_map_);
+
+    // Build mixed offsets (per-dim indices) and unit strides.
+    llvm::SmallVector<mlir::OpFoldResult> mixed_offsets, mixed_sizes,
+        mixed_strides;
+    for (mlir::Value idx : *indices) mixed_offsets.push_back(idx);
+    for (int64_t sz : data_type.getShape())
+      mixed_sizes.push_back(rewriter.getIndexAttr(sz));
+    mixed_strides.assign(data_type.getRank(), rewriter.getIndexAttr(1));
+
     auto new_store = mlir::ktdp_lowering::StoreOp::create(
-        rewriter, store.getLoc(), store.getDataTile(), store.getAccessTile(),
-        {}, {}, {}, static_offsets, data_type.getShape(), static_strides);
+        rewriter, store.getLoc(), store.getDataTile(), dest, mixed_offsets,
+        mixed_sizes, mixed_strides);
     // Like a tiled store, transfer at the rate of the producing compute.
     copyAttrsAndThrottle(store, new_store,
                          isIndAddrBufTile(store.getAccessTile())
                              ? kIndAddrBufFillThrottle
                              : getProducerThrottle(store.getDataTile()));
     rewriter.eraseOp(store);
+
+    // Erase the tile op if it has no remaining users.
+    if (tile_op.getResult().use_empty()) rewriter.eraseOp(tile_op);
     return llvm::success();
   }
+
+ private:
+  AttrMapping mem_space_map_;
 };
 
 // ---------------------------------------------------------------------------
-// LowerAccessTile  (ktdp.construct_access_tile -> cast + reinterpret_cast)
+// LowerTiledLoad / LowerTiledStore
+//   ktdp_lowering.load/store whose source/dest is a direct access tile
+//   (produced by KTIRMapAndTile) -> replace the tile with a cast memref.
+//   The existing offsets/sizes/strides on the op already encode the slice
+//   within the tile; we only need to swap out the source/dest operand.
 // ---------------------------------------------------------------------------
 
-struct LowerAccessTile
-    : mlir::OpRewritePattern<mlir::ktdp::ConstructAccessTilesOp> {
-  explicit LowerAccessTile(mlir::MLIRContext* context,
-                           const AttrMapping& mem_space_map)
+struct LowerTiledLoad : mlir::OpRewritePattern<mlir::ktdp_lowering::LoadOp> {
+  explicit LowerTiledLoad(mlir::MLIRContext* context,
+                          const AttrMapping& mem_space_map)
       : OpRewritePattern(context), mem_space_map_(mem_space_map) {}
 
-  auto matchAndRewrite(mlir::ktdp::ConstructAccessTilesOp op,
+  auto matchAndRewrite(mlir::ktdp_lowering::LoadOp load,
                        mlir::PatternRewriter& rewriter) const
       -> llvm::LogicalResult override {
-    // Get the memory view (source memref) - first operand
-    const auto memory_view = llvm::dyn_cast<MemRef>(op.getBase());
-    if (!memory_view) {
-      return rewriter.notifyMatchFailure(op, "not a memref");
-    }
-    if (auto* use = getSingleUse(op);
-        !use || (llvm::isa<mlir::ktdp_lowering::LoadOp>(use->getOwner()) &&
-                 llvm::isa<mlir::ktdp_lowering::StoreOp>(use->getOwner()))) {
-      // FIXME: Use a DPS / bufferization interface.
-      return rewriter.notifyMatchFailure(op, "can't bufferize users");
-    }
+    // Only handle loads whose source is a direct (non-indirect) access tile.
+    if (!mlir::isa<mlir::ktdp::AccessTileType>(load.getSource().getType()))
+      return rewriter.notifyMatchFailure(load, "source is not an access tile");
+    if (isIndirectTile(load.getSource()))
+      return rewriter.notifyMatchFailure(load, "indirect tile");
 
-    // Get the access tile indices and base_map.
-    llvm::SmallVector<mlir::Value> raw_indices = op.getIndices();
-    mlir::AffineMap base_map = op.getBaseMap();
+    auto tile_op =
+        load.getSource().getDefiningOp<mlir::ktdp::ConstructAccessTilesOp>();
+    if (!tile_op)
+      return rewriter.notifyMatchFailure(load,
+                                         "access tile not locally defined");
 
-    // Get the access tile result type to determine sizes.
-    const auto access_tile_type = op.getType();
-    llvm::ArrayRef<int64_t> tile_shape = access_tile_type.getShape();
-    llvm::SmallVector<int64_t> tile_dims(tile_shape.begin(), tile_shape.end());
+    const auto memory_view = llvm::dyn_cast<MemRef>(tile_op.getBase());
+    if (!memory_view)
+      return rewriter.notifyMatchFailure(load, "base is not a memref");
 
-    // Collect layout strides (respects ktdp.construct_memory_view operands).
-    llvm::SmallVector<int64_t> strides = getMemRefStrides(memory_view);
+    auto indices = expandTileBaseMap(tile_op, rewriter, load);
+    if (!indices) return llvm::failure();
 
-    // Apply base_map to materialize one index per source-memref dimension.
-    llvm::SmallVector<mlir::Value> expand_operands(raw_indices.begin(),
-                                                   raw_indices.end());
-    mlir::ValueRange symbol_operands = op.getSymbolOperands();
-    expand_operands.append(symbol_operands.begin(), symbol_operands.end());
-    std::optional<llvm::SmallVector<mlir::Value, 8>> per_dim_indices =
-        mlir::affine::expandAffineMap(rewriter, op.getLoc(), base_map,
-                                      expand_operands);
-    if (!per_dim_indices) {
-      return rewriter.notifyMatchFailure(op, "unable to expand base_map");
-    }
-    llvm::SmallVector<mlir::Value> indices(per_dim_indices->begin(),
-                                           per_dim_indices->end());
+    bool has_non_zero_offset = llvm::any_of(
+        *indices, [](mlir::Value v) { return !mlir::isZeroInteger(v); });
 
-    if (indices.size() != strides.size()) {
-      LDBG() << "Number of indices (" << indices.size()
-             << ") does not match number of strides (" << strides.size() << ")";
-      return rewriter.notifyMatchFailure(op, "invalid map");
-    }
-
-    // Calculate offset from per-dim indices and memory view strides.
-    mlir::Value offset =
-        computeReinterpretCastOffset(rewriter, op.getLoc(), indices, strides);
-
-    // Determine whether the base view is a ktdp_lowering.construct_memory_view
-    // (IAB fill path): in that case, do NOT emit a memory_space_cast because
-    // the IAB memref already carries the correct arch-graph memory space.
     bool is_iab_fill_path =
         memory_view
             .getDefiningOp<mlir::ktdp_lowering::ConstructMemoryViewOp>() !=
         nullptr;
 
-    mlir::Value result = buildBaseView(rewriter, op.getLoc(), memory_view,
-                                       offset, tile_dims, mem_space_map_,
-                                       /*emit_space_cast=*/!is_iab_fill_path);
+    mlir::Value source;
+    if (has_non_zero_offset) {
+      llvm::SmallVector<int64_t> strides = getMemRefStrides(memory_view);
+      mlir::Value offset = computeReinterpretCastOffset(rewriter, load.getLoc(),
+                                                        *indices, strides);
+      llvm::ArrayRef<int64_t> tile_shape = tile_op.getType().getShape();
+      source = buildBaseView(rewriter, load.getLoc(), memory_view, offset,
+                             tile_shape, mem_space_map_,
+                             /*emit_space_cast=*/!is_iab_fill_path);
+    } else {
+      source = is_iab_fill_path
+                   ? mlir::Value(memory_view)
+                   : emitMemorySpaceCast(rewriter, load.getLoc(), memory_view,
+                                         mem_space_map_);
+    }
 
-    // Replace access tile with reinterpret_cast.
-    rewriter.replaceOp(op, result);
+    // Rebuild the load with the cast memref as source, keeping the slice.
+    auto new_load = mlir::ktdp_lowering::LoadOp::create(
+        rewriter, load.getLoc(), load.getType(), source,
+        mlir::cast<mlir::OffsetSizeAndStrideOpInterface>(load.getOperation()));
+    new_load->setDiscardableAttrs(load->getRawDictionaryAttrs());
+    rewriter.replaceOp(load, new_load);
+
+    // Erase the tile op if it has no remaining users.
+    if (tile_op.getResult().use_empty()) rewriter.eraseOp(tile_op);
+    return llvm::success();
+  }
+
+ private:
+  AttrMapping mem_space_map_;
+};
+
+struct LowerTiledStore : mlir::OpRewritePattern<mlir::ktdp_lowering::StoreOp> {
+  explicit LowerTiledStore(mlir::MLIRContext* context,
+                           const AttrMapping& mem_space_map)
+      : OpRewritePattern(context), mem_space_map_(mem_space_map) {}
+
+  auto matchAndRewrite(mlir::ktdp_lowering::StoreOp store,
+                       mlir::PatternRewriter& rewriter) const
+      -> llvm::LogicalResult override {
+    // Only handle stores whose dest is a direct (non-indirect) access tile.
+    if (!mlir::isa<mlir::ktdp::AccessTileType>(store.getDest().getType()))
+      return rewriter.notifyMatchFailure(store, "dest is not an access tile");
+    if (isIndirectTile(store.getDest()))
+      return rewriter.notifyMatchFailure(store, "indirect tile");
+
+    auto tile_op =
+        store.getDest().getDefiningOp<mlir::ktdp::ConstructAccessTilesOp>();
+    if (!tile_op)
+      return rewriter.notifyMatchFailure(store,
+                                         "access tile not locally defined");
+
+    const auto memory_view = llvm::dyn_cast<MemRef>(tile_op.getBase());
+    if (!memory_view)
+      return rewriter.notifyMatchFailure(store, "base is not a memref");
+
+    auto indices = expandTileBaseMap(tile_op, rewriter, store);
+    if (!indices) return llvm::failure();
+
+    bool has_non_zero_offset = llvm::any_of(
+        *indices, [](mlir::Value v) { return !mlir::isZeroInteger(v); });
+
+    bool is_iab_fill_path =
+        memory_view
+            .getDefiningOp<mlir::ktdp_lowering::ConstructMemoryViewOp>() !=
+        nullptr;
+
+    mlir::Value dest;
+    if (has_non_zero_offset) {
+      llvm::SmallVector<int64_t> strides = getMemRefStrides(memory_view);
+      mlir::Value offset = computeReinterpretCastOffset(
+          rewriter, store.getLoc(), *indices, strides);
+      llvm::ArrayRef<int64_t> tile_shape = tile_op.getType().getShape();
+      dest = buildBaseView(rewriter, store.getLoc(), memory_view, offset,
+                           tile_shape, mem_space_map_,
+                           /*emit_space_cast=*/!is_iab_fill_path);
+    } else {
+      dest = is_iab_fill_path
+                 ? mlir::Value(memory_view)
+                 : emitMemorySpaceCast(rewriter, store.getLoc(), memory_view,
+                                       mem_space_map_);
+    }
+
+    // Rebuild the store with the cast memref as dest, keeping the slice.
+    auto new_store = mlir::ktdp_lowering::StoreOp::create(
+        rewriter, store.getLoc(), store.getSource(), dest,
+        mlir::cast<mlir::OffsetSizeAndStrideOpInterface>(store.getOperation()));
+    new_store->setDiscardableAttrs(store->getRawDictionaryAttrs());
+    rewriter.eraseOp(store);
+
+    // Erase the tile op if it has no remaining users.
+    if (tile_op.getResult().use_empty()) rewriter.eraseOp(tile_op);
     return llvm::success();
   }
 
@@ -937,8 +1117,9 @@ void KTIRBufferizePass::runOnOperation() {
   }
 
   mlir::RewritePatternSet patterns(&getContext());
-  patterns.add<LowerLoad, LowerStore>(patterns.getContext());
-  patterns.add<LowerAccessTile>(patterns.getContext(), mem_space_map);
+  patterns.add<LowerLoad, LowerStore>(patterns.getContext(), mem_space_map);
+  patterns.add<LowerTiledLoad, LowerTiledStore>(patterns.getContext(),
+                                                mem_space_map);
   patterns.add<LowerIndirectLoad<mlir::ktdp::LoadOp>>(patterns.getContext(),
                                                       mem_space_map);
   patterns.add<LowerIndirectLoad<mlir::ktdp_lowering::LoadOp>>(
