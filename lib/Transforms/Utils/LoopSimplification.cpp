@@ -143,21 +143,36 @@ struct DropUnusedInsertSlice
       result = &insert.getDestMutable();
     }
 
-    // Collect all the loops that surround this insert_slice.
+    // Collect all the loops that surround this insert_slice, and follow the
+    // final value out of the loop nest.
     LoopNestConstraints constraints(getContext());
     llvm::SmallVector<unsigned> iv_columns;
     iv_columns.push_back(constraints.populate(loop.getInductionVar()));
     auto outermost = loop;
+    auto final_value = loop.getTiedLoopResult(arg);
     for (auto parent = loop->getParentOfType<mlir::scf::ForOp>(); parent;
          parent = parent->getParentOfType<mlir::scf::ForOp>()) {
       auto siblings = parent.getBody()->without_terminator();
       if (std::next(siblings.begin()) != siblings.end()) {
         return rewriter.notifyMatchFailure(parent, "imperfect loop nest");
       }
+      if (!final_value.hasOneUse() || final_value.use_begin()->getOwner() !=
+                                          parent.getBody()->getTerminator()) {
+        return rewriter.notifyMatchFailure(insert_slice,
+                                           "result escapes the loop nest");
+      }
+      final_value =
+          parent->getResult(final_value.use_begin()->getOperandNumber());
       iv_columns.push_back(constraints.populate(parent.getInductionVar()));
       outermost = parent;
     }
     std::reverse(iv_columns.begin(), iv_columns.end());
+
+    // The final value must not be observed after the loop nest.
+    if (!final_value.use_empty()) {
+      return rewriter.notifyMatchFailure(insert_slice,
+                                         "result escapes the loop nest");
+    }
 
     // Get the vector of dimensions that corresponds to the writing iteration.
     const auto insert_point = constraints.populateIndices(insert_slice);
