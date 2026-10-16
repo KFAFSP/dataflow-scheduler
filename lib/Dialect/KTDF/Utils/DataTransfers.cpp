@@ -88,8 +88,9 @@ using Slice = llvm::SmallVector<mlir::Range>;
 ///
 /// In-bounds slices of unit dimensions always start at zero.
 ///
-/// @retval failure   The shapes differ in more than static unit dimensions, or
+/// @retval failure   Shapes differ in more than static unit dimensions, or
 ///                   @p slice is not of size one in a dropped unit dimension.
+/// @retval Slice     Mixed slice parameters.
 [[nodiscard]] auto mapSlice(mlir::Builder& builder, const Slice& slice,
                             llvm::ArrayRef<int64_t> source_shape,
                             llvm::ArrayRef<int64_t> target_shape)
@@ -106,7 +107,7 @@ using Slice = llvm::SmallVector<mlir::Range>;
   const mlir::Range unit{builder.getIndexAttr(0), builder.getIndexAttr(1),
                          builder.getIndexAttr(1)};
   Slice mapped;
-  auto next = carried.begin();
+  auto* next = carried.begin();
   for (const auto extent : target_shape) {
     if (extent == 1) {
       mapped.push_back(unit);
@@ -158,31 +159,38 @@ using Slice = llvm::SmallVector<mlir::Range>;
   return reshape(reshape(value, squeezed), target);
 }
 
-/// Creates the affine map that a `ktdf.data_transfer` uses to access @p slice ,
-/// along with its dynamic offsets and its sizes.
+using TransferAccess =
+    std::tuple<mlir::AffineMap, llvm::SmallVector<mlir::Value>,
+               llvm::SmallVector<mlir::OpFoldResult>>;
+
+/// Creates the access that a `ktdf.data_transfer` uses for @p slice .
+///
+/// A data transfer accesses a contiguous region, which ignores the strides of
+/// unit dimensions.
+///
+/// @retval failure   @p slice is strided in a dimension of more than one
+///                   element.
 [[nodiscard]] auto createMap(mlir::OpBuilder& builder, const Slice& slice)
-    -> std::tuple<mlir::AffineMap, llvm::SmallVector<mlir::Value>,
-                  llvm::SmallVector<mlir::OpFoldResult>> {
+    -> llvm::FailureOr<TransferAccess> {
   llvm::SmallVector<mlir::AffineExpr> results;
   llvm::SmallVector<mlir::Value> offsets;
   llvm::SmallVector<mlir::OpFoldResult> sizes;
   for (const auto& range : slice) {
+    if (!mlir::isConstantIntValue(range.stride, 1) &&
+        !mlir::isConstantIntValue(range.size, 1)) {
+      return llvm::failure();
+    }
+
     if (const auto value = mlir::getConstantIntValue(range.offset); value) {
       results.push_back(builder.getAffineConstantExpr(*value));
     } else {
       results.push_back(builder.getAffineDimExpr(offsets.size()));
       offsets.push_back(llvm::cast<mlir::Value>(range.offset));
     }
-
-    if (const auto value = mlir::getConstantIntValue(range.stride); value) {
-      results.back() = results.back() * builder.getAffineConstantExpr(*value);
-    } else {
-      llvm::report_fatal_error("dynamic strides are not supported");
-    }
     sizes.push_back(range.size);
   }
 
-  return {
+  return TransferAccess{
       mlir::AffineMap::get(offsets.size(), 0, results, builder.getContext()),
       offsets, sizes};
 }
@@ -657,18 +665,23 @@ struct LowerLoadToFifo : mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
       return rewriter.notifyMatchFailure(load, "not bufferized");
     }
 
-    const auto [source_map, source_offsets, source_sizes] =
-        createMap(rewriter, getSlice(load));
+    const auto source = createMap(rewriter, getSlice(load));
+    if (failed(source)) {
+      return rewriter.notifyMatchFailure(load, "strided load");
+    }
+    const auto& [source_map, source_offsets, source_sizes] = *source;
+
+    // A broadcast repeats the first loaded element along each dimension that
+    // it does not take entirely.
     llvm::SmallVector<mlir::OpFoldResult> dest_sizes(source_sizes);
     if (bcast) {
-      const auto [dest_map, dest_offsets, sizes] =
-          createMap(rewriter, getSlice(bcast));
-      if (!dest_map.isConstant() ||
-          llvm::count(dest_map.getConstantResults(), 0) !=
-              dest_map.getNumResults()) {
+      if (!llvm::all_of(getSlice(bcast), [](const mlir::Range& range) {
+            return mlir::isConstantIntValue(range.offset, 0) ||
+                   mlir::isConstantIntValue(range.stride, 0);
+          })) {
         return rewriter.notifyMatchFailure(bcast, "broadcast not legalizble");
       }
-      dest_sizes = sizes;
+      dest_sizes = bcast.getMixedSizes();
     }
     auto transfer = mlir::ktdf::DataTransferOp::create(
         rewriter, rewriter.getFusedLoc({load.getLoc(), write.getLoc()}), memref,
@@ -699,7 +712,11 @@ struct LowerStoreFromFifo
       return rewriter.notifyMatchFailure(store, "not bufferized");
     }
 
-    auto [map, ivs, sizes] = createMap(rewriter, getSlice(store));
+    const auto dest = createMap(rewriter, getSlice(store));
+    if (failed(dest)) {
+      return rewriter.notifyMatchFailure(store, "strided store");
+    }
+    const auto& [map, ivs, sizes] = *dest;
     auto transfer = mlir::ktdf::DataTransferOp::create(
         rewriter, rewriter.getFusedLoc({read.getLoc(), store.getLoc()}),
         read.getFifoSlot(), {}, {}, sizes, memref, map, ivs, sizes);
@@ -729,9 +746,13 @@ struct LowerStoreFromLoad
       return rewriter.notifyMatchFailure(store, "does not load from memory");
     }
 
-    auto [load_map, load_ivs, load_sizes] = createMap(rewriter, getSlice(load));
-    auto [store_map, store_ivs, store_sizes] =
-        createMap(rewriter, getSlice(store));
+    const auto load_access = createMap(rewriter, getSlice(load));
+    const auto store_access = createMap(rewriter, getSlice(store));
+    if (failed(load_access) || failed(store_access)) {
+      return rewriter.notifyMatchFailure(store, "strided transfer");
+    }
+    const auto& [load_map, load_ivs, load_sizes] = *load_access;
+    const auto& [store_map, store_ivs, store_sizes] = *store_access;
     auto transfer = mlir::ktdf::DataTransferOp::create(
         rewriter, rewriter.getFusedLoc({load.getLoc(), store.getLoc()}),
         load.getSource(), load_map, load_ivs, load_sizes, store.getDest(),
