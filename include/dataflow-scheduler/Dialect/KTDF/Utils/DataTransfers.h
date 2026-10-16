@@ -16,8 +16,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef DATAFLOW_SCHEDULER_TRANSFORMS_UTILS_DATATRANSFERS_H_
-#define DATAFLOW_SCHEDULER_TRANSFORMS_UTILS_DATATRANSFERS_H_
+#ifndef DATAFLOW_SCHEDULER_DIALECT_KTDF_UTILS_DATATRANSFERS_H_
+#define DATAFLOW_SCHEDULER_DIALECT_KTDF_UTILS_DATATRANSFERS_H_
 
 namespace mlir {
 class RewritePatternSet;
@@ -47,4 +47,4 @@ void populateFoldFifoReshapePatterns(mlir::RewritePatternSet& patterns);
 
 }  // namespace scheduler
 
-#endif  // DATAFLOW_SCHEDULER_TRANSFORMS_UTILS_DATATRANSFERS_H_
+#endif  // DATAFLOW_SCHEDULER_DIALECT_KTDF_UTILS_DATATRANSFERS_H_

@@ -16,7 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "dataflow-scheduler/Transforms/Utils/DataTransfers.h"
+#include "dataflow-scheduler/Dialect/KTDF/Utils/DataTransfers.h"
 
 #include <llvm/Support/LogicalResult.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>

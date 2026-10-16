@@ -44,8 +44,8 @@
 
 #include "Utils.h"
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"  // IWYU pragma: keep
+#include "dataflow-scheduler/Dialect/KTDF/Utils/DataTransfers.h"
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
-#include "dataflow-scheduler/Transforms/Utils/DataTransfers.h"
 #include "dataflow-scheduler/Transforms/Utils/IndirectAccessTileNarrowing.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 
