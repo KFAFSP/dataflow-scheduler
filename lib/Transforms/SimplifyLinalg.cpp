@@ -569,6 +569,37 @@ struct DemoteInitToInput : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
   }
 };
 
+/// Drops unit dimensions of a `linalg.generic`, preserving its discardable
+/// attributes.
+struct DropUnitDims : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  auto matchAndRewrite(mlir::linalg::GenericOp generic,
+                       mlir::PatternRewriter& rewriter) const
+      -> llvm::LogicalResult override {
+    if (!generic.hasPureTensorSemantics()) {
+      return rewriter.notifyMatchFailure(generic, "not pure tensor semantics");
+    }
+    // Encoded tensors can not be reshaped, which aborts after creating ops.
+    if (llvm::any_of(generic->getOperandTypes(), [](mlir::Type type) {
+          const auto tensor = llvm::dyn_cast<mlir::RankedTensorType>(type);
+          return tensor && tensor.getEncoding();
+        })) {
+      return rewriter.notifyMatchFailure(generic, "encoded tensor operand");
+    }
+
+    const auto dropped = mlir::linalg::dropUnitDims(rewriter, generic, {});
+    if (mlir::failed(dropped)) {
+      return rewriter.notifyMatchFailure(generic, "no unit dims to drop");
+    }
+
+    dropped->resultOp->setDiscardableAttrs(
+        generic->getDiscardableAttrDictionary());
+    rewriter.replaceOp(generic, dropped->replacements);
+    return llvm::success();
+  }
+};
+
 struct SimplifyLinalgPass
     : public impl::SimplifyLinalgPassBase<SimplifyLinalgPass> {
   using SimplifyLinalgPassBase<SimplifyLinalgPass>::SimplifyLinalgPassBase;
@@ -583,7 +614,9 @@ struct SimplifyLinalgPass
     auto* const ctx = &getContext();
     mlir::RewritePatternSet patterns(ctx);
     patterns.add<HoistScalarLoad, HoistInvariantStore, FoldFill>(ctx);
-    patterns.add<ShrinkOperands, NormalizeStrides, DemoteInitToInput>(ctx);
+    patterns
+        .add<ShrinkOperands, NormalizeStrides, DemoteInitToInput, DropUnitDims>(
+            ctx);
     mlir::tensor::populateFoldTensorEmptyPatterns(patterns);
     mlir::tensor::populateMergeConsecutiveInsertExtractSlicePatterns(patterns);
     mlir::linalg::populateEraseUnusedOperandsAndResultsPatterns(patterns);

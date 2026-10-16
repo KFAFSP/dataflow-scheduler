@@ -5,18 +5,19 @@
 
 #id = affine_map<(d0) -> (d0)>
 
-// CHECK-DAG:     #[[$LANE:.+]] = affine_map<(d0) -> (0, d0)>
 // CHECK-DAG:     #[[$ID:.+]] = affine_map<(d0) -> (d0)>
 // CHECK-DAG:     #[[$WIN:.+]] = affine_map<(d0, d1) -> (d0 + d1)>
 
-// A constant index accesses a hyperlane.
+// A constant index accesses a hyperlane, whose unit dimension is dropped.
 // CHECK-LABEL:   func.func @constant
 // CHECK-SAME:      %[[A:.+]]: tensor<8x16xf32>
 // CHECK:           %[[S:.+]] = tensor.extract_slice %[[A]][3, 0] [1, 16] [1, 1]
 // CHECK-SAME:        : tensor<8x16xf32> to tensor<1x16xf32>
+// CHECK:           %[[C:.+]] = tensor.collapse_shape %[[S]] {{\[}}[0, 1]]
+// CHECK-SAME:        : tensor<1x16xf32> into tensor<16xf32>
 // CHECK:           linalg.generic
-// CHECK-SAME:        indexing_maps = [#[[$LANE]],
-// CHECK-SAME:        ins(%[[S]] : tensor<1x16xf32>)
+// CHECK-SAME:        indexing_maps = [#[[$ID]], #[[$ID]]]
+// CHECK-SAME:        ins(%[[C]] : tensor<16xf32>)
 func.func @constant(%a: tensor<8x16xf32>) -> tensor<16xf32> {
   %e = tensor.empty() : tensor<16xf32>
   %0 = linalg.generic {indexing_maps = [affine_map<(d0) -> (3, d0)>, #id],
