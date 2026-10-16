@@ -409,10 +409,35 @@ def KTDPLowering_StoreOp : KTDPLowering_Op<"store", [
 // IndLoadOp / IndStoreOp
 //===----------------------------------------------------------------------===//
 
+// The indirect address buffer (IAB) is a rank-1 memref of integers or indices.
+def KTDPLowering_IndAddrBuf :
+    MemRefRankOf<[AnySignlessIntegerOrIndex], [1]>;
+
+// Dense array attribute constraint: every element is statically 1.
+def KTDPLowering_AllOnes : AttrConstraint<
+    CPred<"::llvm::all_of(::llvm::cast<::mlir::DenseI64ArrayAttr>($_self)"
+          ".asArrayRef(), [](int64_t v) { return v == 1; })">,
+    "whose elements are all 1">;
+
+// Op trait: the shape of the tensor operand/result obtained through
+// `tensor_getter` on `op_class` must be a rank reduction of the op's
+// `static_sizes`.
+class KTDPLowering_TensorIsRankReductionOfSizes<string op_class,
+                                                string tensor_getter> :
+    PredOpTrait<
+        "tensor shape must be a rank reduction of static_sizes",
+        CPred<"::mlir::computeRankReductionMask("
+              "::llvm::cast<" # op_class # ">($_op).getStaticSizes(), "
+              "::llvm::cast<::mlir::RankedTensorType>("
+              "::llvm::cast<" # op_class # ">($_op)." # tensor_getter #
+              "().getType()).getShape()).has_value()">>;
+
 def KTDPLowering_IndLoadOp : KTDPLowering_Op<"ind_load", [
     AttrSizedOperandSegments,
     OffsetSizeAndStrideOpInterface,
-    MemoryEffectsOpInterface]> {
+    MemoryEffectsOpInterface,
+    AllElementTypesMatch<["base", "result"]>,
+    KTDPLowering_TensorIsRankReductionOfSizes<"IndLoadOp", "getResult">]> {
   let summary = "Indirect gather: read a rank-reduced slice from a memref at "
                 "an address driven by an IAB entry";
   let description = [{
@@ -432,7 +457,7 @@ def KTDPLowering_IndLoadOp : KTDPLowering_Op<"ind_load", [
   }];
 
   let arguments = (ins
-    Arg<AnyMemRef, "", [MemRead]>:$ind_addr_buf,
+    Arg<KTDPLowering_IndAddrBuf, "", [MemRead]>:$ind_addr_buf,
     Index:$ind_addr_buf_index,
     Arg<AnyMemRef, "", [MemRead]>:$base,
     Variadic<Index>:$offsets,
@@ -440,7 +465,7 @@ def KTDPLowering_IndLoadOp : KTDPLowering_Op<"ind_load", [
     Variadic<Index>:$strides,
     DenseI64ArrayAttr:$static_offsets,
     DenseI64ArrayAttr:$static_sizes,
-    DenseI64ArrayAttr:$static_strides
+    ConfinedAttr<DenseI64ArrayAttr, [KTDPLowering_AllOnes]>:$static_strides
   );
   let results = (outs AnyRankedTensor:$result);
 
@@ -451,8 +476,6 @@ def KTDPLowering_IndLoadOp : KTDPLowering_Op<"ind_load", [
     custom<DynamicIndexList>($strides, $static_strides)
     attr-dict `:` type($ind_addr_buf) `,` type($base) `->` type($result)
   }];
-
-  let hasVerifier = 1;
 
   let builders = [
     OpBuilder<(ins
@@ -483,7 +506,9 @@ def KTDPLowering_IndLoadOp : KTDPLowering_Op<"ind_load", [
 def KTDPLowering_IndStoreOp : KTDPLowering_Op<"ind_store", [
     AttrSizedOperandSegments,
     OffsetSizeAndStrideOpInterface,
-    MemoryEffectsOpInterface]> {
+    MemoryEffectsOpInterface,
+    AllElementTypesMatch<["base", "source"]>,
+    KTDPLowering_TensorIsRankReductionOfSizes<"IndStoreOp", "getSource">]> {
   let summary = "Indirect scatter: write a ranked tensor into a memref slice "
                 "at an address driven by an IAB entry";
   let description = [{
@@ -504,7 +529,7 @@ def KTDPLowering_IndStoreOp : KTDPLowering_Op<"ind_store", [
 
   let arguments = (ins
     AnyRankedTensor:$source,
-    Arg<AnyMemRef, "", [MemRead]>:$ind_addr_buf,
+    Arg<KTDPLowering_IndAddrBuf, "", [MemRead]>:$ind_addr_buf,
     Index:$ind_addr_buf_index,
     Arg<AnyMemRef, "", [MemWrite]>:$base,
     Variadic<Index>:$offsets,
@@ -512,7 +537,7 @@ def KTDPLowering_IndStoreOp : KTDPLowering_Op<"ind_store", [
     Variadic<Index>:$strides,
     DenseI64ArrayAttr:$static_offsets,
     DenseI64ArrayAttr:$static_sizes,
-    DenseI64ArrayAttr:$static_strides
+    ConfinedAttr<DenseI64ArrayAttr, [KTDPLowering_AllOnes]>:$static_strides
   );
 
   let assemblyFormat = [{
@@ -522,8 +547,6 @@ def KTDPLowering_IndStoreOp : KTDPLowering_Op<"ind_store", [
     custom<DynamicIndexList>($strides, $static_strides)
     attr-dict `:` type($source) `,` type($ind_addr_buf) `,` type($base)
   }];
-
-  let hasVerifier = 1;
 
   let builders = [
     OpBuilder<(ins

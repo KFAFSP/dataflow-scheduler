@@ -8,7 +8,7 @@ func.func @ind_load_iab_rank2(
     %idx  : index,
     %base : memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">)
     -> tensor<64xf16> {
-  // expected-error@+1 {{ind_addr_buf must have rank 1 but has rank 2}}
+  // expected-error@+1 {{operand #0 must be 1D memref of signless integer or index values}}
   %v = ktdp_lowering.ind_load %iab[%idx] %base[0, 0, 0] [1, 1, 64] [1, 1, 1]
       : memref<4x32xi32, strided<[32, 1], offset: ?>, "IAB">,
         memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">
@@ -24,7 +24,7 @@ func.func @ind_load_iab_f32_elem(
     %idx  : index,
     %base : memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">)
     -> tensor<64xf16> {
-  // expected-error@+1 {{ind_addr_buf element type must be integer or index}}
+  // expected-error@+1 {{operand #0 must be 1D memref of signless integer or index values}}
   %v = ktdp_lowering.ind_load %iab[%idx] %base[0, 0, 0] [1, 1, 64] [1, 1, 1]
       : memref<32xf32, strided<[1], offset: ?>, "IAB">,
         memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">
@@ -40,7 +40,7 @@ func.func @ind_load_nonunit_stride(
     %idx  : index,
     %base : memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">)
     -> tensor<64xf16> {
-  // expected-error@+1 {{all strides must be statically 1, but stride[2] = 2}}
+  // expected-error@+1 {{attribute 'static_strides' failed to satisfy constraint: i64 dense array attribute whose elements are all 1}}
   %v = ktdp_lowering.ind_load %iab[%idx] %base[0, 0, 0] [1, 1, 64] [1, 1, 2]
       : memref<32xi32, strided<[1], offset: ?>, "IAB">,
         memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">
@@ -57,7 +57,7 @@ func.func @ind_load_bad_shape(
     %idx  : index,
     %base : memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">)
     -> tensor<2x64xf16> {
-  // expected-error@+1 {{tensor shape is not a rank reduction of static_sizes}}
+  // expected-error@+1 {{failed to verify that tensor shape must be a rank reduction of static_sizes}}
   %v = ktdp_lowering.ind_load %iab[%idx] %base[0, 0, 0] [1, 1, 64] [1, 1, 1]
       : memref<32xi32, strided<[1], offset: ?>, "IAB">,
         memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">
@@ -73,7 +73,7 @@ func.func @ind_load_elem_mismatch(
     %idx  : index,
     %base : memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">)
     -> tensor<64xi8> {
-  // expected-error@+1 {{base element type 'f16' does not match tensor element type 'i8'}}
+  // expected-error@+1 {{failed to verify that all of {base, result} have same element type}}
   %v = ktdp_lowering.ind_load %iab[%idx] %base[0, 0, 0] [1, 1, 64] [1, 1, 1]
       : memref<32xi32, strided<[1], offset: ?>, "IAB">,
         memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">
@@ -89,7 +89,7 @@ func.func @ind_store_iab_rank2(
     %iab  : memref<4x32xi32, strided<[32, 1], offset: ?>, "IAB">,
     %idx  : index,
     %base : memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">) {
-  // expected-error@+1 {{ind_addr_buf must have rank 1 but has rank 2}}
+  // expected-error@+1 {{operand #1 must be 1D memref of signless integer or index values}}
   ktdp_lowering.ind_store %src into %iab[%idx] %base[0, 0, 0] [1, 2, 64] [1, 1, 1]
       : tensor<2x64xf16>,
         memref<4x32xi32, strided<[32, 1], offset: ?>, "IAB">,
@@ -105,7 +105,7 @@ func.func @ind_store_nonunit_stride(
     %iab  : memref<32xi32, strided<[1], offset: ?>, "IAB">,
     %idx  : index,
     %base : memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">) {
-  // expected-error@+1 {{all strides must be statically 1, but stride[0] = 2}}
+  // expected-error@+1 {{attribute 'static_strides' failed to satisfy constraint: i64 dense array attribute whose elements are all 1}}
   ktdp_lowering.ind_store %src into %iab[%idx] %base[0, 0, 0] [1, 2, 64] [2, 1, 1]
       : tensor<2x64xf16>,
         memref<32xi32, strided<[1], offset: ?>, "IAB">,
@@ -122,7 +122,7 @@ func.func @ind_store_bad_shape(
     %iab  : memref<32xi32, strided<[1], offset: ?>, "IAB">,
     %idx  : index,
     %base : memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">) {
-  // expected-error@+1 {{tensor shape is not a rank reduction of static_sizes}}
+  // expected-error@+1 {{failed to verify that tensor shape must be a rank reduction of static_sizes}}
   ktdp_lowering.ind_store %src into %iab[%idx] %base[0, 0, 0] [1, 2, 64] [1, 1, 1]
       : tensor<4x64xf16>,
         memref<32xi32, strided<[1], offset: ?>, "IAB">,
@@ -138,7 +138,7 @@ func.func @ind_store_elem_mismatch(
     %iab  : memref<32xi32, strided<[1], offset: ?>, "IAB">,
     %idx  : index,
     %base : memref<64x2x64xf16, strided<[8192, 64, 1], offset: ?>, "global">) {
-  // expected-error@+1 {{base element type 'f16' does not match tensor element type 'i8'}}
+  // expected-error@+1 {{failed to verify that all of {base, source} have same element type}}
   ktdp_lowering.ind_store %src into %iab[%idx] %base[0, 0, 0] [1, 2, 64] [1, 1, 1]
       : tensor<2x64xi8>,
         memref<32xi32, strided<[1], offset: ?>, "IAB">,
