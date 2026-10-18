@@ -37,9 +37,9 @@
 #include <mlir/Interfaces/DestinationStyleOpInterface.h>
 #include <mlir/Interfaces/InferTypeOpInterface.h>
 #include <mlir/Interfaces/LoopLikeInterface.h>
+#include <mlir/Interfaces/ViewLikeInterface.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
-#include <mlir/Transforms/WalkPatternRewriteDriver.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -54,6 +54,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
+#include "dataflow-scheduler/Transforms/Utils/DataTransfers.h"
 #include "dataflow-scheduler/Transforms/Utils/LoopSimplification.h"
 
 #define PASS_NAME "ktir-map-and-tile"
@@ -331,6 +332,24 @@ void bubbleOpExtractSlice(mlir::RewriterBase& rewriter,
     });
   }
 }
+
+[[nodiscard]] auto isBroadcast(mlir::Value value, int64_t dim) -> bool {
+  while (auto via = value.getDefiningOp<mlir::ktdf::ViaOp>()) {
+    value = via.getOperand();
+  }
+  auto slice = value.getDefiningOp<mlir::OffsetSizeAndStrideOpInterface>();
+  if (!slice) {
+    return false;
+  }
+  const auto strides = slice.getMixedStrides();
+  if (static_cast<int64_t>(strides.size()) !=
+      llvm::cast<mlir::ShapedType>(value.getType()).getRank()) {
+    return false;
+  }
+  return mlir::isZeroInteger(strides[dim]) &&
+         !mlir::isConstantIntValue(slice.getMixedSizes()[dim], 1);
+}
+
 struct BroadcastInputs
     : mlir::OpInterfaceRewritePattern<mlir::linalg::LinalgOp> {
   explicit BroadcastInputs(mlir::MLIRContext* context,
@@ -346,38 +365,32 @@ struct BroadcastInputs
       return rewriter.notifyMatchFailure(op, "missing throttle attribute");
     }
     const auto vector_lanes = throttle_attr.getValue();
-    const auto zero = rewriter.getI64IntegerAttr(0);
-    const auto one = rewriter.getI64IntegerAttr(1);
+    const auto zero = rewriter.getIndexAttr(0);
+    const auto one = rewriter.getIndexAttr(1);
 
     rewriter.startOpModification(op);
-    auto maps = op.getIndexingMapsArray();
     auto changed = false;
     for (auto* const input : op.getDpsInputOperands()) {
       const auto type =
           llvm::dyn_cast<mlir::RankedTensorType>(input->get().getType());
-      auto& map = maps[input->getOperandNumber()];
-      const auto bcast_dims = map.getBroadcastDims();
-      if (!type || !type.hasStaticShape() || bcast_dims.empty() ||
-          bcast_dims.back() != type.getRank() - 1) {
+      const auto bcast_dims =
+          op.getMatchingIndexingMap(input).getBroadcastDims();
+      if (!type || bcast_dims.empty() ||
+          bcast_dims.back() != type.getRank() - 1 ||
+          isBroadcast(input->get(), bcast_dims.back())) {
         continue;
       }
 
-      llvm::SmallVector<mlir::Range> ranges;
-      ranges.reserve(type.getRank());
       int64_t elements = 1;
       for (auto [dim, size] : llvm::enumerate(type.getShape())) {
-        ranges.push_back({zero, rewriter.getI64IntegerAttr(size), one});
-
         if (llvm::is_contained(bcast_dims, dim)) {
           continue;
         }
-        if (llvm::MulOverflow(elements, size, elements) != 0) {
+        if (mlir::ShapedType::isDynamic(size) ||
+            llvm::MulOverflow(elements, size, elements) != 0) {
           elements = 0;
           break;
         }
-      }
-      if (elements == 0) {
-        continue;
       }
 
       // The operand fills one vector, so only the lanes the other dimensions
@@ -391,25 +404,21 @@ struct BroadcastInputs
         continue;
       }
 
+      auto sizes =
+          mlir::tensor::getMixedSizes(rewriter, op.getLoc(), input->get());
+      llvm::SmallVector<mlir::OpFoldResult> offsets(type.getRank(), zero);
+      llvm::SmallVector<mlir::OpFoldResult> strides(type.getRank(), one);
       for (auto dim : bcast_dims) {
-        ranges[dim] = {zero, one, zero};
+        sizes[dim] = one;
+        strides[dim] = zero;
       }
-      ranges[bcast_dims.back()] = {zero, rewriter.getI64IntegerAttr(fill),
-                                   zero};
-
-      {
-        auto results = llvm::to_vector(map.getResults());
-        results[bcast_dims.back()] =
-            rewriter.getAffineDimExpr(bcast_dims.back());
-        map = mlir::AffineMap::get(map.getNumDims(), map.getNumSymbols(),
-                                   results, rewriter.getContext());
-      }
+      sizes[bcast_dims.back()] = rewriter.getIndexAttr(fill);
 
       auto broadcast = mlir::tensor::ExtractSliceOp::create(
-          rewriter, op.getLoc(), input->get(), ranges);
+          rewriter, op.getLoc(), input->get(), offsets, sizes, strides);
       input->set(broadcast);
       bubbleOpExtractSlice(rewriter, broadcast, mem_space_map_);
-      changed |= true;
+      changed = true;
     }
 
     if (!changed) {
@@ -471,11 +480,14 @@ void KTIRMapAndTilePass::runOnOperation() {
     }
   }
 
-  // Merge `tensor.(insert|extract)_slice` ops and tile `ktdp.(load|store)` and
-  // remove all the unneeded `iter_args`.
+  // Merge `tensor.(insert|extract)_slice` ops, tile `ktdp.(load|store)`,
+  // broadcast compute operands back to target vector size and remove all the
+  // unneeded `iter_args`.
   {
     mlir::RewritePatternSet patterns(&getContext());
     populateKTDPTilingPatterns(patterns, mem_space_map);
+    populateDataMovementCoalescingPatterns(patterns);
+    patterns.add<BroadcastInputs>(patterns.getContext(), mem_space_map);
     mlir::tensor::populateMergeConsecutiveInsertExtractSlicePatterns(patterns);
     mlir::tensor::populateFoldTensorEmptyPatterns(patterns);
     populateSimplifyLoopsPatterns(patterns);
@@ -484,13 +496,6 @@ void KTIRMapAndTilePass::runOnOperation() {
       signalPassFailure();
       return;
     }
-  }
-
-  // Broadcast compute operands back to target vector size.
-  {
-    mlir::RewritePatternSet patterns(&getContext());
-    patterns.add<BroadcastInputs>(patterns.getContext(), mem_space_map);
-    mlir::walkAndApplyPatterns(func, std::move(patterns));
   }
 
   // Clean up all the unused function-level constants that remain.
