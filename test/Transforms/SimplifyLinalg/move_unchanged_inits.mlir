@@ -9,16 +9,17 @@
 
 // The moved init's result is dead afterwards, and is erased along with the
 // empty init that replaced it.
-// CHECK-LABEL:   func.func @parallel
-// CHECK-SAME:      %[[A:.+]]: tensor<8xf32>, %[[B:.+]]: tensor<8xf32>, %[[C:.+]]: tensor<8xf32>
-// CHECK-NOT:       tensor.empty
-// CHECK:           %[[R:.+]] = linalg.generic
-// CHECK-SAME:        ins(%[[A]], %[[B]] : tensor<8xf32>, tensor<8xf32>)
-// CHECK-SAME:        outs(%[[C]] : tensor<8xf32>)
-// CHECK:           ^bb0(%[[X:.+]]: f32, %[[Y:.+]]: f32, %{{.+}}: f32):
-// CHECK:             %[[S:.+]] = arith.addf %[[X]], %[[Y]]
-// CHECK:             linalg.yield %[[S]]
-// CHECK:           return %[[B]], %[[R]]
+// CHECK-LABEL: func.func @parallel
+// CHECK-SAME:    %[[A:.+]]: tensor<8xf32>, %[[B:.+]]: tensor<8xf32>, %[[C:.+]]: tensor<8xf32>
+// CHECK-NOT:     tensor.empty
+// CHECK:         %[[R:.+]] = linalg.generic
+// CHECK-SAME:      ins(%[[A]], %[[B]] : tensor<8xf32>, tensor<8xf32>)
+// CHECK-SAME:      outs(%[[C]] : tensor<8xf32>) {
+// CHECK:         ^bb0(%[[X:.+]]: f32, %[[Y:.+]]: f32, %{{.+}}: f32):
+// CHECK:           %[[S:.+]] = arith.addf %[[X]], %[[Y]]
+// CHECK:           linalg.yield %[[S]]
+// CHECK:         }
+// CHECK:         return %[[B]], %[[R]]
 func.func @parallel(%a: tensor<8xf32>, %b: tensor<8xf32>, %c: tensor<8xf32>)
     -> (tensor<8xf32>, tensor<8xf32>) {
   %0:2 = linalg.generic {indexing_maps = [#id, #id, #id],
@@ -32,17 +33,18 @@ func.func @parallel(%a: tensor<8xf32>, %b: tensor<8xf32>, %c: tensor<8xf32>)
 }
 
 // An unchanged init in a reduction is read-only.
-// CHECK-LABEL:   func.func @reduction
-// CHECK-SAME:      %[[A:.+]]: tensor<8x4xf32>, %[[B:.+]]: tensor<8xf32>, %[[C:.+]]: tensor<8xf32>
-// CHECK-NOT:       tensor.empty
-// CHECK:           %[[R:.+]] = linalg.generic
-// CHECK-SAME:        ins(%[[A]], %[[B]] : tensor<8x4xf32>, tensor<8xf32>)
-// CHECK-SAME:        outs(%[[C]] : tensor<8xf32>)
-// CHECK:           ^bb0(%[[X:.+]]: f32, %[[Y:.+]]: f32, %[[O:.+]]: f32):
-// CHECK:             %[[M:.+]] = arith.mulf %[[X]], %[[Y]]
-// CHECK:             %[[S:.+]] = arith.addf %[[M]], %[[O]]
-// CHECK:             linalg.yield %[[S]]
-// CHECK:           return %[[R]]
+// CHECK-LABEL: func.func @reduction
+// CHECK-SAME:    %[[A:.+]]: tensor<8x4xf32>, %[[B:.+]]: tensor<8xf32>, %[[C:.+]]: tensor<8xf32>
+// CHECK-NOT:     tensor.empty
+// CHECK:         %[[R:.+]] = linalg.generic
+// CHECK-SAME:      ins(%[[A]], %[[B]] : tensor<8x4xf32>, tensor<8xf32>)
+// CHECK-SAME:      outs(%[[C]] : tensor<8xf32>) {
+// CHECK:         ^bb0(%[[X:.+]]: f32, %[[Y:.+]]: f32, %[[O:.+]]: f32):
+// CHECK:           %[[M:.+]] = arith.mulf %[[X]], %[[Y]]
+// CHECK:           %[[S:.+]] = arith.addf %[[M]], %[[O]]
+// CHECK:           linalg.yield %[[S]]
+// CHECK:         }
+// CHECK:         return %[[R]]
 func.func @reduction(%a: tensor<8x4xf32>, %b: tensor<8xf32>, %c: tensor<8xf32>)
     -> tensor<8xf32> {
   %0:2 = linalg.generic {indexing_maps = [#id2, #row, #row],
@@ -57,11 +59,11 @@ func.func @reduction(%a: tensor<8x4xf32>, %b: tensor<8xf32>, %c: tensor<8xf32>)
 }
 
 // Updated inits are left alone.
-// CHECK-LABEL:   func.func @updated
-// CHECK-SAME:      %[[A:.+]]: tensor<8x4xf32>, %[[C:.+]]: tensor<8xf32>
-// CHECK-NOT:       tensor.empty
-// CHECK:           linalg.generic
-// CHECK-SAME:        ins(%[[A]] : tensor<8x4xf32>) outs(%[[C]] : tensor<8xf32>)
+// CHECK-LABEL: func.func @updated
+// CHECK-SAME:    %[[A:.+]]: tensor<8x4xf32>, %[[C:.+]]: tensor<8xf32>
+// CHECK-NOT:     tensor.empty
+// CHECK:         linalg.generic
+// CHECK-SAME:      ins(%[[A]] : tensor<8x4xf32>) outs(%[[C]] : tensor<8xf32>)
 func.func @updated(%a: tensor<8x4xf32>, %c: tensor<8xf32>) -> tensor<8xf32> {
   %0 = linalg.generic {indexing_maps = [#id2, #row],
                        iterator_types = ["parallel", "reduction"]}
