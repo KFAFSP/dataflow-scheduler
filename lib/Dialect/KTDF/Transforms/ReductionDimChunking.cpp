@@ -20,7 +20,7 @@
 // into sequential chunks so that each chunk fits in the hardware FIFO path.
 //
 // When the chunk sizes are inferred from the threshold (--num-chunks not
-// given), ReductionFootprintAnalysis selects them: the reduction dimensions are
+// given), ReductionFootprint selects them: the reduction dimensions are
 // shrunk from the outermost to the innermost in the layout of the inputs until
 // the input tiles of a chunk fit the threshold.  The innermost overall loop
 // dimension is never chunked.
@@ -231,7 +231,7 @@ struct ReductionDimChunkingPass
     // ------------------------------------------------------------------
     // Determine reduction dims and per-dim chunk sizes.
     //
-    // Threshold path (numChunks empty): ReductionFootprintAnalysis selects the
+    // Threshold path (numChunks empty): ReductionFootprint selects the
     // chunk sizes; the innermost overall loop dim is excluded if it is a
     // reduction dim.
     //
@@ -262,14 +262,15 @@ struct ReductionDimChunkingPass
         return success();
       }
 
-      const ReductionFootprintAnalysis footprint(generic_op);
-      if (!footprint.isValid()) {
+      const auto footprint = ReductionFootprint::get(generic_op);
+      if (failed(footprint)) {
         inner_pipeline.emitError(PASS_NAME
-                                 ": ReductionFootprintAnalysis could not model "
-                                 "the reduction");
+                                 ": ReductionFootprint could not model the "
+                                 "reduction");
         return failure();
       }
-      const auto tile_sizes = footprint.getTileSizes(chunkSizeThreshold);
+      const auto tile_sizes =
+          footprint->getTileSizes(getBudget(load_stage, generic_op));
       if (!tile_sizes) {
         inner_pipeline.emitError(llvm::Twine(PASS_NAME
                                              ": no chunking of the reduction "
@@ -341,6 +342,30 @@ struct ReductionDimChunkingPass
     return rewriteComputeStage(inner_pipeline, load_stage, compute_stage,
                                store_stage, generic_op, reduction_dims,
                                chunk_sizes, per_dim_num_chunks);
+  }
+
+  // -----------------------------------------------------------------------
+  // The budget a chunk of `generic_op` has: chunk-size-threshold bytes for
+  // every input in the memory the load stage transfers it from.
+  // -----------------------------------------------------------------------
+  FootprintBudget getBudget(ktdf::StageOp load_stage,
+                            linalg::GenericOp generic_op) const {
+    FootprintBudget budget;
+    for (OpOperand* input : generic_op.getDpsInputOperands()) {
+      auto read = input->get().getDefiningOp<ktdf::ReadFromFifoOp>();
+      if (!read) continue;
+      load_stage.getBody()->walk([&](ktdf::DataTransferOp transfer) {
+        if (!transfer.isSourceMemRef() ||
+            transfer.getDestination() != read.getFifoSlot())
+          return WalkResult::advance();
+        Attribute memory =
+            cast<MemRefType>(transfer.getSource().getType()).getMemorySpace();
+        budget.place(*input, memory);
+        budget.capacity[memory] = chunkSizeThreshold;
+        return WalkResult::interrupt();
+      });
+    }
+    return budget;
   }
 
   // -----------------------------------------------------------------------

@@ -269,7 +269,7 @@ def ReductionDimChunkingPass : Pass<"reduction-dim-chunking", "mlir::ModuleOp"> 
     ktdf.pipeline (Load / Compute / Store stages).
 
     When the chunk sizes are inferred from the threshold (num-chunks not
-    specified), ReductionFootprintAnalysis selects them: the reduction
+    specified), ReductionFootprint selects them: the reduction
     dimensions are shrunk from the outermost to the innermost in the layout
     of the inputs, each to the largest divisor of its size that lets the
     input tiles of a chunk fit the threshold.  The innermost overall loop

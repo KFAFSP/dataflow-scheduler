@@ -20,109 +20,202 @@
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/Sequence.h>
+#include <llvm/ADT/iterator.h>
+#include <llvm/ADT/iterator_range.h>
 #include <llvm/Support/DebugLog.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/IR/BuiltinTypes.h>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdlib>
+#include <iterator>
 #include <utility>
 
 #define DEBUG_TYPE "reduction-footprint"
 
 namespace {
 
-/// Returns the divisors of @p value , largest first.
-[[nodiscard]] auto getDivisors(int64_t value) -> llvm::SmallVector<int64_t> {
-  llvm::SmallVector<int64_t> divisors;
-  for (auto divisor = value; divisor > 0; --divisor) {
-    if (value % divisor == 0) {
-      divisors.push_back(divisor);
-    }
+/// Iterates the divisors of a positive integer, largest first.
+///
+/// Divisors pair up around the square root: walking up to it yields the large
+/// ones as the co-divisors of the small ones, walking back down yields the
+/// small ones themselves.
+class DivisorIterator
+    : public llvm::iterator_facade_base<DivisorIterator,
+                                        std::forward_iterator_tag, int64_t,
+                                        std::ptrdiff_t, int64_t*, int64_t> {
+ public:
+  /// Constructs the end iterator.
+  DivisorIterator() = default;
+  explicit DivisorIterator(int64_t value)
+      : value_(value), root_(getRoot(value)), factor_(1), ascending_(true) {
+    assert(value > 0 && "only positive integers have divisors");
   }
-  return divisors;
+
+  auto operator==(const DivisorIterator& other) const -> bool {
+    return factor_ == other.factor_ && ascending_ == other.ascending_;
+  }
+  auto operator*() const -> int64_t {
+    return ascending_ ? value_ / factor_ : factor_;
+  }
+  auto operator++() -> DivisorIterator& {
+    if (ascending_) {
+      do {
+        ++factor_;
+      } while (factor_ <= root_ && value_ % factor_ != 0);
+      if (factor_ <= root_) {
+        return *this;
+      }
+
+      // A square root is its own co-divisor, and was yielded as such.
+      ascending_ = false;
+      factor_ = root_ * root_ == value_ ? root_ : root_ + 1;
+    }
+    do {
+      --factor_;
+    } while (factor_ > 0 && value_ % factor_ != 0);
+    return *this;
+  }
+
+ private:
+  [[nodiscard]] static auto getRoot(int64_t value) -> int64_t {
+    auto root = static_cast<int64_t>(std::sqrt(static_cast<double>(value)));
+    while (root * root > value) {
+      --root;
+    }
+    while ((root + 1) * (root + 1) <= value) {
+      ++root;
+    }
+    return root;
+  }
+
+  int64_t value_ = 0;
+  int64_t root_ = 0;
+  int64_t factor_ = 0;
+  bool ascending_ = false;
+};
+
+/// Returns the divisors of @p value , largest first.
+[[nodiscard]] auto getDivisors(int64_t value)
+    -> llvm::iterator_range<DivisorIterator> {
+  return llvm::make_range(DivisorIterator(value), DivisorIterator());
 }
 
 }  // namespace
 
-mlir::ktdf::ReductionFootprintAnalysis::ReductionFootprintAnalysis(
-    Operation* op) {
-  auto generic = llvm::dyn_cast<linalg::GenericOp>(op);
-  if (!generic) {
-    return;
+auto mlir::ktdf::FootprintBudget::getMemory(unsigned number) const
+    -> std::optional<Attribute> {
+  const auto it = placement.find(number);
+  if (it == placement.end() || !capacity.contains(it->second)) {
+    return std::nullopt;
   }
-  loop_ranges_ = generic.getStaticLoopRanges();
-  iterator_types_ = generic.getIteratorTypesArray();
-  if (llvm::any_of(loop_ranges_, ShapedType::isDynamic)) {
-    LDBG() << "dynamic loop range";
-    return;
-  }
-
-  if (const auto num_loops = generic.getNumLoops(); num_loops != 0) {
-    pinned_.push_back(num_loops - 1);
-  }
-  for (auto* const input : generic.getDpsInputOperands()) {
-    const auto map = generic.getMatchingIndexingMap(input);
-    const auto type = llvm::dyn_cast<RankedTensorType>(input->get().getType());
-    if (!type || !type.getElementType().isIntOrFloat() ||
-        map.getNumSymbols() != 0) {
-      LDBG() << "input cannot be modelled: " << input->get();
-      return;
-    }
-    if (map.getNumResults() != 0) {
-      if (auto innermost =
-              llvm::dyn_cast<AffineDimExpr>(map.getResults().back());
-          innermost && !llvm::is_contained(pinned_, innermost.getPosition())) {
-        pinned_.push_back(innermost.getPosition());
-      }
-    }
-    inputs_.push_back(Input{map, llvm::to_vector(type.getShape()),
-                            type.getElementType().getIntOrFloatBitWidth() / 8});
-  }
-  valid_ = true;
+  return it->second;
 }
 
-auto mlir::ktdf::ReductionFootprintAnalysis::getFootprint(
-    llvm::ArrayRef<int64_t> tile_sizes) const -> int64_t {
-  assert(valid_ && "the op could not be modelled");
+auto mlir::ktdf::ReductionFootprint::get(Operation* op)
+    -> FailureOr<ReductionFootprint> {
+  auto generic = llvm::dyn_cast<linalg::GenericOp>(op);
+  if (!generic) {
+    return failure();
+  }
+  auto loop_ranges = generic.getStaticLoopRanges();
+  if (llvm::any_of(loop_ranges, ShapedType::isDynamic)) {
+    LDBG() << "dynamic loop range";
+    return failure();
+  }
+
+  llvm::SmallVector<unsigned> pinned;
+  if (const auto num_loops = generic.getNumLoops(); num_loops != 0) {
+    pinned.push_back(num_loops - 1);
+  }
+  llvm::SmallVector<Operand> operands;
+  for (auto& operand : generic->getOpOperands()) {
+    const auto map = generic.getMatchingIndexingMap(&operand);
+    const auto type = llvm::dyn_cast<ShapedType>(operand.get().getType());
+    if (!type || !type.hasStaticShape() ||
+        !type.getElementType().isIntOrFloat() || map.getNumSymbols() != 0) {
+      LDBG() << "operand cannot be modelled: " << operand.get();
+      return failure();
+    }
+    if (generic.isDpsInput(&operand) && map.getNumResults() != 0) {
+      if (auto innermost =
+              llvm::dyn_cast<AffineDimExpr>(map.getResults().back());
+          innermost && !llvm::is_contained(pinned, innermost.getPosition())) {
+        pinned.push_back(innermost.getPosition());
+      }
+    }
+    operands.push_back(Operand{
+        operand.getOperandNumber(), map, llvm::to_vector(type.getShape()),
+        type.getElementType().getIntOrFloatBitWidth() / 8});
+  }
+  return ReductionFootprint(std::move(loop_ranges),
+                            generic.getIteratorTypesArray(),
+                            std::move(operands), std::move(pinned));
+}
+
+auto mlir::ktdf::ReductionFootprint::getFootprint(
+    llvm::ArrayRef<int64_t> tile_sizes, const FootprintBudget& budget) const
+    -> llvm::SmallDenseMap<Attribute, int64_t> {
+  llvm::SmallDenseMap<Attribute, int64_t> footprint;
+  for (auto [memory, capacity] : budget.capacity) {
+    footprint[memory] = 0;
+  }
 
   // Tiling sizes a slice by the map at the last point of the tile.
   const auto last_point =
       llvm::map_to_vector(tile_sizes, [](int64_t size) { return size - 1; });
-  int64_t total = 0;
-  for (const auto& input : inputs_) {
+  for (const auto& operand : operands_) {
+    const auto memory = budget.getMemory(operand.number);
+    if (!memory) {
+      continue;
+    }
     int64_t elements = 1;
     for (auto [last, size] :
-         llvm::zip_equal(input.map.compose(last_point), input.shape)) {
+         llvm::zip_equal(operand.map.compose(last_point), operand.shape)) {
       elements *= std::min(size, last + 1);
     }
-    total += elements * input.elem_bytes;
+    footprint[*memory] += elements * operand.elem_bytes;
   }
-  return total;
+  return footprint;
 }
 
-auto mlir::ktdf::ReductionFootprintAnalysis::getShrinkOrder() const
-    -> llvm::SmallVector<unsigned> {
+auto mlir::ktdf::ReductionFootprint::getExcess(
+    llvm::ArrayRef<int64_t> tile_sizes, const FootprintBudget& budget) const
+    -> int64_t {
+  int64_t excess = 0;
+  for (auto [memory, bytes] : getFootprint(tile_sizes, budget)) {
+    excess += std::max<int64_t>(0, bytes - budget.capacity.lookup(memory));
+  }
+  return excess;
+}
+
+auto mlir::ktdf::ReductionFootprint::getShrinkOrder(
+    const FootprintBudget& budget) const -> llvm::SmallVector<unsigned> {
   // How outer a dimension is is the logarithm of its stride in the row-major
-  // layout of the inputs, weighed by their size where they disagree.
+  // layout of the budgeted operands, weighed by their size where they
+  // disagree.
   const auto num_dims = static_cast<unsigned>(loop_ranges_.size());
   llvm::SmallVector<double> outerness(num_dims, 0.0);
   llvm::SmallVector<double> weights(num_dims, 0.0);
-  for (const auto& input : inputs_) {
+  for (const auto& operand : operands_) {
+    if (!budget.getMemory(operand.number)) {
+      continue;
+    }
     const auto linearize = [&](llvm::ArrayRef<int64_t> point) {
       int64_t offset = 0;
       for (auto [index, size] :
-           llvm::zip_equal(input.map.compose(point), input.shape)) {
-        offset = offset * size + index;
+           llvm::zip_equal(operand.map.compose(point), operand.shape)) {
+        offset = (offset * size) + index;
       }
       return offset;
     };
     int64_t elements = 1;
-    for (auto size : input.shape) {
+    for (auto size : operand.shape) {
       elements *= size;
     }
-    const auto weight = static_cast<double>(elements * input.elem_bytes);
+    const auto weight = static_cast<double>(elements * operand.elem_bytes);
 
     llvm::SmallVector<int64_t> point(num_dims, 0);
     const auto origin = linearize(point);
@@ -152,35 +245,33 @@ auto mlir::ktdf::ReductionFootprintAnalysis::getShrinkOrder() const
   return order;
 }
 
-auto mlir::ktdf::ReductionFootprintAnalysis::getTileSizes(int64_t budget) const
-    -> std::optional<llvm::SmallVector<int64_t>> {
-  assert(valid_ && "the op could not be modelled");
-
+auto mlir::ktdf::ReductionFootprint::getTileSizes(const FootprintBudget& budget)
+    const -> std::optional<llvm::SmallVector<int64_t>> {
   auto tile_sizes = loop_ranges_;
-  auto current = getFootprint(tile_sizes);
-  if (current <= budget) {
+  auto current = getExcess(tile_sizes, budget);
+  if (current == 0) {
     return tile_sizes;
   }
 
-  const auto footprint_with = [&](unsigned dim, int64_t size) {
+  const auto excess_with = [&](unsigned dim, int64_t size) {
     auto trial = tile_sizes;
     trial[dim] = size;
-    return getFootprint(trial);
+    return getExcess(trial, budget);
   };
 
   llvm::SmallVector<unsigned> shrunk;
   auto fits = false;
-  for (auto dim : getShrinkOrder()) {
+  for (auto dim : getShrinkOrder(budget)) {
     std::optional<std::pair<int64_t, int64_t>> smallest;
     for (auto size : getDivisors(loop_ranges_[dim])) {
-      const auto footprint = footprint_with(dim, size);
-      if (footprint <= budget) {
-        smallest = {size, footprint};
+      const auto excess = excess_with(dim, size);
+      if (excess == 0) {
+        smallest = {size, excess};
         fits = true;
         break;
       }
-      if (!smallest || footprint < smallest->second) {
-        smallest = {size, footprint};
+      if (!smallest || excess < smallest->second) {
+        smallest = {size, excess};
       }
     }
     if (!fits && smallest->second >= current) {
@@ -190,7 +281,7 @@ auto mlir::ktdf::ReductionFootprintAnalysis::getTileSizes(int64_t budget) const
     current = smallest->second;
     shrunk.push_back(dim);
     LDBG() << "chunking d" << dim << " by " << smallest->first << ": "
-           << smallest->second << " bytes";
+           << smallest->second << " bytes over";
     if (fits) {
       break;
     }
@@ -206,7 +297,7 @@ auto mlir::ktdf::ReductionFootprintAnalysis::getTileSizes(int64_t budget) const
       if (size <= tile_sizes[dim]) {
         break;
       }
-      if (footprint_with(dim, size) <= budget) {
+      if (excess_with(dim, size) == 0) {
         LDBG() << "growing d" << dim << " back to " << size;
         tile_sizes[dim] = size;
         break;

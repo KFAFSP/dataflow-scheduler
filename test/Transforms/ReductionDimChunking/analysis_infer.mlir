@@ -1,6 +1,6 @@
 // RUN: dataflow-scheduler-opt --reduction-dim-chunking %s | FileCheck %s
 
-// Test: ReductionFootprintAnalysis auto-infer via default chunk-size-threshold (1 MiB).
+// Test: ReductionFootprint auto-infer via default chunk-size-threshold (1 MiB).
 //
 // Input linalg.generic over tensor<1x32768x64xf16>:
 //   iterator_types = ["parallel", "reduction", "parallel"]

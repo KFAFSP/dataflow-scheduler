@@ -16,8 +16,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// ReductionFootprintAnalysis: the storage the input tiles of one chunk of a
-// reduction occupy, and the chunk sizes that fit a budget.
+// ReductionFootprint: the storage the operand tiles of one chunk of a reduction
+// occupy in each memory, and the chunk sizes that fit a budget.
 //
 //===----------------------------------------------------------------------===//
 
@@ -25,63 +25,104 @@
 #define DATAFLOW_SCHEDULER_DIALECT_KTDF_ANALYSIS_REDUCTIONFOOTPRINT_H_
 
 #include <llvm/ADT/ArrayRef.h>
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallVector.h>
 #include <mlir/Dialect/Utils/StructuredOpsUtils.h>
 #include <mlir/IR/AffineMap.h>
+#include <mlir/IR/Attributes.h>
 #include <mlir/IR/Operation.h>
+#include <mlir/Support/LLVM.h>
+#include <mlir/Support/LogicalResult.h>
 
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 namespace mlir::ktdf {
 
-/// Models the bytes the input tiles of a chunk of a reduction `linalg.generic`
-/// occupy, as a function of its tile sizes.
+/// The room the operand tiles of one chunk of a reduction may take, per memory.
 ///
-/// Each input takes a tile shaped the way tiling slices it: by its indexing map
-/// at the last point of the chunk. Accumulators are not counted.
+/// Memories are identified by their memory space, as memrefs carry it.
+struct FootprintBudget {
+  /// The bytes each memory has for the tiles of one chunk.
+  llvm::SmallDenseMap<Attribute, int64_t> capacity;
+  /// The memory the tile of each operand takes room in, by operand number. An
+  /// operand in no memory, or in one without a capacity, takes none.
+  llvm::SmallDenseMap<unsigned, Attribute> placement;
+
+  /// Places the tile of @p operand in @p memory .
+  void place(OpOperand& operand, Attribute memory) {
+    placement[operand.getOperandNumber()] = memory;
+  }
+
+  /// Returns the memory the tile of the operand numbered @p number takes room
+  /// in, or std::nullopt if it takes none.
+  [[nodiscard]] auto getMemory(unsigned number) const
+      -> std::optional<Attribute>;
+};
+
+/// Models the bytes the operand tiles of a chunk of a reduction
+/// `linalg.generic` occupy, as a function of its tile sizes.
+///
+/// Each operand takes a tile shaped the way tiling slices it: by its indexing
+/// map at the last point of the chunk.
 ///
 /// Only reduction dimensions are chunked, and never the innermost loop
 /// dimension or the innermost dimension of an input.
-class ReductionFootprintAnalysis {
+class ReductionFootprint {
  public:
-  explicit ReductionFootprintAnalysis(Operation* op);
+  /// Models @p op , or fails if it cannot be modelled: it must be a
+  /// `linalg.generic` with static loop ranges, whose operands are statically
+  /// shaped, of a fixed-width element type, and indexed by maps without
+  /// symbols.
+  [[nodiscard]] static auto get(Operation* op) -> FailureOr<ReductionFootprint>;
 
-  /// Whether the op could be modelled: a `linalg.generic` with static loop
-  /// ranges, whose inputs are ranked, of a fixed-width element type, and
-  /// indexed by maps without symbols.
-  [[nodiscard]] auto isValid() const -> bool { return valid_; }
+  /// Returns the bytes the operand tiles of a chunk of @p tile_sizes , given
+  /// per loop dimension, occupy in each memory @p budget has a capacity for.
+  [[nodiscard]] auto getFootprint(llvm::ArrayRef<int64_t> tile_sizes,
+                                  const FootprintBudget& budget) const
+      -> llvm::SmallDenseMap<Attribute, int64_t>;
 
-  /// Returns the bytes the input tiles of a chunk of @p tile_sizes , given per
-  /// loop dimension, occupy.
-  [[nodiscard]] auto getFootprint(llvm::ArrayRef<int64_t> tile_sizes) const
-      -> int64_t;
-
-  /// Returns the tile sizes per loop dimension whose footprint fits @p budget
-  /// bytes, or std::nullopt if none does.
+  /// Returns the tile sizes per loop dimension whose footprint fits every
+  /// capacity of @p budget , or std::nullopt if none does.
   ///
   /// Each tile size divides its loop range. Dimensions are shrunk from the
-  /// outermost to the innermost in the layout of the inputs, each to the
-  /// largest size that fits or, failing that, the one that saves the most;
-  /// the ones shrunk before the last are then grown back as far as the budget
-  /// allows.
-  [[nodiscard]] auto getTileSizes(int64_t budget) const
+  /// outermost to the innermost in the layout of the budgeted operands, each to
+  /// the largest size that fits or, failing that, the one that leaves the
+  /// fewest bytes over the capacities; the ones shrunk before the last are
+  /// then grown back as far as the budget allows.
+  [[nodiscard]] auto getTileSizes(const FootprintBudget& budget) const
       -> std::optional<llvm::SmallVector<int64_t>>;
 
  private:
-  struct Input {
+  struct Operand {
+    unsigned number;
     AffineMap map;
     llvm::SmallVector<int64_t> shape;
     int64_t elem_bytes;
   };
 
-  /// Returns the dimensions that may be shrunk, outermost first.
-  [[nodiscard]] auto getShrinkOrder() const -> llvm::SmallVector<unsigned>;
+  ReductionFootprint(llvm::SmallVector<int64_t> loop_ranges,
+                     llvm::SmallVector<utils::IteratorType> iterator_types,
+                     llvm::SmallVector<Operand> operands,
+                     llvm::SmallVector<unsigned> pinned)
+      : loop_ranges_(std::move(loop_ranges)),
+        iterator_types_(std::move(iterator_types)),
+        operands_(std::move(operands)),
+        pinned_(std::move(pinned)) {}
 
-  bool valid_ = false;
+  /// Returns the bytes the operand tiles of a chunk of @p tile_sizes take over
+  /// the capacities of @p budget , in total.
+  [[nodiscard]] auto getExcess(llvm::ArrayRef<int64_t> tile_sizes,
+                               const FootprintBudget& budget) const -> int64_t;
+
+  /// Returns the dimensions that may be shrunk, outermost first.
+  [[nodiscard]] auto getShrinkOrder(const FootprintBudget& budget) const
+      -> llvm::SmallVector<unsigned>;
+
   llvm::SmallVector<int64_t> loop_ranges_;
   llvm::SmallVector<utils::IteratorType> iterator_types_;
-  llvm::SmallVector<Input> inputs_;
+  llvm::SmallVector<Operand> operands_;
   /// The dimensions that are never chunked.
   llvm::SmallVector<unsigned> pinned_;
 };
