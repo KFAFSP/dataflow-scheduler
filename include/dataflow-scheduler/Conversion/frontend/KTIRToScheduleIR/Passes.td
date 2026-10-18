@@ -77,6 +77,8 @@ def KTIRBufferizePass : Pass<"ktir-bufferize", "mlir::func::FuncOp"> {
   let dependentDialects = [
     "mlir::affine::AffineDialect",
     "mlir::arith::ArithDialect",
+    "mlir::ktdf::KTDFDialect",
+    "mlir::ktdp_lowering::KTDPLoweringDialect",
     "mlir::memref::MemRefDialect"
   ];
 }
