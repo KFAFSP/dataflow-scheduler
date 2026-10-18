@@ -17,11 +17,11 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFUtils
     DataflowSchedulerDialects::UniformDialect
 
   LINK_MLIR_LIBS
+    MLIRAffineUtils
     MLIRDialectUtils
     MLIRLinalgDialect
     MLIRLoopLikeInterface
     MLIRMemRefDialect
-    MLIRSCFDialect
     MLIRTensorDialect
     MLIRTransformUtils
     MLIRViewLikeInterface
