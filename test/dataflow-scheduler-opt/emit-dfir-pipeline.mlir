@@ -17,6 +17,9 @@
 
 // CHECK:        builtin.module(
 // CHECK-NEXT:   ensure-device-declaration
+// CHECK-NEXT:   func.func(
+// CHECK-NEXT:   apply-device-patterns{groups={pre_mapping}}
+// CHECK-NEXT:   )
 // CHECK-NEXT:   ktir-legality-check
 // CHECK-NEXT:   compute-group-extraction
 // CHECK-NEXT:   indirect-compute-group-split
@@ -81,6 +84,7 @@
 // CHECK-NEXT:   custom-linalg-bufferization
 // CHECK-NEXT:   address-assignment
 // CHECK-NEXT:   normalize-grid-to-1d
+// CHECK-NEXT:   loop-iv-affine-mul-strength-reduction
 // CHECK-NEXT:   ktdf-to-ktdflowering
 // CHECK-NEXT:   builtin.module(
 // CHECK-NEXT:   func.func(

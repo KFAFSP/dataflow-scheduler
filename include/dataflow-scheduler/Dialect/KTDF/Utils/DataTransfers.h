@@ -16,8 +16,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef DATAFLOW_SCHEDULER_TRANSFORMS_UTILS_DATATRANSFERS_H_
-#define DATAFLOW_SCHEDULER_TRANSFORMS_UTILS_DATATRANSFERS_H_
+#ifndef DATAFLOW_SCHEDULER_DIALECT_KTDF_UTILS_DATATRANSFERS_H_
+#define DATAFLOW_SCHEDULER_DIALECT_KTDF_UTILS_DATATRANSFERS_H_
 
 #include <llvm/ADT/DenseMap.h>
 #include <mlir/IR/Attributes.h>
@@ -99,10 +99,14 @@ void populateDataMovementCoalescingPatterns(mlir::RewritePatternSet& patterns);
 ///  - Converts `ktdf.write_to_fifo(ktdp_lowering.load)`
 ///  - Converts `ktdp_lowering.store(ktdf.read_from_fifo)`
 ///  - Converts `ktdp_lowering.store(ktdp_lowering.load)`
+///  - Converts `ktdf.write_to_fifo(ktdp_lowering.ind_load)` to
+///    `ktdf.ind_data_transfer`
+///  - Converts `ktdp_lowering.ind_store(ktdf.read_from_fifo)` to
+///    `ktdf.ind_data_transfer`
 ///
 /// This includes the data movement coalescing patterns.
 void populateConvertToDataTransferPatterns(mlir::RewritePatternSet& patterns);
 
 }  // namespace scheduler
 
-#endif  // DATAFLOW_SCHEDULER_TRANSFORMS_UTILS_DATATRANSFERS_H_
+#endif  // DATAFLOW_SCHEDULER_DIALECT_KTDF_UTILS_DATATRANSFERS_H_

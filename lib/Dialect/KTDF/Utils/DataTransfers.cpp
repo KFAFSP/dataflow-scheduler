@@ -16,7 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "dataflow-scheduler/Transforms/Utils/DataTransfers.h"
+#include "dataflow-scheduler/Dialect/KTDF/Utils/DataTransfers.h"
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/STLExtras.h>
@@ -793,11 +793,91 @@ struct LowerStoreFromLoad
   }
 };
 
+/// Converts `ktdf.write_to_fifo(ktdp_lowering.ind_load)` to a gather
+/// `ktdf.ind_data_transfer` from the base memref into the FIFO slot.
+struct LowerIndLoadToFifo : mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  auto matchAndRewrite(mlir::ktdf::WriteToFifoOp write,
+                       mlir::PatternRewriter& rewriter) const
+      -> llvm::LogicalResult override {
+    auto load = write.getData().getDefiningOp<mlir::ktdp_lowering::IndLoadOp>();
+    if (!load) {
+      return rewriter.notifyMatchFailure(
+          write, "does not read indirectly from memory");
+    }
+    const auto type = load.getResult().getType();
+    if (!type.hasStaticShape()) {
+      return rewriter.notifyMatchFailure(load, "expected static shape");
+    }
+
+    const auto src_access = createTransferAccess(rewriter, getSlice(load));
+    if (failed(src_access)) {
+      return rewriter.notifyMatchFailure(load, "strided transfer");
+    }
+    const auto [source_map, source_offsets, source_sizes] = *src_access;
+    auto transfer = mlir::ktdf::IndDataTransferOp::create(
+        rewriter, rewriter.getFusedLoc({load.getLoc(), write.getLoc()}),
+        load.getIndAddrBuf(), load.getIndAddrBufIndex(), load.getBase(),
+        source_map, source_offsets, source_sizes, mlir::Value{}, mlir::Value{},
+        write.getFifoSlot(), mlir::AffineMap{}, mlir::ValueRange{},
+        mlir::getAsIndexOpFoldResult(rewriter.getContext(), type.getShape()));
+    transfer->setDiscardableAttrs(load->getRawDictionaryAttrs());
+    rewriter.eraseOp(write);
+    return llvm::success();
+  }
+};
+
+/// Converts `ktdp_lowering.ind_store(ktdf.read_from_fifo)` to a scatter
+/// `ktdf.ind_data_transfer` from the FIFO slot into the base memref.
+struct LowerIndStoreFromFifo
+    : mlir::OpRewritePattern<mlir::ktdp_lowering::IndStoreOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  auto matchAndRewrite(mlir::ktdp_lowering::IndStoreOp store,
+                       mlir::PatternRewriter& rewriter) const
+      -> llvm::LogicalResult override {
+    llvm::SmallVector<mlir::Operation*> reshapes;
+    auto read = store.getSource().getDefiningOp<mlir::ktdf::ReadFromFifoOp>();
+    if (!read) {
+      return rewriter.notifyMatchFailure(store, "does not read from FIFO");
+    }
+    if (!read->hasOneUse()) {
+      return read.emitError("has multiple uses");
+    }
+    if (!llvm::all_of(reshapes, [](auto* op) { return op->hasOneUse(); })) {
+      return rewriter.notifyMatchFailure(store, "reshape has multiple uses");
+    }
+    const auto type = store.getSource().getType();
+    if (!type.hasStaticShape()) {
+      return rewriter.notifyMatchFailure(store, "expected static shape");
+    }
+
+    const auto dest_access = createTransferAccess(rewriter, getSlice(store));
+    if (failed(dest_access)) {
+      return rewriter.notifyMatchFailure(store, "strided transfer");
+    }
+    const auto [dest_map, dest_offsets, dest_sizes] = *dest_access;
+    auto transfer = mlir::ktdf::IndDataTransferOp::create(
+        rewriter, rewriter.getFusedLoc({read.getLoc(), store.getLoc()}),
+        mlir::Value{}, mlir::Value{}, read.getFifoSlot(), mlir::AffineMap{},
+        mlir::ValueRange{},
+        mlir::getAsIndexOpFoldResult(rewriter.getContext(), type.getShape()),
+        store.getIndAddrBuf(), store.getIndAddrBufIndex(), store.getBase(),
+        dest_map, dest_offsets, dest_sizes);
+    transfer->setDiscardableAttrs(store->getRawDictionaryAttrs());
+    rewriter.eraseOp(store);
+    rewriter.eraseOp(read);
+    return llvm::success();
+  }
+};
+
 }  // namespace
 
 void scheduler::populateConvertToDataTransferPatterns(
     mlir::RewritePatternSet& patterns) {
   populateDataMovementCoalescingPatterns(patterns);
-  patterns.add<LowerLoadToFifo, LowerStoreFromFifo, LowerStoreFromLoad>(
+  patterns.add<LowerLoadToFifo, LowerStoreFromFifo, LowerStoreFromLoad,
+               LowerIndLoadToFifo, LowerIndStoreFromFifo>(
       patterns.getContext());
 }

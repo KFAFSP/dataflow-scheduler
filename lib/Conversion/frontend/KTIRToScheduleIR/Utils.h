@@ -27,8 +27,8 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDFAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDFEnums.h"
+#include "dataflow-scheduler/Dialect/KTDF/Utils/DataTransfers.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
-#include "dataflow-scheduler/Transforms/Utils/DataTransfers.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 
 namespace scheduler {
