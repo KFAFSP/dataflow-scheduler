@@ -114,6 +114,8 @@ void LoopNestConstraints::addLoopLattices() {
 // scheduler::populateSimplifyLoopsPatterns
 //===----------------------------------------------------------------------===//
 
+namespace {
+
 struct DropUnusedInsertSlice
     : mlir::OpRewritePattern<mlir::tensor::InsertSliceOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -233,6 +235,8 @@ struct DropUnusedInsertSlice
     return llvm::success();
   }
 };
+
+}  // namespace
 
 void scheduler::populateSimplifyLoopsPatterns(
     mlir::RewritePatternSet& patterns) {
