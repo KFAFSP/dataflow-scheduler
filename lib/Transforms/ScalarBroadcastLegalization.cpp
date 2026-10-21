@@ -479,10 +479,10 @@ static void applyTransformation(const BroadcastLegalizationSite& site,
       // Update static_source_sizes last dim.
       mlir::ktdf::setInnermostStaticSourceSize(hop.transfer, site.vector_width);
     } else {
-      // FIFO hop: mark with transfer_mode="splat", widen the slot it splats
-      // into, and say so on the transfer. The source stays the one element that
-      // arrives; it is the destination that is filled.
-      mlir::ktdf::markSplatTransfer(hop.transfer);
+      // FIFO hop: make it a splat and widen the slot it splats into. The
+      // source stays the one element that arrives; it is the destination that
+      // is filled.
+      hop.transfer.setTransferMode(mlir::ktdf::TransferMode::Splat);
       widenFifoSlot(hop.transfer.getDestination(), site.vector_width, builder);
 
       auto dest_sizes_opt = hop.transfer.getStaticDestSizesArray();

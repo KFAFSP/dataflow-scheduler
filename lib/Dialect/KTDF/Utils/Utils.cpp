@@ -80,37 +80,6 @@ auto isUsedInRegion(Value value, Region& region) -> bool {
 
 }  // namespace
 
-namespace {
-
-/// Name of the discardable attribute recording how a data transfer fills its
-/// destination, and the modes that widen it.
-constexpr StringLiteral kTransferModeAttrName = "transfer_mode";
-constexpr StringLiteral kSplatTransferMode = "splat";
-constexpr StringLiteral kPadTransferMode = "pad";
-
-StringRef getTransferMode(ktdf::DataTransferOp transfer) {
-  auto mode = llvm::dyn_cast_if_present<StringAttr>(
-      transfer->getDiscardableAttr(kTransferModeAttrName));
-  return mode ? mode.getValue() : StringRef();
-}
-
-}  // namespace
-
-void mlir::ktdf::markSplatTransfer(ktdf::DataTransferOp transfer) {
-  transfer->setDiscardableAttr(
-      kTransferModeAttrName,
-      StringAttr::get(transfer->getContext(), kSplatTransferMode));
-}
-
-auto mlir::ktdf::isSplatTransfer(ktdf::DataTransferOp transfer) -> bool {
-  return getTransferMode(transfer) == kSplatTransferMode;
-}
-
-auto mlir::ktdf::isBroadcastTransfer(ktdf::DataTransferOp transfer) -> bool {
-  StringRef mode = getTransferMode(transfer);
-  return mode == kSplatTransferMode || mode == kPadTransferMode;
-}
-
 auto mlir::ktdf::setInnermostStaticSourceSize(ktdf::DataTransferOp transfer,
                                               int64_t size) -> bool {
   auto sizes = transfer.getStaticSourceSizesArray();

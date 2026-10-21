@@ -57,17 +57,6 @@ auto isTransferTarget(Value memref, Operation* root_op) -> bool;
 auto findStageForUnit(uniform::QueryMapOp query_op,
                       ArrayRef<ktdf::StageOp> stages) -> StageOp;
 
-/// Mark `transfer` as a splat: the hardware fills the destination by
-/// replicating the source rather than by copying element for element.
-void markSplatTransfer(ktdf::DataTransferOp transfer);
-
-/// Whether `transfer` carries the splat mark `markSplatTransfer` sets.
-auto isSplatTransfer(ktdf::DataTransferOp transfer) -> bool;
-
-/// Whether `transfer` fills a destination wider than its source, either by
-/// replicating the source (splat) or by zero-filling the remainder (pad).
-auto isBroadcastTransfer(ktdf::DataTransferOp transfer) -> bool;
-
 /// Overwrite the innermost `static_source_sizes` entry of `transfer` with
 /// `size`.  Does nothing, and returns false, when `transfer` carries no static
 /// source sizes.

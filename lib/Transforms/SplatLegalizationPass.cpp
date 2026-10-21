@@ -155,7 +155,8 @@ struct SplatLegalizationPass
 
     mlir::WalkResult walk_result =
         module_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
-          if (!transfer.isDestFifo() || !mlir::ktdf::isSplatTransfer(transfer))
+          if (!transfer.isDestFifo() ||
+              transfer.getTransferMode() != mlir::ktdf::TransferMode::Splat)
             return mlir::WalkResult::advance();
           return mlir::failed(legalizeSplatTransfer(transfer, resource_kinds))
                      ? mlir::WalkResult::interrupt()
