@@ -19,9 +19,10 @@
 // SplatLegalization: legalize splat data_transfer loads to the arch's load
 // granularity, and name the shuffle that finishes the splat on the reads.
 //
-// A splat whose load unit cannot splat is moved down its path, to the first
-// transfer into a FIFO whose load unit can.  The transfers it passes become
-// copies of the source, and the buffers and slots between them shrink to it.
+// A splat into a memory, or whose load unit cannot splat, is moved down its
+// path, to the first transfer into a FIFO whose load unit can.  The transfers
+// it passes become copies of the source, and the buffers and slots between them
+// shrink to it.
 //
 // A load unit that cannot splat a single element at its access granularity
 // loads the whole granule instead, which leaves one live element per sub-SIMD
@@ -110,11 +111,12 @@ mlir::ktdf::DataTransferOp getSingleReader(mlir::Value value) {
 /// Moves the splat of @p transfer down its path to the first transfer into a
 /// FIFO whose load unit can splat, and returns that transfer.  The transfers
 /// before it become copies of the source, and the buffers and slots they write
-/// shrink to its shape.  Returns @p transfer if its load unit can splat.
+/// shrink to its shape.  Returns @p transfer if it fills a FIFO and its load
+/// unit can splat.
 mlir::FailureOr<mlir::ktdf::DataTransferOp> moveSplat(
     mlir::RewriterBase& rewriter, mlir::ktdf::DataTransferOp transfer,
     const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
-  if (canSplat(transfer, resource_kinds)) {
+  if (transfer.isDestFifo() && canSplat(transfer, resource_kinds)) {
     return transfer;
   }
 
@@ -249,8 +251,7 @@ struct SplatLegalizationPass
     // Moving a splat rewrites the IR around it, so collect them first.
     llvm::SmallVector<mlir::ktdf::DataTransferOp> splats;
     module_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
-      if (transfer.isDestFifo() &&
-          transfer.getTransferMode() == mlir::ktdf::TransferMode::Splat)
+      if (transfer.getTransferMode() == mlir::ktdf::TransferMode::Splat)
         splats.push_back(transfer);
     });
 

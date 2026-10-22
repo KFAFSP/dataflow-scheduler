@@ -310,6 +310,29 @@ static mlir::LogicalResult collectSites(
       }
       std::reverse(hops.begin(), hops.end());
 
+      llvm::SmallVector<mlir::AffineExpr> new_results(m.getResults().begin(),
+                                                      m.getResults().end());
+      new_results.back() =
+          mlir::getAffineDimExpr(m.getNumDims() - 1, generic_op.getContext());
+      mlir::AffineMap new_map =
+          mlir::AffineMap::get(m.getNumDims(), m.getNumSymbols(), new_results,
+                               generic_op.getContext());
+
+      // If one of the transfer hops performs the broadcast already, we don't
+      // need to legalize it further and can just update the map.
+      auto* const bcast_hop = llvm::find_if(hops, [](Hop hop) {
+        return hop.transfer.getTransferMode() != mlir::ktdf::TransferMode::Copy;
+      });
+      if (bcast_hop != hops.end() &&
+          mlir::cast<mlir::RankedTensorType>(input.getType())
+                  .getShape()
+                  .back() != vector_width) {
+        generic_op.emitWarning()
+            << "scalar broadcast operand " << i
+            << " is filled by a transfer narrower than the compute — skipping";
+        continue;
+      }
+
       Hop* load_hop = nullptr;
       Hop* fifo_hop = nullptr;
       if (!hops.empty()) {
@@ -357,14 +380,7 @@ static mlir::LogicalResult collectSites(
         return mlir::WalkResult::interrupt();
       }
 
-      llvm::SmallVector<mlir::AffineExpr> new_results(m.getResults().begin(),
-                                                      m.getResults().end());
-      new_results.back() =
-          mlir::getAffineDimExpr(m.getNumDims() - 1, generic_op.getContext());
-      mlir::AffineMap new_map =
-          mlir::AffineMap::get(m.getNumDims(), m.getNumSymbols(), new_results,
-                               generic_op.getContext());
-
+      hops.erase(bcast_hop, hops.end());
       sites.push_back({generic_op, i, std::move(hops), vector_width, new_map});
     }
     return mlir::WalkResult::advance();
