@@ -16,6 +16,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "dataflow-scheduler/Transforms/Utils/SimplifyLinalg.h"
+
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/STLFunctionalExtras.h>
@@ -33,7 +35,6 @@
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/Linalg/Transforms/Transforms.h>
-#include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/Dialect/Tensor/Transforms/Transforms.h>
 #include <mlir/Dialect/Utils/StaticValueUtils.h>
@@ -41,10 +42,12 @@
 #include <mlir/IR/AffineMap.h>
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/Builders.h>
+#include <mlir/IR/BuiltinAttributeInterfaces.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinTypeInterfaces.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/Matchers.h>
+#include <mlir/IR/OpDefinition.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/IR/Value.h>
 #include <mlir/Pass/Pass.h>
@@ -71,144 +74,61 @@ namespace scheduler {
 #include "dataflow-scheduler/Transforms/Passes.h.inc"
 }  // namespace scheduler
 
-namespace {
+//===----------------------------------------------------------------------===//
+// scheduler::matchFill
+//===----------------------------------------------------------------------===//
 
-using MemRef = mlir::TypedValue<mlir::MemRefType>;
-using RankedTensor = mlir::TypedValue<mlir::RankedTensorType>;
-
-/// Materializes @p indices as values.
-[[nodiscard]] auto makeIndices(mlir::OpBuilder& builder, mlir::Location loc,
-                               llvm::ArrayRef<int64_t> indices)
-    -> llvm::SmallVector<mlir::Value> {
-  return llvm::map_to_vector(indices, [&](int64_t value) -> mlir::Value {
-    return mlir::arith::ConstantIndexOp::create(builder, loc, value);
-  });
-}
-
-/// Extracts @p point from @p value .
-[[nodiscard]] auto extractPoint(mlir::OpBuilder& builder, mlir::Location loc,
-                                RankedTensor value,
-                                llvm::ArrayRef<int64_t> point) -> mlir::Value {
-  assert(point.size() == value.getType().getShape().size());
-
-  return mlir::tensor::ExtractOp::create(builder, loc, value,
-                                         makeIndices(builder, loc, point));
-}
-
-/// Extracts @p point from @p value , which may be the value itself.
-[[nodiscard]] auto extractPoint(mlir::OpBuilder& builder, mlir::Location loc,
-                                mlir::Value value,
-                                llvm::ArrayRef<int64_t> point) -> mlir::Value {
-  if (const auto tensor = llvm::dyn_cast<RankedTensor>(value); tensor) {
-    return extractPoint(builder, loc, tensor, point);
-  }
-
-  assert(point.empty());
-  return value;
-}
-
-/// Hoists loads of scalars outside of `linalg.generic` ops.
-struct HoistScalarLoad : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  auto matchAndRewrite(mlir::linalg::GenericOp op,
-                       mlir::PatternRewriter& rewriter) const
-      -> llvm::LogicalResult override {
-    if (!op.hasPureTensorSemantics()) {
-      return rewriter.notifyMatchFailure(op, "not pure tensor semantics");
-    }
-
-    llvm::SmallVector<unsigned> hoisted;
-
-    for (auto& in : op.getInputsMutable()) {
-      const auto map = op.getMatchingIndexingMap(&in);
-      if (!map.isConstant()) {
-        continue;
-      }
-
-      rewriter.replaceAllUsesWith(op.getMatchingBlockArgument(&in),
-                                  extractPoint(rewriter, op.getLoc(), in.get(),
-                                               map.getConstantResults()));
-      hoisted.push_back(in.getOperandNumber());
-    }
-    if (hoisted.empty()) {
-      return rewriter.notifyMatchFailure(op, "no hoistable input");
-    }
-
-    rewriter.modifyOpInPlace(op, [&]() {
-      auto indexing_maps = op.getIndexingMapsArray();
-      for (auto index : llvm::reverse(hoisted)) {
-        op.getInputsMutable().erase(index);
-        op.getBody()->eraseArgument(index);
-        indexing_maps.erase(indexing_maps.begin() + index);
-      }
-      op.setIndexingMapsAttr(rewriter.getAffineMapArrayAttr(indexing_maps));
-    });
-    return llvm::success();
-  }
-};
-
-/// Matches a `linalg.generic` op that is an invariant fill.
-[[nodiscard]] auto matchFill(mlir::linalg::GenericOp op)
-    -> llvm::FailureOr<mlir::Value> {
+auto scheduler::matchFill(mlir::linalg::GenericOp op)
+    -> llvm::FailureOr<mlir::OpFoldResult> {
   if (!op.hasPureTensorSemantics() || op.getNumResults() != 1 ||
       !op.getBody()->without_terminator().empty() ||
-      !op.getMatchingIndexingMap(&op.getOutputsMutable()[0]).isIdentity()) {
+      !op.getMatchingIndexingMap(&op.getOutputsMutable()[0]).isPermutation()) {
     return llvm::failure();
   }
 
-  const auto* const yield =
-      op.getMatchingYieldValue(&op.getOutputsMutable()[0]);
-  if (!yield->get().getParentRegion()->isAncestor(op->getParentRegion())) {
+  auto value = op.getMatchingYieldValue(&op.getOutputsMutable()[0])->get();
+  llvm::SmallVector<int64_t> point;
+  if (const auto arg = llvm::dyn_cast<mlir::BlockArgument>(value);
+      arg && arg.getOwner() == op.getBody()) {
+    auto* const input = op.getMatchingOpOperand(arg);
+    const auto map = op.getMatchingIndexingMap(input);
+    if (!op.isDpsInput(input) || !map.isConstant()) {
+      return llvm::failure();
+    }
+
+    value = input->get();
+    point = map.getConstantResults();
+  }
+  if (!value.getParentRegion()->isAncestor(op->getParentRegion())) {
     return llvm::failure();
   }
 
-  return yield->get();
+  mlir::Attribute attr;
+  if (!mlir::matchPattern(value, mlir::m_Constant(&attr))) {
+    if (llvm::isa<mlir::ShapedType>(value.getType())) {
+      return llvm::failure();
+    }
+
+    return mlir::OpFoldResult(value);
+  }
+  if (!llvm::isa<mlir::ShapedType>(value.getType())) {
+    return mlir::OpFoldResult(attr);
+  }
+
+  const llvm::ArrayRef<uint64_t> index(
+      reinterpret_cast<const uint64_t*>(point.data()), point.size());
+  const auto elements = llvm::dyn_cast<mlir::ElementsAttr>(attr);
+  if (!elements || !elements.isValidIndex(index)) {
+    return llvm::failure();
+  }
+  return mlir::OpFoldResult(elements.getValues<mlir::Attribute>()[index]);
 }
 
-/// Hoists stores of invariant scalars outside of `linalg.generic` ops.
-struct HoistInvariantStore : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
-  using OpRewritePattern::OpRewritePattern;
+//===----------------------------------------------------------------------===//
+// scheduler::populateSimplifyLinalgPatterns
+//===----------------------------------------------------------------------===//
 
-  auto matchAndRewrite(mlir::linalg::GenericOp op,
-                       mlir::PatternRewriter& rewriter) const
-      -> llvm::LogicalResult override {
-    if (!op.hasPureTensorSemantics()) {
-      return rewriter.notifyMatchFailure(op, "not pure tensor semantics");
-    }
-    if (succeeded(matchFill(op))) {
-      return rewriter.notifyMatchFailure(op, "already a fill operation");
-    }
-
-    auto changed = false;
-    for (auto& out : op.getOutputsMutable()) {
-      auto* const yield = op.getMatchingYieldValue(&out);
-      if (!yield->get().getParentRegion()->isAncestor(op->getParentRegion())) {
-        continue;
-      }
-
-      const auto result = op.getTiedOpResult(&out);
-      const auto result_type =
-          llvm::cast<mlir::RankedTensorType>(result.getType());
-      auto fill = mlir::linalg::GenericOp::create(
-          rewriter, op.getLoc(), {result.getType()}, {}, {out.get()},
-          {op.getMatchingIndexingMap(&out)},
-          llvm::SmallVector<mlir::utils::IteratorType>(
-              result_type.getRank(), mlir::utils::IteratorType::parallel),
-          [&](mlir::OpBuilder& builder, mlir::Location loc,
-              mlir::ValueRange /*args*/) {
-            mlir::linalg::YieldOp::create(builder, loc, {yield->get()});
-          });
-      rewriter.modifyOpInPlace(yield->getOwner(), [&]() {
-        yield->set(op.getMatchingBlockArgument(&out));
-      });
-      rewriter.replaceAllUsesWith(result, fill.getResult(0));
-      changed |= true;
-    }
-
-    return llvm::success(changed);
-  }
-};
+namespace {
 
 /// Folds an invariant `linalg.generic` fill to `arith.constant` if possible.
 struct FoldFill : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
@@ -217,8 +137,8 @@ struct FoldFill : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
   auto matchAndRewrite(mlir::linalg::GenericOp op,
                        mlir::PatternRewriter& rewriter) const
       -> llvm::LogicalResult override {
-    const auto fill_value = matchFill(op);
-    if (failed(fill_value)) {
+    const auto fill = matchFill(op);
+    if (failed(fill)) {
       return rewriter.notifyMatchFailure(op, "not a fill operation");
     }
     const auto result_type =
@@ -227,9 +147,8 @@ struct FoldFill : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
         !result_type.getElementType().isIntOrIndexOrFloat()) {
       return rewriter.notifyMatchFailure(op, "unsupported result type");
     }
-    mlir::Attribute fill_attr;
-    if (auto* const src = fill_value->getDefiningOp();
-        !src || !mlir::m_Constant(&fill_attr).match(src)) {
+    const auto fill_attr = llvm::dyn_cast_if_present<mlir::Attribute>(*fill);
+    if (!fill_attr) {
       return rewriter.notifyMatchFailure(op, "fill value is not constant");
     }
 
@@ -611,19 +530,8 @@ struct SimplifyLinalgPass
 
     mlir::func::FuncOp func = getOperation();
 
-    auto* const ctx = &getContext();
-    mlir::RewritePatternSet patterns(ctx);
-    patterns.add<HoistScalarLoad, HoistInvariantStore, FoldFill>(ctx);
-    patterns
-        .add<ShrinkOperands, NormalizeStrides, DemoteInitToInput, DropUnitDims>(
-            ctx);
-    mlir::tensor::populateFoldTensorEmptyPatterns(patterns);
-    mlir::tensor::populateMergeConsecutiveInsertExtractSlicePatterns(patterns);
-    mlir::linalg::populateEraseUnusedOperandsAndResultsPatterns(patterns);
-    mlir::linalg::populateEraseUnnecessaryInputsPatterns(patterns);
-    ctx->getLoadedDialect<mlir::linalg::LinalgDialect>()
-        ->getCanonicalizationPatterns(patterns);
-    mlir::linalg::GenericOp::getCanonicalizationPatterns(patterns, ctx);
+    mlir::RewritePatternSet patterns(&getContext());
+    populateSimplifyLinalgPatterns(patterns);
 
     if (mlir::failed(mlir::applyPatternsGreedily(func, std::move(patterns)))) {
       signalPassFailure();
@@ -633,3 +541,17 @@ struct SimplifyLinalgPass
 };
 
 }  // namespace
+
+void scheduler::populateSimplifyLinalgPatterns(
+    mlir::RewritePatternSet& patterns) {
+  auto* const ctx = patterns.getContext();
+  patterns.add<FoldFill, ShrinkOperands, NormalizeStrides, DemoteInitToInput,
+               DropUnitDims>(ctx);
+  mlir::tensor::populateFoldTensorEmptyPatterns(patterns);
+  mlir::tensor::populateMergeConsecutiveInsertExtractSlicePatterns(patterns);
+  mlir::linalg::populateEraseUnusedOperandsAndResultsPatterns(patterns);
+  mlir::linalg::populateEraseUnnecessaryInputsPatterns(patterns);
+  ctx->getOrLoadDialect<mlir::linalg::LinalgDialect>()
+      ->getCanonicalizationPatterns(patterns);
+  mlir::linalg::GenericOp::getCanonicalizationPatterns(patterns, ctx);
+}

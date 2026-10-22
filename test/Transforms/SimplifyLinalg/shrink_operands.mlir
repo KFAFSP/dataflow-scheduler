@@ -47,24 +47,6 @@ func.func @offset(%a: tensor<16xf32>) -> tensor<8xf32> {
   return %0 : tensor<8xf32>
 }
 
-// A fully constant access is left to scalar hoisting.
-// CHECK-LABEL: func.func @constant_map
-// CHECK-SAME:    %[[A:.+]]: tensor<16xf32>
-// CHECK-NOT:     tensor.extract_slice
-// CHECK:         tensor.extract %[[A]]
-// CHECK:         linalg.generic
-func.func @constant_map(%a: tensor<16xf32>) -> tensor<8xf32> {
-  %e = tensor.empty() : tensor<8xf32>
-  %0 = linalg.generic {indexing_maps = [affine_map<(d0) -> (3)>, #id],
-                       iterator_types = ["parallel"]}
-       ins(%a : tensor<16xf32>) outs(%e : tensor<8xf32>) {
-  ^bb0(%x: f32, %o: f32):
-    %n = arith.negf %x : f32
-    linalg.yield %n : f32
-  } -> tensor<8xf32>
-  return %0 : tensor<8xf32>
-}
-
 // A strided access is normalized to unit stride.
 // CHECK-LABEL: func.func @stride
 // CHECK-SAME:    %[[A:.+]]: tensor<15xf32>

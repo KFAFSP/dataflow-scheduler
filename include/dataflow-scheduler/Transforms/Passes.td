@@ -762,8 +762,10 @@ def SimplifyLinalgPass : Pass<"simplify-linalg", "mlir::func::FuncOp"> {
       to be folded into adjacent transfers, reducing the memory bandwidth and 
       size of intermediates, as well as exposing a dense computation.
 
-    - Hoisting scalar loads and stores, and promoting constant fills to
-      `arith.constant dense<...>`.
+    - Promoting constant fills to `arith.constant dense<...>`.
+
+      Invariant inputs and yields are not hoisted out of the `generic`, so that
+      broadcasts stay visible to the data transfers that implement them.
 
     - Demoting `out` to `in` operands.
 
