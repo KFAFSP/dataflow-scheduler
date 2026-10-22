@@ -335,6 +335,7 @@ def ReductionDimChunkingPass : Pass<"reduction-dim-chunking", "mlir::ModuleOp"> 
            "chunk sizes when num-chunks is not specified (default: 1 MiB).">
   ];
   let dependentDialects = [
+    "mlir::affine::AffineDialect",
     "mlir::ktdf::KTDFDialect",
     "mlir::scf::SCFDialect",
     "mlir::arith::ArithDialect",
@@ -394,6 +395,20 @@ def LoopIVAffineMulStrengthReductionPass
     "mlir::affine::AffineDialect",
     "mlir::arith::ArithDialect",
     "mlir::scf::SCFDialect"
+  ];
+}
+
+def CoalesceDataMovementPass
+    : Pass<"ktdf-coalesce-data-movement", "mlir::ModuleOp"> {
+  let summary = "Coalesce data movement into KTDF FIFO and transfer ops";
+  let description = [{
+    Greedily applies the patterns of
+    `mlir::ktdf::populateDataMovementCoalescingPatterns`, which fold the
+    reshaping and slicing of moved data into the KTDF ops that move it.
+  }];
+  let dependentDialects = [
+    "mlir::ktdf::KTDFDialect",
+    "mlir::tensor::TensorDialect"
   ];
 }
 

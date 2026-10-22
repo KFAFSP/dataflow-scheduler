@@ -47,14 +47,13 @@
 // CHECK-NEXT:         }
 // CHECK-NEXT:         ktdf.stage depends_in(none) depends_out(%[[P]]#2) {
 // CHECK-NEXT:           scf.for %[[BIV:.*]] = %[[C0]] to %[[C1]] step %[[C1]] {
-// CHECK-NEXT:             ktdf.data_transfer from %[[CAST0]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] size [2, 4, 3136, 64] to %[[P]]#0{{\[}}%[[BIV]], 0, 0, 0, 0] size [1, 2, 4, 3136, 64] : memref<2x4x3136x64xf16, strided<[802816, 200704, 64, 1], offset: ?>, "DDR">, memref<1x2x4x3136x64xf16, "L1">
+// CHECK-NEXT:             ktdf.data_transfer from %[[CAST0]]{{\[}}0, 0, 0, 0] size [2, 4, 3136, 64] to %[[P]]#0{{\[}}%[[BIV]], 0, 0, 0, 0] size [1, 2, 4, 3136, 64] : memref<2x4x3136x64xf16, strided<[802816, 200704, 64, 1], offset: ?>, "DDR">, memref<1x2x4x3136x64xf16, "L1">
 // CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:         } {applicable_units = ["MNILU"]}
 // CHECK-NEXT:         ktdf.stage depends_in(%[[P]]#2) depends_out(%[[P]]#3) {
 // CHECK-NEXT:           scf.for %[[BIV2:.*]] = %[[C0]] to %[[C1]] step %[[C1]] {
 // CHECK-NEXT:             %[[CD0:.*]] = arith.constant 2 : index
 // CHECK-NEXT:             %[[CD1:.*]] = arith.constant 2 : index
-// CHECK-NEXT:             %[[CL1:.*]] = arith.constant 1 : index
 // CHECK-NEXT:             %[[CL0:.*]] = arith.constant 0 : index
 // CHECK-NEXT:             %[[CL1B:.*]] = arith.constant 1 : index
 // CHECK-NEXT:             scf.for %[[IV0:.*]] = %[[CL0]] to %[[CD0]] step %[[CL1B]] {
@@ -109,7 +108,7 @@
 // CHECK-NEXT:         } {applicable_units = ["L1LU", "SFU", "L1SU"]}
 // CHECK-NEXT:         ktdf.stage depends_in(%[[P]]#3) depends_out(none) {
 // CHECK-NEXT:           scf.for %[[BIV3:.*]] = %[[C0]] to %[[C1]] step %[[C1]] {
-// CHECK-NEXT:             ktdf.data_transfer from %[[P]]#1{{\[}}%[[BIV3]], 0] size [1, 64] to %[[CAST1]]{{\[}}%[[C0]]] size [64] : memref<1x64xf16, "L1">, memref<64xf16, strided<[1], offset: ?>, "DDR">
+// CHECK-NEXT:             ktdf.data_transfer from %[[P]]#1{{\[}}%[[BIV3]], 0] size [1, 64] to %[[CAST1]]{{\[}}0] size [64] : memref<1x64xf16, "L1">, memref<64xf16, strided<[1], offset: ?>, "DDR">
 // CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:         } {applicable_units = ["MNISU"]}
 // CHECK-NEXT:       }

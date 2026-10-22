@@ -79,14 +79,18 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <tuple>
 
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/ReductionFootprint.h"
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/DataTransfers.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/ReductionUtils.h"
+#include "dataflow-scheduler/Dialect/KTDF/Utils/DataTransfers.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/DebugLog.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -97,6 +101,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/CSE.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #define PASS_NAME "reduction-dim-chunking"
 #define DEBUG_TYPE PASS_NAME
@@ -389,9 +394,9 @@ struct ReductionDimChunkingPass
   //     }
   //   }
   //
-  // The compute stage computes its chunk with the op tiling yields. Carrying
-  // the change of its input shape over to fifo_in and the load stage is done
-  // here, by hand.
+  // The compute stage computes its chunk with the op tiling yields. The data
+  // movement coalescing patterns carry the slice it reads over to fifo_in and
+  // the load stage.
   // -----------------------------------------------------------------------
   LogicalResult rewriteComputeStage(
       ktdf::PipelineOp inner_pipeline, ktdf::StageOp load_stage,
@@ -427,12 +432,6 @@ struct ReductionDimChunkingPass
       inner_pipeline.emitError(PASS_NAME
                                ": no memref-to-fifo transfer feeding "
                                "the generic's fifo_in slot in load stage");
-      return failure();
-    }
-    if (!load_transfer.getSourceSizes().empty() ||
-        !load_transfer.getStaticSourceSizes()) {
-      inner_pipeline.emitError(
-          PASS_NAME ": expected the load transfer to have static sizes");
       return failure();
     }
 
@@ -511,32 +510,6 @@ struct ReductionDimChunkingPass
     }
     auto chunk_input_tensor_type = slice.getResultType();
 
-    // The tiled loop each dim of the slice is offset by, if any, and the size
-    // of a step of each.
-    SmallVector<std::optional<unsigned>> offset_loops;
-    for (OpFoldResult offset : slice.getMixedOffsets()) {
-      if (isConstantIntValue(offset, 0)) {
-        offset_loops.push_back(std::nullopt);
-        continue;
-      }
-      const auto* const it =
-          llvm::find_if(tiling->loops, [&](LoopLikeOpInterface loop) {
-            return loop.getSingleInductionVar() ==
-                   dyn_cast_if_present<Value>(offset);
-          });
-      if (it == tiling->loops.end()) {
-        inner_pipeline.emitError(PASS_NAME
-                                 ": expected the tiled reduction to slice its "
-                                 "input at the tiled loop IVs");
-        return failure();
-      }
-      offset_loops.push_back(static_cast<unsigned>(it - tiling->loops.begin()));
-    }
-    SmallVector<int64_t> tile_steps;
-    for (auto size : tile_sizes) {
-      if (size != 0) tile_steps.push_back(size);
-    }
-
     // ------------------------------------------------------------------
     // Step 3: Wrap inner_pipeline in the chunk loops.
     //
@@ -581,28 +554,23 @@ struct ReductionDimChunkingPass
     // ------------------------------------------------------------------
     // Step 4: Add fifo_partial, which carries output-tensor-sized elements in
     // the Load → Compute direction (same src/dest endpoints as fifo_in),
-    // allocated right after fifo_in, and shrink fifo_in to a chunk. The
-    // PrivateOp is rebuilt once fifo_partial is in use.
+    // allocated right after fifo_in.
     // ------------------------------------------------------------------
-    ktdf::PrivateBuilder slots(rewriter, inner_pipeline, loc);
+    // The PrivateOp is rebuilt once fifo_partial is in use.
+    std::optional<ktdf::PrivateBuilder> slots;
+    slots.emplace(rewriter, inner_pipeline, loc);
     auto fifo_in = cast<OpResult>(read_from_fifo.getFifoSlot());
     auto fifo_in_alloc = cast<ktdf::PrivateOp>(fifo_in.getOwner())
                              .getYieldOp()
                              ->getOperand(fifo_in.getResultNumber());
     Value fifo_partial =
         slots
-            .createFifo(ktdf::FifoSlotType::get(
+            ->createFifo(ktdf::FifoSlotType::get(
                 context, in_fifo_type.getSrc(), in_fifo_type.getDest(),
                 out_fifo_type.getNumElements(), out_fifo_type.getElementType()))
             .front();
     rewriter.moveOpAfter(fifo_partial.getDefiningOp(),
                          fifo_in_alloc.getDefiningOp());
-    const auto chunk_elements = chunk_input_tensor_type.getNumElements();
-    rewriter.modifyOpInPlace(fifo_in_alloc.getDefiningOp(), [&]() {
-      fifo_in_alloc.setType(ktdf::FifoSlotType::get(
-          context, in_fifo_type.getSrc(), in_fifo_type.getDest(),
-          chunk_elements, in_fifo_type.getElementType()));
-    });
 
     // ------------------------------------------------------------------
     // Step 5: The compute stage reads a chunk into the tiled op, and combines
@@ -615,13 +583,17 @@ struct ReductionDimChunkingPass
     // ------------------------------------------------------------------
     Value init = generic_op.getDpsInits().front();
     rewriter.moveOpBefore(chunk_op, tiling->loops.front());
-    rewriter.modifyOpInPlace(read_from_fifo, [&]() {
-      read_from_fifo.getResult().setType(chunk_input_tensor_type);
-    });
-    rewriter.modifyOpInPlace(chunk_op, [&]() {
-      chunk_op.getDpsInputOperand(0)->set(read_from_fifo);
-      chunk_op.getDpsInitOperand(0)->set(init);
-    });
+    rewriter.moveOpBefore(slice, chunk_op);
+    rewriter.modifyOpInPlace(
+        chunk_op, [&]() { chunk_op.getDpsInitOperand(0)->set(init); });
+    rewriter.modifyOpInPlace(
+        slice, [&]() { slice.getSourceMutable().assign(read_from_fifo); });
+    if (failed(rebaseOffsets(rewriter, slice, *tiling, chunk_ivs))) {
+      inner_pipeline.emitError(PASS_NAME
+                               ": expected the tiled reduction to slice its "
+                               "input at the tiled loop IVs");
+      return failure();
+    }
     eraseTiledLoops(rewriter, *tiling);
 
     rewriter.setInsertionPointAfter(chunk_op);
@@ -640,47 +612,9 @@ struct ReductionDimChunkingPass
     rewriter.eraseOp(generic_op);
 
     // ------------------------------------------------------------------
-    // Step 6: The load stage transfers a chunk, offset by the chunk IVs, and
-    // on non-first iterations the partial accumulator from where the store
-    // stage stores it.
-    //
-    // Input memref layout: dim-0 is the batch/local slot index; dims
-    // 1..rank-1 correspond to the dims of the generic's input. The offset of a
-    // chunked dim is encoded as iv * chunk_size in the AffineMap (to avoid
-    // emitting arith.muli, which the backend does not accept as an index).
+    // Step 6: On non-first iterations, the load stage transfers the partial
+    // accumulator from where the store stage stores it.
     // ------------------------------------------------------------------
-    const auto source_type =
-        cast<MemRefType>(load_transfer.getSource().getType());
-    if (source_type.getRank() != chunk_input_tensor_type.getRank() + 1) {
-      inner_pipeline.emitError(PASS_NAME
-                               ": expected the input memref to have a batch "
-                               "dim ahead of the dims of the generic's input");
-      return failure();
-    }
-    const auto num_indices =
-        static_cast<unsigned>(load_transfer.getSourceIndices().size());
-    const auto source_map = load_transfer.getSourceMap().value_or(
-        AffineMap::getMultiDimIdentityMap(num_indices, context));
-    SmallVector<AffineExpr> source_exprs(source_map.getResults());
-    auto source_sizes = llvm::to_vector(*load_transfer.getStaticSourceSizes());
-    for (auto [dim, loop, size] :
-         llvm::enumerate(offset_loops, chunk_input_tensor_type.getShape())) {
-      if (loop) {
-        source_exprs[dim + 1] =
-            source_exprs[dim + 1] +
-            getAffineDimExpr(num_indices + *loop, context) * tile_steps[*loop];
-      }
-      source_sizes[dim + 1] = size;
-    }
-    rewriter.modifyOpInPlace(load_transfer, [&]() {
-      load_transfer.setSourceMapAttr(AffineMapAttr::get(
-          AffineMap::get(num_indices + static_cast<unsigned>(chunk_ivs.size()),
-                         0, source_exprs, context)));
-      load_transfer.getSourceIndicesMutable().append(chunk_ivs);
-      load_transfer.setStaticSourceSizes(source_sizes);
-      load_transfer.setStaticDestSizes({chunk_elements});
-    });
-
     rewriter.setInsertionPointAfter(load_transfer);
     auto partial_indices =
         cloneOutOf(rewriter, store_transfer.getDestIndices(), store_stage);
@@ -693,9 +627,79 @@ struct ReductionDimChunkingPass
         store_transfer.getDestMap().value_or(AffineMap{}), partial_indices,
         *store_transfer.getStaticDestSizes(), fifo_partial, AffineMap{},
         ValueRange{}, ArrayRef<int64_t>{out_fifo_type.getNumElements()});
+    slots.reset();
+
+    // ------------------------------------------------------------------
+    // Step 7: The load stage transfers just the chunk, offset by the chunk
+    // IVs, through a slot of its size.
+    // ------------------------------------------------------------------
+    {
+      RewritePatternSet patterns(context);
+      scheduler::populateDataMovementCoalescingPatterns(patterns);
+      GreedyRewriteConfig config;
+      config.enableFolding(false).enableConstantCSE(false);
+      auto* const scope =
+          inner_pipeline->getParentWithTrait<OpTrait::IsIsolatedFromAbove>();
+      const auto folded = [&]() -> bool {
+        if (failed(applyPatternsGreedily(scope, std::move(patterns), config)) ||
+            read_from_fifo.getResult().getType() != chunk_input_tensor_type) {
+          return false;
+        }
+        auto* const producer = ktdf::getProducer(read_from_fifo.getFifoSlot());
+        auto transfer =
+            producer ? dyn_cast<ktdf::DataTransferOp>(producer->getOwner())
+                     : nullptr;
+        return transfer &&
+               !transfer.getSource().getDefiningOp<memref::SubViewOp>();
+      };
+      if (!folded()) {
+        inner_pipeline.emitError(PASS_NAME
+                                 ": could not fold the chunk into the load "
+                                 "transfer");
+        return failure();
+      }
+    }
+
     DominanceInfo dominance;
     eliminateCommonSubExpressions(rewriter, dominance, load_stage);
 
+    return success();
+  }
+
+  // Replaces the offsets of `slice` that are IVs of the tiled loops by the
+  // chunk IVs counting them, scaled by their step at the start of the chunk
+  // loop body. Fails for any other non-constant offset.
+  static LogicalResult rebaseOffsets(RewriterBase& rewriter,
+                                     tensor::ExtractSliceOp slice,
+                                     const scf::SCFTilingResult& tiling,
+                                     ArrayRef<Value> chunk_ivs) {
+    SmallVector<OpFoldResult> offsets = slice.getMixedOffsets();
+    for (OpFoldResult& offset : offsets) {
+      if (getConstantIntValue(offset)) continue;
+      const auto* const it =
+          llvm::find_if(tiling.loops, [&](LoopLikeOpInterface loop) {
+            return loop.getSingleInductionVar() ==
+                   dyn_cast_if_present<Value>(offset);
+          });
+      if (it == tiling.loops.end()) return failure();
+      LoopLikeOpInterface loop = *it;
+      const auto step = getConstantIntValue(*loop.getSingleStep());
+      if (!step) return failure();
+      Value chunk_iv = chunk_ivs[it - tiling.loops.begin()];
+      rewriter.setInsertionPointToStart(chunk_iv.getParentBlock());
+      offset = affine::makeComposedFoldedAffineApply(
+          rewriter, slice.getLoc(), rewriter.getAffineDimExpr(0) * *step,
+          {chunk_iv});
+    }
+    rewriter.modifyOpInPlace(slice, [&]() {
+      slice.getOffsetsMutable().assign(getValueOrCreateConstantIndexOp(
+          rewriter, slice.getLoc(),
+          llvm::to_vector(llvm::make_filter_range(
+              offsets, [](OpFoldResult ofr) { return isa<Value>(ofr); }))));
+      slice.setStaticOffsets(llvm::map_to_vector(offsets, [](OpFoldResult ofr) {
+        return getConstantIntValue(ofr).value_or(ShapedType::kDynamic);
+      }));
+    });
     return success();
   }
 

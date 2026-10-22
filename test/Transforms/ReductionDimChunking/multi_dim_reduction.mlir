@@ -67,7 +67,7 @@
 // CHECK-NEXT:         }
 // CHECK-NEXT:         ktdf.stage depends_in(none) depends_out(%[[VAL_0:.*]]#2) {
 // CHECK-NEXT:           scf.for %[[VAL_1:.*]] = %[[CONSTANT_0]] to %[[CONSTANT_1]] step %[[CONSTANT_1]] {
-// CHECK-NEXT:             ktdf.data_transfer from %[[CAST_0]]{{\[}}%[[CONSTANT_0]], %[[CONSTANT_0]], %[[CONSTANT_0]]] size [2, 256, 64] to %[[VAL_0]]#0{{\[}}%[[VAL_1]], 0, 0, 0] size [1, 2, 256, 64] : memref<2x256x64xf16, strided<[16384, 64, 1], offset: ?>, "DDR">, memref<1x2x256x64xf16, "L1">
+// CHECK-NEXT:             ktdf.data_transfer from %[[CAST_0]]{{\[}}0, 0, 0] size [2, 256, 64] to %[[VAL_0]]#0{{\[}}%[[VAL_1]], 0, 0, 0] size [1, 2, 256, 64] : memref<2x256x64xf16, strided<[16384, 64, 1], offset: ?>, "DDR">, memref<1x2x256x64xf16, "L1">
 // CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:         } {applicable_units = ["MNILU"]}
 // CHECK-NEXT:         ktdf.stage depends_in(%[[VAL_2:.*]]#2) depends_out(%[[VAL_2]]#3) {
@@ -128,7 +128,7 @@
 // CHECK-NEXT:         } {applicable_units = ["L1LU", "SFU", "L1SU"]}
 // CHECK-NEXT:         ktdf.stage depends_in(%[[VAL_13:.*]]#3) depends_out(none) {
 // CHECK-NEXT:           scf.for %[[VAL_14:.*]] = %[[CONSTANT_0]] to %[[CONSTANT_1]] step %[[CONSTANT_1]] {
-// CHECK-NEXT:             ktdf.data_transfer from %[[VAL_13]]#1{{\[}}%[[VAL_14]], 0] size [1, 64] to %[[CAST_1]]{{\[}}%[[CONSTANT_0]]] size [64] : memref<1x64xf16, "L1">, memref<64xf16, strided<[1], offset: ?>, "DDR">
+// CHECK-NEXT:             ktdf.data_transfer from %[[VAL_13]]#1{{\[}}%[[VAL_14]], 0] size [1, 64] to %[[CAST_1]]{{\[}}0] size [64] : memref<1x64xf16, "L1">, memref<64xf16, strided<[1], offset: ?>, "DDR">
 // CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:         } {applicable_units = ["MNISU"]}
 // CHECK-NEXT:       }
