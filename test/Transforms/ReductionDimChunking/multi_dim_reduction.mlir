@@ -72,13 +72,13 @@
 // CHECK-NEXT:         } {applicable_units = ["MNILU"]}
 // CHECK-NEXT:         ktdf.stage depends_in(%[[VAL_2:.*]]#2) depends_out(%[[VAL_2]]#3) {
 // CHECK-NEXT:           scf.for %[[VAL_3:.*]] = %[[CONSTANT_0]] to %[[CONSTANT_1]] step %[[CONSTANT_1]] {
-// CHECK-NEXT:             %[[CONSTANT_3:.*]] = arith.constant 2 : index
-// CHECK-NEXT:             %[[CONSTANT_4:.*]] = arith.constant 4 : index
 // CHECK-NEXT:             %[[CONSTANT_5:.*]] = arith.constant 0 : index
 // CHECK-NEXT:             %[[CONSTANT_6:.*]] = arith.constant 1 : index
+// CHECK-NEXT:             %[[CONSTANT_3:.*]] = arith.constant 2 : index
 // CHECK-NEXT:             scf.for %[[VAL_4:.*]] = %[[CONSTANT_5]] to %[[CONSTANT_3]] step %[[CONSTANT_6]] {
+// CHECK-NEXT:               %[[CMPI_0:.*]] = arith.cmpi eq, %[[VAL_4]], %[[CONSTANT_5]] : index
+// CHECK-NEXT:               %[[CONSTANT_4:.*]] = arith.constant 4 : index
 // CHECK-NEXT:               scf.for %[[VAL_5:.*]] = %[[CONSTANT_5]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:                 %[[CMPI_0:.*]] = arith.cmpi eq, %[[VAL_4]], %[[CONSTANT_5]] : index
 // CHECK-NEXT:                 %[[CMPI_1:.*]] = arith.cmpi eq, %[[VAL_5]], %[[CONSTANT_5]] : index
 // CHECK-NEXT:                 %[[ANDI_0:.*]] = arith.andi %[[CMPI_0]], %[[CMPI_1]] : i1
 // CHECK-NEXT:                 ktdf.pipeline {

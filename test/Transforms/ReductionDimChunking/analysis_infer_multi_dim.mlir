@@ -52,13 +52,13 @@
 // CHECK-NEXT:         } {applicable_units = ["MNILU"]}
 // CHECK-NEXT:         ktdf.stage depends_in(%[[P]]#2) depends_out(%[[P]]#3) {
 // CHECK-NEXT:           scf.for %[[BIV2:.*]] = %[[C0]] to %[[C1]] step %[[C1]] {
-// CHECK-NEXT:             %[[CD0:.*]] = arith.constant 2 : index
-// CHECK-NEXT:             %[[CD1:.*]] = arith.constant 2 : index
 // CHECK-NEXT:             %[[CL0:.*]] = arith.constant 0 : index
 // CHECK-NEXT:             %[[CL1B:.*]] = arith.constant 1 : index
+// CHECK-NEXT:             %[[CD0:.*]] = arith.constant 2 : index
 // CHECK-NEXT:             scf.for %[[IV0:.*]] = %[[CL0]] to %[[CD0]] step %[[CL1B]] {
+// CHECK-NEXT:               %[[EQ0:.*]] = arith.cmpi eq, %[[IV0]], %[[CL0]] : index
+// CHECK-NEXT:               %[[CD1:.*]] = arith.constant 2 : index
 // CHECK-NEXT:               scf.for %[[IV1:.*]] = %[[CL0]] to %[[CD1]] step %[[CL1B]] {
-// CHECK-NEXT:                 %[[EQ0:.*]] = arith.cmpi eq, %[[IV0]], %[[CL0]] : index
 // CHECK-NEXT:                 %[[EQ1:.*]] = arith.cmpi eq, %[[IV1]], %[[CL0]] : index
 // CHECK-NEXT:                 %[[ISFIRST:.*]] = arith.andi %[[EQ0]], %[[EQ1]] : i1
 // CHECK-NEXT:                 ktdf.pipeline {
