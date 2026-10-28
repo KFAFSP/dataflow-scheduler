@@ -18,8 +18,10 @@
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/DebugLog.h>
 #include <llvm/Support/MathExtras.h>
+#include <mlir/Dialect/Arith/Utils/Utils.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/Linalg/Transforms/Transforms.h>
@@ -360,10 +362,28 @@ void bubbleUpExtractSlice(mlir::RewriterBase& rewriter,
          !mlir::isConstantIntValue(slice.getMixedSizes()[dim], 1);
 }
 
-/// Bubbles a broadcasting `tensor.extract_slice` up through a reshape, which
-/// upstream does not since it has a stride of 0. A sliced dimension moves to
-/// the innermost one of equal extent in its group, the others being units.
-struct BubbleUpBroadcastSlice
+[[nodiscard]] auto getReassociationIndices(
+    mlir::Operation* op,
+    llvm::SmallVectorImpl<mlir::ReassociationIndices>& groups,
+    bool& is_collapse) -> mlir::LogicalResult {
+  if (auto collapse = llvm::dyn_cast<mlir::tensor::CollapseShapeOp>(op);
+      collapse) {
+    groups = collapse.getReassociationIndices();
+    is_collapse = true;
+    return llvm::success();
+  }
+
+  if (auto expand = llvm::dyn_cast<mlir::tensor::ExpandShapeOp>(op); expand) {
+    groups = expand.getReassociationIndices();
+    is_collapse = false;
+    return llvm::success();
+  }
+
+  return llvm::failure();
+}
+
+/// Bubbles `tensor.extract_slice` up through reshaping operations.
+struct BubbleUpSliceThroughReshape
     : mlir::OpRewritePattern<mlir::tensor::ExtractSliceOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -371,45 +391,45 @@ struct BubbleUpBroadcastSlice
                        mlir::PatternRewriter& rewriter) const
       -> llvm::LogicalResult override {
     auto* reshape = slice.getSource().getDefiningOp();
-    auto collapse =
-        llvm::dyn_cast_if_present<mlir::tensor::CollapseShapeOp>(reshape);
-    auto expand =
-        llvm::dyn_cast_if_present<mlir::tensor::ExpandShapeOp>(reshape);
-    const auto groups =
-        collapse ? collapse.getReassociationIndices()
-        : expand ? expand.getReassociationIndices()
-                 : llvm::SmallVector<mlir::ReassociationIndices, 4>{};
+    bool is_collapse;
+    llvm::SmallVector<mlir::ReassociationIndices> groups;
     // A reshape of static result has a static source, and one without groups
-    // is from or to rank 0, where a broadcast dimension has nowhere to go.
+    // is from or to rank 0, where a sliced dimension has nowhere to go.
     const auto extents = slice.getSourceType().getShape();
-    if (groups.empty() || slice->getNumOperands() != 1 ||
-        !llvm::is_contained(slice.getStaticStrides(), 0) ||
+    if (!reshape ||
+        failed(getReassociationIndices(reshape, groups, is_collapse)) ||
+        groups.empty() || !slice.getSizes().empty() ||
+        !slice.getStrides().empty() ||
+        slice.getResultType().getRank() != slice.getSourceType().getRank() ||
         !slice.getSourceType().hasStaticShape()) {
-      return rewriter.notifyMatchFailure(slice, "not a broadcast of a reshape");
+      return rewriter.notifyMatchFailure(slice, "not a slice of a reshape");
     }
 
     auto sizes = llvm::to_vector(
         llvm::cast<mlir::ShapedType>(reshape->getOperand(0).getType())
             .getShape());
-    llvm::SmallVector<int64_t> offsets(sizes.size(), 0);
+    llvm::SmallVector<mlir::OpFoldResult> offsets(sizes.size(),
+                                                  rewriter.getIndexAttr(0));
     llvm::SmallVector<int64_t> strides(sizes.size(), 1);
+    llvm::SmallVector<bool> sliced(sizes.size(), false);
     for (auto [index, group] : llvm::enumerate(groups)) {
       const mlir::ReassociationIndices single{static_cast<int64_t>(index)};
-      const auto& target = collapse ? group : single;
-      for (auto from : collapse ? single : group) {
+      const auto& target = is_collapse ? group : single;
+      for (auto from : is_collapse ? single : group) {
         const auto size = slice.getStaticSizes()[from];
         const auto stride = slice.getStaticStrides()[from];
         if (size == extents[from] && (stride == 1 || extents[from] == 1)) {
           continue;
         }
         const auto to = llvm::find_if(llvm::reverse(target), [&](int64_t dim) {
-          return sizes[dim] == extents[from] && strides[dim] == 1;
+          return !sliced[dim] && sizes[dim] == extents[from];
         });
         if (to == target.rend()) {
           return rewriter.notifyMatchFailure(slice, "unsupported reshape");
         }
         std::tie(offsets[*to], sizes[*to], strides[*to]) =
-            std::tuple(slice.getStaticOffsets()[from], size, stride);
+            std::tuple(slice.getMixedOffsets()[from], size, stride);
+        sliced[*to] = true;
       }
     }
 
@@ -419,8 +439,11 @@ struct BubbleUpBroadcastSlice
       reshape = rewriter.clone(*reshape);
     }
     rewriter.modifyOpInPlace(slice, [&]() {
-      slice->setOperands(reshape->getOperand(0));
-      slice.setStaticOffsets(offsets);
+      const auto [static_offsets, dynamic_offsets] =
+          mlir::decomposeMixedValues(offsets);
+      slice.getSourceMutable().assign(reshape->getOperand(0));
+      slice.getOffsetsMutable().assign(dynamic_offsets);
+      slice.setStaticOffsets(static_offsets);
       slice.setStaticSizes(sizes);
       slice.setStaticStrides(strides);
       slice.getResult().setType(type.clone(sizes));
@@ -643,7 +666,7 @@ void KTIRMapAndTilePass::runOnOperation() {
     populateKTDPTilingPatterns(patterns, mem_space_map);
     populateDataMovementCoalescingPatterns(patterns);
     patterns.add<BroadcastInputs>(patterns.getContext(), mem_space_map);
-    patterns.add<BubbleUpBroadcastSlice>(patterns.getContext());
+    patterns.add<BubbleUpSliceThroughReshape>(patterns.getContext());
     mlir::tensor::populateMergeConsecutiveInsertExtractSlicePatterns(patterns);
     mlir::tensor::populateFoldTensorEmptyPatterns(patterns);
     populateSimplifyLoopsPatterns(patterns);

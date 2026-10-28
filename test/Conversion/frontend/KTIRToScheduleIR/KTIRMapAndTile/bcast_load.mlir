@@ -139,3 +139,38 @@ func.func @broadcast_dropped_unit_dim(%addr_a: index, %addr_b: index, %addr_out:
   ktdp.store %result, %tile_out : tensor<4x128xf16>, <4x128xindex>
   return
 }
+
+// As above, but the load is sliced before the reshape, as `simplify-linalg`
+// does for a broadcast of a full row. The slice is lowered into a load before
+// the loop nest exists, and the slice of each tile is folded into it through
+// the reshape.
+// CHECK-LABEL: func.func @broadcast_sliced_dropped_unit_dim
+// CHECK:         scf.for {{.+}} {
+// CHECK:           %[[BCAST:.+]] = ktdp_lowering.load %{{.+}}[%{{.+}}, 0] [64, 1] [0, 1] {dataflow_scheduler.throttle = 64 : i64}
+// CHECK:           %[[FLAT:.+]] = tensor.collapse_shape %[[BCAST]]
+// CHECK:           %[[VEC:.+]] = tensor.expand_shape %[[FLAT]]
+// CHECK:           linalg.generic
+// CHECK-SAME:        ins(%{{.+}}, %[[VEC]] : tensor<1x64xf16>, tensor<1x64xf16>)
+// CHECK:         }
+// CHECK-NOT:     tensor.extract_slice
+func.func @broadcast_sliced_dropped_unit_dim(%addr_a: index, %addr_b: index, %addr_out: index) attributes {grid = [1 : index]} {
+  %c0 = arith.constant 0 : index
+  %view_a = ktdp.construct_memory_view %addr_a, sizes: [4, 128], strides: [128, 1] {coordinate_set = #set2, memory_space = #ktdp.memory_space<global>} : memref<4x128xf16>
+  %tile_a = ktdp.construct_access_tile %view_a[%c0, %c0] {access_tile_order = #id2, access_tile_set = #set2} : memref<4x128xf16> -> !ktdp.access_tile<4x128xindex>
+  %view_b = ktdp.construct_memory_view %addr_b, sizes: [4, 128], strides: [128, 1] {coordinate_set = #set2, memory_space = #ktdp.memory_space<global>} : memref<4x128xf16>
+  %tile_b = ktdp.construct_access_tile %view_b[%c0, %c0] {access_tile_order = #id2, access_tile_set = #set2} : memref<4x128xf16> -> !ktdp.access_tile<4x128xindex>
+  %view_out = ktdp.construct_memory_view %addr_out, sizes: [4, 128], strides: [128, 1] {coordinate_set = #set2, memory_space = #ktdp.memory_space<global>} : memref<4x128xf16>
+  %tile_out = ktdp.construct_access_tile %view_out[%c0, %c0] {access_tile_order = #id2, access_tile_set = #set2} : memref<4x128xf16> -> !ktdp.access_tile<4x128xindex>
+  %a = ktdp.load %tile_a : <4x128xindex> -> tensor<4x128xf16>
+  %b = ktdp.load %tile_b : <4x128xindex> -> tensor<4x128xf16>
+  %b_col = tensor.extract_slice %b[0, 0] [4, 1] [1, 1] : tensor<4x128xf16> to tensor<4x1xf16>
+  %b_flat = tensor.collapse_shape %b_col [[0, 1]] : tensor<4x1xf16> into tensor<4xf16>
+  %init = tensor.empty() : tensor<4x128xf16>
+  %result = linalg.generic {indexing_maps = [#id2, #dropped, #id2], iterator_types = ["parallel", "parallel"]} ins(%a, %b_flat : tensor<4x128xf16>, tensor<4xf16>) outs(%init : tensor<4x128xf16>) {
+  ^bb0(%x: f16, %y: f16, %o: f16):
+    %s = arith.addf %x, %y : f16
+    linalg.yield %s : f16
+  } -> tensor<4x128xf16>
+  ktdp.store %result, %tile_out : tensor<4x128xf16>, <4x128xindex>
+  return
+}
