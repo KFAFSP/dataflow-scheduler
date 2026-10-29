@@ -4,7 +4,6 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFTransforms
     StageCoarsening/Materializer.cpp
     StageCoarsening/ScopeCorrection.cpp
     BroadcastPromotion.cpp
-    CoalesceDataMovement.cpp
     MappableExtensions.cpp
     MapReductionPartials.cpp
     ReductionDimChunking.cpp
